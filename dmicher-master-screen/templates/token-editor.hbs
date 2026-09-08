@@ -1,0 +1,64 @@
+<div class="ms-body">
+  {{#if missing}}
+  <p class="ms-note">Токен или эпизод больше недоступен. Откройте конструктор текущей сцены.</p>
+  {{else}}
+  <header class="ms-toolbar"><div><h2>{{tokenName}}</h2><span class="ms-note">Эпизод: {{episodeName}}</span></div></header>
+  <form data-screen-form="saveToken">
+    <section class="ms-section">
+      <label class="ms-check"><input name="enabled" type="checkbox" {{checked behavior.enabled}}> Выполнять автоматизацию токена в этом эпизоде</label>
+      <p class="ms-note">Общее ручное отключение в режиссёре имеет приоритет. Сохранение формы не запускает поведение; оно применяется при новом входе в эпизод.</p>
+      <label class="ms-field">Эмоджи над токеном<input name="emoji" value="{{behavior.emoji}}" placeholder="Например: 😠" maxlength="32"></label>
+    </section>
+    <details class="ms-details">
+      <summary>Положение и видимость при входе</summary>
+      <label class="ms-check"><input type="checkbox" name="positionEnabled" {{checked hasPosition}}> Устанавливать подготовленную позицию при входе</label>
+      <div class="ms-grid-two"><label class="ms-field">X, пиксели<input name="positionX" type="number" value="{{#if hasPosition}}{{behavior.position.x}}{{else}}0{{/if}}" min="0" step="any"></label><label class="ms-field">Y, пиксели<input name="positionY" type="number" value="{{#if hasPosition}}{{behavior.position.y}}{{else}}0{{/if}}" min="0" step="any"></label></div>
+      <label class="ms-field">Видимость токена<select name="hidden"><option value="keep" {{#if hiddenUnset}}selected{{/if}}>Сохранить текущее состояние</option><option value="false" {{#if hiddenFalse}}selected{{/if}}>Показать игрокам</option><option value="true" {{#if hiddenTrue}}selected{{/if}}>Скрыть от игроков</option></select></label>
+      <button type="button" data-screen-action="capturePosition">Взять положение и видимость с карты</button>
+      <p class="ms-note">Ручные изменения сохраняются до следующего входа. Здоровье, ресурсы и жив ли НИП автоматически не восстанавливаются.</p>
+    </details>
+
+    <details class="ms-details" open>
+      <summary>Реплики в чате</summary>
+      <label class="ms-field">Однократная реплика при входе<textarea name="entrySpeech" rows="2" placeholder="Оставьте пустым, чтобы не говорить при входе">{{behavior.entrySpeech}}</textarea></label>
+      <label class="ms-field">Периодические фразы · одна фраза на строку<textarea name="phrases" rows="4" placeholder="Пустой список отключает периодические реплики">{{phrases}}</textarea></label>
+      <div class="ms-grid-two"><label class="ms-field">Интервал, секунды<input type="number" name="speechInterval" value="{{behavior.speech.interval}}" min="1" step="1" required></label><label class="ms-field">Дальность, единицы сцены<input type="number" name="speechRange" value="{{behavior.speech.range}}" min="0" step="any" required></label></div>
+      <label class="ms-check"><input type="checkbox" name="visibleOnly" {{checked behavior.speech.visibleOnly}}> Реплики слышат только персонажи, которые видят НИП</label>
+      <p class="ms-note">Выбирается случайная фраза. Сообщения получают владельцы подходящих персонажей и мастера. Таймер принадлежит эпизоду и прекращается при выходе из него.</p>
+    </details>
+
+    <details class="ms-details">
+      <summary>Патрулирование</summary>
+      <label class="ms-check"><input type="checkbox" name="patrolEnabled" {{checked behavior.patrol.enabled}}> Двигаться по маршруту по кругу</label>
+      <label class="ms-field">Скорость, единицы сцены в секунду<input type="number" name="patrolSpeed" value="{{behavior.patrol.speed}}" min="0.1" step="any" required></label>
+      <label class="ms-field">Опорные точки<textarea name="points" rows="6" spellcheck="false" placeholder="100, 200&#10;300, 200 | Macro.ID | ID-эпизода">{{points}}</textarea></label>
+      <p class="ms-note">Строка: <code>x, y | UUID макроса | ID эпизода</code>. Последние два поля необязательны. Макрос мастера возвращает <code>true</code> для перехода; иначе патруль продолжается. Координаты — левый верхний угол токена в пикселях карты; комментарий начинается с <code>#</code>.</p>
+      <div class="ms-actions"><button type="button" data-screen-action="addPatrolPoint">Добавить точку кликом на карте</button><button type="button" data-screen-action="capturePatrolPoint">Добавить текущую позицию токена</button></div>
+    </details>
+
+    <details class="ms-details">
+      <summary>Магазин без денежной системы</summary>
+      <label class="ms-check"><input type="checkbox" name="shopEnabled" {{checked behavior.shop.enabled}}> Предложить игроку обмен предметами</label>
+      <label class="ms-field">Дальность взаимодействия, единицы сцены<input type="number" name="shopRange" value="{{behavior.shop.range}}" min="0" step="any" required></label>
+      <label class="ms-check"><input type="checkbox" name="shopApproval" {{checked behavior.shop.requireGMApproval}}> Обмен требует подтверждения мастера</label>
+      <label class="ms-field">Вид ассортимента<select name="shopDisplay"><option value="list" {{#unless shopTiles}}selected{{/unless}}>Список</option><option value="tiles" {{#if shopTiles}}selected{{/if}}>Плитки</option></select></label>
+      {{{shopTriggerFields}}}
+      <p class="ms-note">Перетащите продаваемые предметы из боковой панели или листа персонажа. Игрок собирает два предложения: что отдаёт и что получает, затем подтверждает обмен. Передаётся целый документ предмета с заданным системой количеством; запас считает такие документы. Цены и валюты пока не применяются. Потраченный запас не пополняется при смене эпизода.</p>
+      <div data-shop-drop class="ms-drop-zone" aria-label="Ассортимент магазина">
+        {{#each items}}
+        <div class="ms-stock-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="">{{/if}}{{name}}</span><label class="ms-field">Запас<input type="number" name="stock-{{@index}}" value="{{stock}}" min="0" max="99999" step="1" required></label><button type="button" data-screen-action="removeItem" data-index="{{@index}}" class="ms-danger" title="Убрать из ассортимента"><i class="fa-solid fa-trash"></i></button></div>
+        {{else}}<p class="ms-note">Перетащите предметы сюда.</p>{{/each}}
+      </div>
+    </details>
+
+    <details class="ms-details">
+      <summary>Взаимодействие для перехода</summary>
+      <label class="ms-field">Название действия для игрока<input name="interactionLabel" value="{{behavior.interaction.label}}" placeholder="Например: Сообщить об опасности"></label>
+      <label class="ms-field">Переход в эпизод<select name="interactionTarget"><option value="">Без перехода</option>{{#each episodes}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+      {{{interactionTriggerFields}}}
+      <p class="ms-note">Ширма покажет доступное действие автоматически. Переход подчиняется графу и текущему состоянию эпизода.</p>
+    </details>
+    <footer class="ms-save-bar"><span data-save-status class="ms-note" aria-live="polite">{{saveStatus}}</span><div class="ms-actions"><button type="button" data-screen-action="discard">Сбросить ввод</button><button type="submit" class="ms-primary"><i class="fa-solid fa-floppy-disk"></i> Сохранить поведение</button></div></footer>
+  </form>
+  {{/if}}
+</div>

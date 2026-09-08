@@ -1,0 +1,17 @@
+{
+  "id": "dmicher-master-screen",
+  "title": "dmicher ▥ Master screen | Ширма мастера",
+  "description": "Подготовка графа эпизодов сцены, управление поведением НПС, взаимодействиями и рабочими окнами мастера.",
+  "version": "0.0.1",
+  "authors": [{ "name": "dmicher abathur kubrow" }],
+  "compatibility": { "minimum": "13", "verified": "14" },
+  "relationships": { "requires": [{ "id": "dmicher-generics", "type": "module", "compatibility": { "minimum": "1.0.0", "verified": "1.0.0" }, "manifest": "https://github.com/dkubrow-dev/dmicher-generics/releases/download/1.0.0/module.json" }] },
+  "esmodules": ["scripts/main.js"],
+  "styles": ["styles/master-screen.css"],
+  "url": "https://github.com/dkubrow-dev/dmicher-master-screen",
+  "manifest": "https://github.com/dkubrow-dev/dmicher-master-screen/releases/download/0.0.1/module.json",
+  "download": "https://github.com/dkubrow-dev/dmicher-master-screen/releases/download/0.0.1/dmicher-master-screen-0.0.1.zip",
+  "readme": "https://github.com/dkubrow-dev/dmicher-master-screen/blob/main/README.md",
+  "changelog": "https://github.com/dkubrow-dev/dmicher-master-screen/releases/tag/0.0.1",
+  "bugs": "https://github.com/dkubrow-dev/dmicher-master-screen/issues"
+}

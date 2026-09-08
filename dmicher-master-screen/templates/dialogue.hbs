@@ -1,0 +1,9 @@
+<section class="ms-dialogue-content">
+  <header><h2>{{targetName}}</h2>{{#if title}}<p>{{title}}</p>{{/if}}</header>
+  {{#if art}}<img class="ms-dialogue-art" src="{{art}}" alt="">{{/if}}
+  {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
+  {{#if error}}<p class="ms-error" role="status">{{error}}</p>{{/if}}
+  {{#if finished}}<p class="ms-note">Разговор завершён.</p>{{/if}}
+  <div class="ms-dialogue-responses">{{#each responses}}<button type="button" data-action="answer" data-response-id="{{id}}" {{#if disabled}}disabled{{/if}}>{{label}}</button>{{/each}}</div>
+  <footer><button type="button" data-action="leave">Уйти</button></footer>
+</section>

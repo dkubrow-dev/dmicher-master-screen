@@ -1,0 +1,19 @@
+<section class="ms-body">
+  {{#if missing}}<p class="ms-note">Откройте сцену под учётной записью мастера.</p>{{else}}
+  <header class="ms-toolbar"><h2>Диалоги и действия</h2><span class="ms-note">{{sceneName}}</span></header>
+  <p class="ms-status">Ручной показ: ответы не выполняют события и не запускают автоматизацию. Каталог доступен даже после полной остановки сцены.</p>
+  <label class="ms-field">Подготовленный эпизод<select name="catalogEpisode">{{selectOptions episodes selected=episodeId valueAttr="id" labelAttr="name"}}</select></label>
+  <div class="ms-episode-tabs">{{#each dialogues}}<button type="button" data-catalog-action="select" data-dialogue-id="{{id}}" class="{{#if selected}}is-selected{{/if}}">{{name}}</button>{{else}}<p class="ms-note">В этом эпизоде нет диалогов.</p>{{/each}}</div>
+  {{#if dialogue}}
+  <section class="ms-section"><h3>{{dialogue.name}}</h3><p class="ms-note">Объект: {{targetName}}. {{#unless dialogue.enabled}}Автоматический диалог выключен; ручной показ доступен.{{/unless}}</p>
+    <label class="ms-field">Страница для просмотра<select name="catalogNode">{{selectOptions nodes selected=node.id valueAttr="id" labelAttr="label"}}</select></label>
+    {{#if node.art}}<img src="{{node.art}}" alt="" class="ms-dialogue-art">{{/if}}<p class="ms-dialogue-text">{{node.text}}</p>
+    <div class="ms-list">{{#each node.responses}}<div class="ms-status"><strong>{{label}}</strong><p class="ms-note">{{#if nextNodeId}}Продолжение: {{nextNodeId}}{{else}}Завершение разговора{{/if}}{{#if eventName}} · Событие {{eventName}} только как справка; при ручном показе не выполняется{{/if}}</p></div>{{/each}}</div>
+    <div class="ms-actions"><button type="button" data-catalog-action="self">Открыть диалог себе</button></div>
+    <h3>Показать игрокам</h3><div class="ms-actions">{{#each players}}<label class="ms-check"><input name="catalogRecipient" type="checkbox" value="{{id}}" {{checked selected}}> {{name}}{{#unless active}} · не подключён{{/unless}}</label>{{else}}<p class="ms-note">В мире нет учётных записей игроков.</p>{{/each}}</div><button type="button" data-catalog-action="players" class="ms-primary">Показать выбранным игрокам</button>
+  </section>
+  {{/if}}
+  <details class="ms-details"><summary>Прямые действия · справочник мастера</summary><p class="ms-note">Просмотр настроек не выполняет действие.</p>{{#each actions}}<div class="ms-config-row"><strong>{{name}}</strong><p>Объект: {{targetName}} · Событие: <code>{{eventName}}</code></p><p class="ms-note">{{#if enabled}}Подготовлено к работе в эпизоде{{else}}Выключено{{/if}} · Дальность {{range}}</p></div>{{else}}<p class="ms-note">Прямых действий нет.</p>{{/each}}</details>
+  <details class="ms-details"><summary>Подготовленные реакции · справочник</summary>{{#each subscriptions}}<div class="ms-config-row"><strong>{{event}}</strong><p>{{kind}} {{#if macroUuid}}· {{macroUuid}}{{/if}}{{#if episodeId}}· {{episodeId}}{{/if}}</p>{{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}</div>{{else}}<p class="ms-note">Подписок нет.</p>{{/each}}</details>
+  {{/if}}
+</section>

@@ -1,0 +1,29 @@
+<section class="ms-shop-content">
+  <div class="ms-shop-header">{{#if npcImg}}<img class="ms-shop-portrait" src="{{npcImg}}" alt="{{npcName}}">{{/if}}
+    <div><h2>{{npcName}}</h2><p>{{ownerName}} · {{actorName}}</p>
+      {{#if readOnly}}<p class="ms-note">Мастер наблюдает за предложением участника. Решение об обмене доступно в чате и панели магазинов.</p>{{/if}}</div>
+    <div class="ms-actions"><button type="button" data-action="refresh">Обновить</button><button type="button" data-action="sheet">Лист персонажа</button></div>
+  </div>
+  {{#if unavailable}}<p class="ms-status">{{unavailable}}</p>{{/if}}
+  {{#if feedback}}<p class="ms-status" role="status">{{feedback}}</p>{{/if}}
+  {{#unless unavailable}}
+    <section class="ms-shop-catalog"><div class="ms-toolbar"><h3>Ассортимент</h3><button type="button" data-action="display" data-view="list">Список</button><button type="button" data-action="display" data-view="tiles">Плитки</button></div>
+      {{#each groups}}<details open><summary>{{name}}</summary><ul class="ms-list {{#if ../tiles}}ms-shop-tiles{{/if}}">
+        {{#each items}}<li draggable="true" data-stock-drag="{{id}}"><img src="{{img}}" alt="" width="40" height="40"><span>{{name}}</span><span>Остаток: {{stock}}</span><button type="button" data-action="addTake" data-entry-id="{{id}}" {{#if unavailable}}disabled{{/if}}>В предложение</button></li>{{/each}}
+      </ul></details>{{else}}<p>Ассортимент пуст.</p>{{/each}}
+    </section>
+    <section class="ms-shop-exchange"><h3>Предложение обмена</h3><p class="ms-note">Перетаскивание и кнопки меняют только предложение. Передача произойдёт после подтверждения всего обмена. {{#if needsApproval}}Мастер должен одобрить предложение.{{/if}}</p>
+      <div class="ms-shop-columns">
+        <section data-offer-drop="player"><h4>Персонаж отдаёт</h4><ul class="ms-list">
+          {{#each offeredGive}}<li><img src="{{img}}" alt="" width="32" height="32"><span>{{name}}</span><button type="button" data-action="removeGive" data-item-id="{{id}}" {{#if locked}}disabled{{/if}}>Убрать</button></li>{{else}}<li>Перенесите предметы из листа персонажа.</li>{{/each}}
+        </ul><details><summary>Добавить из инвентаря</summary><ul class="ms-list">{{#each inventory}}<li><span>{{name}}</span><button type="button" data-action="addGive" data-item-id="{{id}}" {{#if locked}}disabled{{/if}}>Добавить</button></li>{{/each}}</ul></details></section>
+        <section data-offer-drop="npc"><h4>Персонаж получает</h4><ul class="ms-list">
+          {{#each offeredTake}}<li><img src="{{img}}" alt="" width="32" height="32"><span>{{name}} × {{count}}</span><button type="button" data-action="removeTake" data-entry-id="{{id}}" {{#if locked}}disabled{{/if}}>−1</button></li>{{else}}<li>Перенесите предметы из ассортимента.</li>{{/each}}
+        </ul></section>
+      </div>
+      <div data-currency-adapter hidden></div>
+      <p class="ms-note">Цены и валюты ещё не подключены. Каждый предмет передаётся целиком, с системными данными и содержимым стопки. Остаток магазина — число таких предметов.</p>
+      <div class="ms-actions"><button type="button" data-action="confirm" {{#if confirmDisabled}}disabled{{/if}}>Подтвердить предложение</button>{{#if finished}}<button type="button" data-action="newOffer">Новый обмен</button>{{/if}}</div>
+    </section>
+  {{/unless}}
+</section>

@@ -1,0 +1,23 @@
+<section class="ms-body">
+  {{#if missing}}<p class="ms-note">Вернитесь к сцене этого диалога или откройте новый диалог в конструкторе.</p>{{else}}
+  <form data-screen-form="saveDialogue">
+    <header class="ms-toolbar"><h2>Диалог</h2><span class="ms-note">{{episodeName}}</span></header>
+    <div class="ms-grid-two"><label class="ms-field">Название<input name="dialogueName" value="{{dialogue.name}}" maxlength="100" required></label><label class="ms-field">Объект взаимодействия<select name="dialogueTarget" required>{{selectOptions targets selected=targetValue valueAttr="value" labelAttr="name" blank="Выберите НИП или тайл"}}</select></label></div>
+    <div class="ms-grid-two"><label class="ms-check"><input type="checkbox" name="dialogueEnabled" {{checked dialogue.enabled}}> Диалог доступен в эпизоде</label><label class="ms-field">Дальность, единицы сцены<input type="number" name="dialogueRange" value="{{dialogue.range}}" min="0" step="any" required></label></div>
+    <label class="ms-field">Начальная страница<select name="dialogueStart">{{selectOptions nodes selected=dialogue.startNodeId valueAttr="id" labelAttr="caption"}}</select></label>
+    {{{triggerFields}}}
+    <section class="ms-section"><h3>Страницы диалога</h3><div class="ms-episode-tabs">{{#each nodes}}<button type="button" data-screen-action="node" data-node-id="{{id}}" class="{{#if selected}}is-selected{{/if}}">{{caption}}</button>{{/each}}</div><button type="button" data-screen-action="addNode">Добавить страницу</button></section>
+    {{#if node}}
+    <section class="ms-section"><div class="ms-toolbar"><h3>Текущая страница</h3><code>{{node.id}}</code><button type="button" data-screen-action="deleteNode" class="ms-danger">Удалить страницу</button></div>
+      <label class="ms-field">Реплика<textarea name="nodeText" rows="5" placeholder="Текст реплики без HTML">{{node.text}}</textarea></label>
+      <label class="ms-field">Иллюстрация страницы<input name="nodeArt" value="{{node.art}}" placeholder="Путь к изображению; пусто — изображение объекта"></label>
+      <h3>Ответы игрока</h3>
+      {{#each node.responses}}<fieldset class="ms-config-row" data-dialogue-response="{{id}}"><label class="ms-field">Текст ответа<input name="responseLabel" value="{{label}}" required></label><div class="ms-grid-two"><label class="ms-field">Следующая страница<select name="responseNext">{{selectOptions @root.nodes selected=nextNodeId valueAttr="id" labelAttr="caption" blank="Завершить диалог"}}</select></label><label class="ms-field">Сообщить событие<input name="responseEvent" value="{{eventName}}" placeholder="Например: guard.warned" pattern="[a-z][a-z0-9_.-]{0,99}"></label></div><button type="button" data-screen-action="deleteResponse" data-response-id="{{id}}" class="ms-danger">Убрать ответ</button></fieldset>{{/each}}
+      <button type="button" data-screen-action="addResponse">Добавить ответ</button>
+      <p class="ms-note">Ответ либо открывает следующую страницу, либо завершает разговор с указанным событием. При выборе события оставьте «Завершить диалог» в списке страниц. Реакции на события настраиваются в эпизоде. Игрок всегда может завершить разговор вручную.</p>
+    </section>
+    {{/if}}
+    <footer class="ms-save-bar"><span class="ms-note" data-save-status>{{saveStatus}}</span><div class="ms-actions"><button type="button" data-screen-action="discard">Сбросить ввод</button><button type="submit" class="ms-primary">Сохранить диалог</button></div></footer>
+  </form>
+  {{/if}}
+</section>

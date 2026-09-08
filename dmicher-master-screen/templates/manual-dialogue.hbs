@@ -1,0 +1,10 @@
+<section class="ms-dialogue-content">
+  <header><h2>{{targetName}}</h2><p>{{title}}</p><p class="ms-note">Мастер ведёт сцену вручную. Ответы здесь помогают вести разговор; дальнейшие события определяет мастер.</p></header>
+  {{#if art}}<img class="ms-dialogue-art" src="{{art}}" alt="">{{/if}}
+  {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
+  {{#if gmPreview}}<p class="ms-note">Ручной просмотр: события, триггеры и скрипты не запускаются; состояние автоматизации не меняется.</p>{{/if}}
+  {{#if eventName}}<p class="ms-note">Справка мастеру: в автоматическом режиме этот ответ вызывает <code>{{eventName}}</code>.</p>{{/if}}
+  {{#if finished}}<p class="ms-note">Обсудите результат с мастером.</p>{{/if}}
+  <div class="ms-dialogue-responses">{{#each responses}}<button type="button" data-action="answer" data-response-id="{{id}}" data-node-id="{{nodeId}}">{{label}}</button>{{/each}}</div>
+  <footer><button type="button" data-action="leave">Уйти</button></footer>
+</section>

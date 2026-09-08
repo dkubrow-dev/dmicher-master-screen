@@ -1,0 +1,10 @@
+<section class="ms-form">
+  <h2>{{name}}</h2>
+  {{#if missing}}<p>Взаимодействие сейчас недоступно.</p>{{else}}
+  <label>Персонаж <select>{{#each characters}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+  {{#if shop}}<button type="button" data-interaction="shop"><i class="fa-solid fa-store"></i> Торговля</button>{{/if}}
+  {{#if transition}}<button type="button" data-interaction="transition">{{label}}</button>{{/if}}
+  {{#each dialogues}}<button type="button" data-interaction="dialogue" data-dialogue-id="{{id}}"><i class="fa-solid fa-comments"></i> {{name}}</button>{{/each}}
+  {{#each actions}}<button type="button" data-interaction="event" data-interaction-id="{{id}}">{{name}}</button>{{/each}}
+  {{/if}}
+</section>
