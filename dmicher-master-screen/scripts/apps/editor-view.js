@@ -1,6 +1,6 @@
 /** Pure presentation data. The graph is rendered as escaped SVG attributes and text. */
-export function buildGraphView(episodes, selectedId) {
-  const columns = Math.min(3, Math.max(1, episodes.length));
+export function buildGraphView(episodes, selectedId, { columns: preferredColumns = 3 } = {}) {
+  const columns = Math.min(Math.max(1, Math.floor(preferredColumns)), Math.max(1, episodes.length));
   const nodes = episodes.map((episode, index) => ({
     id: episode.id,
     name: episode.name,

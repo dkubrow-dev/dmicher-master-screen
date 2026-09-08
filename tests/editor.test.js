@@ -345,7 +345,7 @@ for (const version of ["13.351", "14.366"]) {
     assert.ok(managerOutput.includes('data-token-id="guard" data-message-id="message-1"'));
     assert.ok(managerOutput.includes("&lt;script&gt;bad&lt;/script&gt;"));
     assert.ok(!managerOutput.includes("<script>"));
-    for (const template of ["help", "interaction", "actor-view", "shop", "dialogue", "dialogue-editor", "dialogue-catalog"]) {
+    for (const template of ["interaction", "actor-view", "shop", "dialogue", "dialogue-editor", "dialogue-catalog"]) {
       const compiled = hbs.compile(readFileSync(new URL(`../dmicher-master-screen/templates/${template}.hbs`, import.meta.url), "utf8"));
       const html = compiled({ name: "<script>bad</script>", npcName: "<script>bad</script>", sceneName: "<script>bad</script>",
         shop: true, transition: true, label: "<script>bad</script>", characters: [], groups: [], tokens: [],

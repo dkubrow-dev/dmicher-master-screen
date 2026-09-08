@@ -14,6 +14,14 @@
 
 Теги объектов и условия триггеров ограничивают взаимодействия до появления события: область схем/эпизодов, белый и чёрный списки, кратность, ручная активность и настраиваемый сброс. Режиссёр показывает счётчики и позволяет остановить всю автоматизацию сцены одной кнопкой. Просмотр и ручной показ диалогов игрокам доступны и после остановки; восстановление исполнения требует явного выбора эпизода.
 
+## Интерфейс и справка
+
+Конструктор располагается панелью справа или снизу от стола Foundry. Перетаскивайте выделенную границу, чтобы изменить размер; отдельные размеры для каждого расположения сохраняются после закрытия и перезагрузки. Карта и штатные элементы Foundry занимают оставшуюся область. Подробнее — [панель Конструктора](docs/constructor-panel.md).
+
+Встроенная справка на русском и английском описывает игровые задачи и настройки. Значки вопроса рядом с настройками открывают соответствующую страницу и раздел. Содержание хранится в Ширме, интерфейс справки предоставляет Generics. Оформление и прилипание всех окон dmicher настраиваются через Generics; собственный слой CSS требует Premium-доступа к Generics.
+
+The Constructor docks to the right or bottom of the Foundry tabletop. Drag the marked divider to resize it; each orientation retains its size after closing and reloading. The built-in RU/EN help explains player and GM tasks, with contextual setting links. Help content belongs to Master screen; Generics supplies the common interface, appearance settings and window snapping. Importing a custom CSS layer requires Premium access for Generics.
+
 ## Основа модели
 
 - Сцена объединяет объекты, состояния, события и взаимодействия.

@@ -58,10 +58,12 @@ export class ScreenController {
     this.mode = mode;
     canvas.tokens.activate();
     if (mode === "actor") {
+      this.editor?.setDockVisible?.(false);
       this.actor = generics.windows.openSingletonApplication(this.actor, () => new ActorViewApplication(this), { moduleId: MODULE_ID });
     } else {
       if (this.editor && this.editor.mode !== mode) { await this.editor.close(); this.editor = null; }
       this.editor = generics.windows.openSingletonApplication(this.editor, () => new EditorApplication(this, { mode }), { moduleId: MODULE_ID });
+      this.editor?.setDockVisible?.(true);
       if (this.editor.rendered) await this.editor.refresh();
     }
     return this.mode;

@@ -204,15 +204,25 @@ test("switching editor mode requests one discard decision; actor observation pre
     const controller = new ScreenController();
     await controller.setMode("constructor");
     const editor = controller.editor;
+    assert.equal(editor.options.window.frame, false);
+    assert.equal(editor.options.window.positioned, false);
     let confirmations = 0;
+    const visibility = [];
+    editor.setDockVisible = (visible) => visibility.push(visible);
     editor.dirty = true;
     editor.mayDiscard = async () => { confirmations++; return true; };
     await editor.handleAction("actor");
     assert.equal(confirmations, 0);
     assert.equal(editor.rendered, true);
+    assert.deepEqual(visibility, [false]);
+    await controller.setMode("constructor");
+    assert.equal(controller.editor, editor);
+    assert.deepEqual(visibility, [false, true]);
+    assert.equal(editor.dirty, true);
     await editor.handleAction("director");
     assert.equal(confirmations, 1);
     assert.equal(controller.editor.mode, "director");
+    assert.equal(controller.editor.options.window.frame, undefined);
   } finally { await f.dispose(); }
 });
 

@@ -1,13 +1,15 @@
 import { MODULE_ID } from "../model.js";
 import { getRuntime } from "../store.js";
 import { themedClasses, notifyError } from "../ui.js";
+import { generics } from "../generics.js";
+import { getScreenHelpContent } from "../help-content.js";
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
-export class HelpApplication extends HandlebarsApplicationMixin(ApplicationV2) {
-  static DEFAULT_OPTIONS = { id: "dmicher-master-screen-help", classes: themedClasses("ms-help"),
-    position: { width: 700, height: 720 }, window: { title: "Справка · Ширма мастера", icon: "fa-solid fa-circle-question", resizable: true } };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/help.hbs` } };
-}
+export const HelpApplication = generics.help.createHelpApplication({
+  id: "dmicher-master-screen-help", classes: themedClasses("ms-help"),
+  title: () => String(game.i18n.lang).startsWith("ru") ? "Справка · Ширма мастера" : "Help · Master screen",
+  getContent: getScreenHelpContent, initialPageId: "start"
+});
 
 export class InteractionApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-interaction"), position: { width: 420, height: "auto" },

@@ -4,8 +4,9 @@ import { installControls } from "./controls.js";
 import { getRuntime, isAuthority } from "./store.js";
 import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
+import { installScreenSettingHelp } from "./setting-help.js";
 
-let controller, removeControls, unregister;
+let controller, removeControls, unregister, removeSettingHelp;
 const hooks = [];
 let stage, tap;
 const on = (name, callback) => hooks.push([name, Hooks.on(name, callback)]);
@@ -37,16 +38,21 @@ function attachCanvas() {
 }
 
 Hooks.once("init", () => {
-  game.settings.register(MODULE_ID, "theme", { name: "Тема ширмы", scope: "client", config: true, type: String,
+  game.settings.register(MODULE_ID, "theme", { name: "Тема ширмы", scope: "client", config: false, type: String,
     choices: { dark: "Тёмная", light: "Светлая" }, default: "dark", onChange: () => theme.apply() });
+  try {
+    const saved = game.settings.storage.get("client").getItem(`${MODULE_ID}.theme`);
+    if (saved !== null && saved !== undefined) generics.appearance.adoptLegacyTheme(JSON.parse(saved), 20);
+  } catch (_error) { /* Invalid legacy storage does not replace the common appearance. */ }
   theme.install();
   controller = new ScreenController();
+  removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
   removeControls = installControls(controller);
   const api = Object.freeze({ apiVersion: 1, version: VERSION,
     openConstructor: () => controller.setMode("constructor"), openDirector: () => controller.setMode("director"),
     openActor: () => controller.setMode("actor"), openShops: () => controller.openShops(),
     openDialogues: () => controller.openDialogues(),
-    openHelp: () => controller.openHelp(), close: () => controller.closeScreen(),
+    openHelp: (pageId, anchor) => { const app = controller.openHelp(); if (pageId) void app.navigate(pageId, anchor); return app; }, close: () => controller.closeScreen(),
     transition: (episodeId) => controller.transition(episodeId),
     emitEvent: (name, details) => controller.emitEvent(name, details),
     resetTriggers: (triggerKey) => controller.resetTriggers(triggerKey),
@@ -80,5 +86,5 @@ globalThis.addEventListener?.("pagehide", () => {
   controller?.runtime.dispose(); controller?.events.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   if (stage && tap) stage.off("pointertap", tap);
   for (const [name, id] of hooks) Hooks.off(name, id);
-  removeControls?.(); unregister?.(); theme.dispose();
+  removeControls?.(); removeSettingHelp?.(); unregister?.(); theme.dispose();
 }, { once: true });

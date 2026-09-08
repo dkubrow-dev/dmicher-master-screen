@@ -2,6 +2,7 @@ import { themedClasses } from "../ui.js";
 import { defaultTokenBehavior, parseTransitions, transitionsText, randomId, canTransition } from "../model.js";
 import { buildGraphView, splitLines, parsePointRows, formatPointRows, requireNumber, buildTriggerRows } from "./editor-view.js";
 import { buildTriggerFields, readTriggerFields, splitTags } from "./trigger-fields.js";
+import { ConstructorDock } from "./constructor-dock.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 const MODULE_ID = "dmicher-master-screen";
@@ -82,12 +83,14 @@ export class EditorApplication extends ScreenFormApplication {
     position: { width: 920, height: 760 },
     window: { title: "Ширма мастера", icon: "fa-solid fa-chalkboard", resizable: true }
   };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/editor.hbs` } };
+  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/editor.hbs`, scrollable: [".ms-body"] } };
 
   constructor(controller, { mode = "constructor", ...options } = {}) {
-    super(options);
+    super(mode === "constructor" ? { ...options,
+      window: { ...options.window, frame: false, positioned: false, resizable: false } } : options);
     this.controller = controller;
     this.mode = mode;
+    this.dock = mode === "constructor" ? new ConstructorDock() : null;
     this.draft = null;
     this.contextKey = "";
     this.episodeDirty = false;
@@ -98,6 +101,23 @@ export class EditorApplication extends ScreenFormApplication {
   }
 
   get title() { return `▥ ${this.mode === "director" ? "Режиссёр" : "Конструктор"} · Ширма мастера`; }
+
+  _insertElement(element) {
+    super._insertElement(element);
+    this.dock?.attach(element);
+  }
+
+  setDockVisible(visible) {
+    if (!this.dock || !this.element) return;
+    this.element.hidden = !visible;
+    if (visible) { this.dock.attach(this.element); this.dock.bindControls(); }
+    else this.dock.detach();
+  }
+
+  async _onClose(options) {
+    this.dock?.detach();
+    return super._onClose(options);
+  }
 
   onDraftInput(event) {
     if (event.target.name === "objectTags") {
@@ -149,7 +169,7 @@ export class EditorApplication extends ScreenFormApplication {
     const context = this.controller.getContext();
     if (!context.scene || !context.isGM) {
       this.selectDraftContext("unavailable");
-      return { ...parent, missing: true, isGM: context.isGM };
+      return { ...parent, missing: true, isGM: context.isGM, isConstructor: this.mode === "constructor" };
     }
     const episode = context.episode ?? context.definition.episodes[0];
     const key = `${context.scene.id}:${episode?.id}`;
@@ -159,7 +179,7 @@ export class EditorApplication extends ScreenFormApplication {
       this.draftRevision = context.definition.revision;
     }
     const draft = this.draft;
-    const graph = buildGraphView(context.definition.episodes, draft?.id);
+    const graph = buildGraphView(context.definition.episodes, draft?.id, { columns: this.mode === "constructor" ? 2 : 3 });
     const active = context.definition.episodes.find((entry) => entry.id === context.runtime.episodeId);
     const incoming = (draft?.from ?? []);
     return {
@@ -216,6 +236,7 @@ export class EditorApplication extends ScreenFormApplication {
   async _onRender(context, options) {
     await super._onRender(context, options);
     const listeners = this.bindEvents();
+    this.dock?.bindControls();
     if (this.pendingInputs) {
       const inputs = [...this.element.querySelectorAll("input[name], select[name], textarea[name]")];
       for (const saved of this.pendingInputs) {
@@ -262,7 +283,7 @@ export class EditorApplication extends ScreenFormApplication {
       actorUuid: value(row, "spawnActor").trim(),
       x: number(row, "spawnX", "Позиция подкрепления X"),
       y: number(row, "spawnY", "Позиция подкрепления Y"),
-      count: number(row, "spawnCount", "Количество подкреплений", { min: 1, max: 100 }),
+      count: number(row, "spawnCount", "Количество подкреплений", { min: 1, max: 50 }),
       spacing: number(row, "spawnSpacing", "Шаг размещения")
     }));
     draft.zones = [...root.querySelectorAll("[data-zone-row]")].map((row) => ({

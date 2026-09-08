@@ -1,3 +1,15 @@
+<div class="ms-editor-shell {{#if isConstructor}}ms-constructor-shell{{/if}}">
+  {{#if isConstructor}}
+  <div data-dock-divider class="ms-dock-divider" role="separator" tabindex="0" aria-label="Размер панели конструктора"></div>
+  <header class="ms-dock-toolbar">
+    <strong><i class="fa-solid fa-pen-ruler"></i> Конструктор</strong>
+    <span class="ms-dock-positions" role="group" aria-label="Расположение панели">
+      <button type="button" data-dock-side="right" title="Панель справа от стола" aria-label="Панель справа" aria-pressed="true"><i class="fa-solid fa-table-columns"></i> Справа</button>
+      <button type="button" data-dock-side="bottom" title="Панель снизу от стола" aria-label="Панель снизу" aria-pressed="false"><i class="fa-solid fa-window-maximize"></i> Снизу</button>
+    </span>
+    <button type="button" data-screen-action="close" title="Закрыть ширму и освободить стол" aria-label="Закрыть ширму"><i class="fa-solid fa-xmark"></i></button>
+  </header>
+  {{/if}}
 <div class="ms-body" data-editor-context="{{contextKey}}">
   {{#if missing}}
   <p class="ms-note">{{#if isGM}}Откройте сцену на карте Foundry, затем включите ширму.{{else}}Этот режим доступен мастеру.{{/if}}</p>
@@ -119,7 +131,7 @@
           <div class="ms-grid-four">
             <label class="ms-field">X, пикс.<input type="number" name="spawnX" value="{{x}}" min="0" step="any" required></label>
             <label class="ms-field">Y, пикс.<input type="number" name="spawnY" value="{{y}}" min="0" step="any" required></label>
-            <label class="ms-field">Количество<input type="number" name="spawnCount" value="{{count}}" min="1" max="100" step="1" required></label>
+            <label class="ms-field">Количество<input type="number" name="spawnCount" value="{{count}}" min="1" max="50" step="1" required></label>
             <label class="ms-field">Шаг, пикс.<input type="number" name="spawnSpacing" value="{{spacing}}" min="0" step="any" required></label>
           </div>
           <div class="ms-actions"><button type="button" data-screen-action="pickSpawn" data-index="{{@index}}">Указать на карте</button><button type="button" data-screen-action="deleteSpawn" data-index="{{@index}}" class="ms-danger">Убрать</button></div>
@@ -218,4 +230,5 @@
   <section class="ms-section"><h2>События сцены</h2><form data-screen-form="emitEvent" class="ms-inline-form"><input name="eventName" placeholder="Имя события для ручного запуска" aria-label="Имя события" pattern="[a-z][a-z0-9_.-]{0,99}" required><button type="submit">Сообщить событие</button></form><p class="ms-note">Последние 100 записей. Старые запуски и повторные уведомления не переигрывают события.</p><div class="ms-event-log">{{#each eventLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">Источник: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">Событий пока нет.</p>{{/each}}</div></section>
   {{/if}}
   {{/if}}
+</div>
 </div>
