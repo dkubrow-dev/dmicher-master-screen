@@ -66,16 +66,16 @@ export class ShopsManagerApplication extends HandlebarsApplicationMixin(Applicat
     if (action === "refresh") return this.refresh();
     if (!context.scene || context.scene.id !== this.sceneId) throw new Error("Сцена изменилась. Обновите список магазинов.");
     // Re-read the session instead of trusting the rendered owner or actor fields.
-    const shop = this.controller.shop.listSceneShops(context.scene).find((entry) => entry.tokenId === data.tokenId);
+    const shop = this.controller.shop.listSceneShops(context.scene).find((entry) => entry.tokenId === data.tokenId && (entry.schemeId ?? "main") === (data.schemeId ?? "main"));
     if (!shop) throw new Error("Магазин больше недоступен.");
     if (action === "join" || action === "release") {
       const session = shop.session;
       if (!session || (session.id ?? session.sessionId) !== data.sessionId) throw new Error("Сессия магазина изменилась. Обновите список.");
       if (action === "join") {
         if (shop.expired || expiredSession(session)) throw new Error("Сессия магазина уже истекла.");
-        return this.controller.openShop(shop.tokenId, { actorTokenId: session.actorTokenId, sessionId: session.id ?? session.sessionId, join: true });
+        return this.controller.openShop(shop.tokenId, { schemeId: shop.schemeId ?? "main", actorTokenId: session.actorTokenId, sessionId: session.id ?? session.sessionId, join: true });
       }
-      await this.controller.shop.releaseSession({ sceneId: context.scene.id, tokenId: shop.tokenId, sessionId: session.id ?? session.sessionId });
+      await this.controller.shop.releaseSession({ sceneId: context.scene.id, schemeId: shop.schemeId ?? "main", tokenId: shop.tokenId, sessionId: session.id ?? session.sessionId });
     } else if (action === "approve" || action === "reject") {
       const request = (shop.pending ?? []).find((entry) => entry.messageId === data.messageId && entry.status === "pending");
       if (!request) throw new Error("Предложение уже обработано или больше недоступно.");

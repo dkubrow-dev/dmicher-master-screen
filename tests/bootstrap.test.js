@@ -214,15 +214,16 @@ test("switching editor mode requests one discard decision; actor observation pre
     await editor.handleAction("actor");
     assert.equal(confirmations, 0);
     assert.equal(editor.rendered, true);
-    assert.deepEqual(visibility, [false]);
+    assert.deepEqual(visibility, []);
     await controller.setMode("constructor");
     assert.equal(controller.editor, editor);
-    assert.deepEqual(visibility, [false, true]);
+    assert.deepEqual(visibility, []);
     assert.equal(editor.dirty, true);
     await editor.handleAction("director");
     assert.equal(confirmations, 1);
     assert.equal(controller.editor.mode, "director");
-    assert.equal(controller.editor.options.window.frame, undefined);
+    assert.equal(controller.editor, editor, "director reuses the same IDE application");
+    assert.equal(controller.editor.options.window.frame, false);
   } finally { await f.dispose(); }
 });
 

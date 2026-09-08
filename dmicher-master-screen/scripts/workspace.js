@@ -3,6 +3,7 @@ import { asArray, getRuntime } from "./store.js";
 import { isExecutionHalted } from "./execution.js";
 
 const allowed = new Set(["Actor", "Item", "JournalEntry", "JournalEntryPage", "RollTable"]);
+const writes = new WeakMap();
 const apps = () => [...new Set([...asArray(foundry.applications?.instances), ...Object.values(ui.windows ?? {})])];
 const descriptor = (app) => ({ uuid: app.document?.uuid ?? app.object?.uuid,
   x: Number(app.position?.left) || 0, y: Number(app.position?.top) || 0,
@@ -28,7 +29,8 @@ async function renderSheet(app) {
 
 /** Only explicit document sheets; no arbitrary window serialization or prototype changes. */
 export class WorkspaceManager {
-  constructor() {
+  constructor({ isolated = false } = {}) {
+    this.isolated = isolated; this.schemes = new Map();
     this.slots = new Map(); this.generation = 0; this.saving = Promise.resolve(); this.lifecycle = Promise.resolve();
     this.activeKey = null; this.activeRunId = ""; this.requestedKey = null; this.requestedRunId = "";
     this.activePlan = [];
@@ -40,11 +42,13 @@ export class WorkspaceManager {
   key(scene, state) { return `${scene.id}:${state.schemeId ?? "main"}`; }
   async persist(key, runId, entries) {
     const snapshot = structuredClone(entries);
-    this.saving = this.saving.catch(() => {}).then(async () => {
-      const records = structuredClone(game.user.getFlag(MODULE_ID, "workspaces") ?? {});
+    const user = game.user;
+    this.saving = (writes.get(user) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      const records = structuredClone(user.getFlag(MODULE_ID, "workspaces") ?? {});
       records[key] = { runId, entries: snapshot };
-      await game.user.setFlag(MODULE_ID, "workspaces", records);
+      await user.setFlag(MODULE_ID, "workspaces", records);
     });
+    writes.set(user, this.saving);
     return this.saving;
   }
   entries(key) {
@@ -63,6 +67,14 @@ export class WorkspaceManager {
     return this.lifecycle;
   }
   apply(scene, state = getRuntime(scene)) {
+    if (!this.isolated && state.schemeId !== "main") {
+      const key = this.key(scene, state);
+      if (!this.schemes.has(key)) this.schemes.set(key, new WorkspaceManager({ isolated: true }));
+      return this.schemes.get(key).apply(scene, state);
+    }
+    if (!this.isolated) for (const [key, manager] of this.schemes) if (!key.startsWith(`${scene?.id}:`)) {
+      void manager.close(); this.schemes.delete(key);
+    }
     if (scene && isExecutionHalted(scene, state)) {
       this.generation++;
       // Keep already visible sheets and their geometry; invalidate pending presentations.
@@ -73,7 +85,10 @@ export class WorkspaceManager {
     if (this.requestedKey === key && this.requestedRunId === runId) return this.lifecycle;
     this.requestedKey = key; this.requestedRunId = runId;
     const generation = ++this.generation;
-    const current = () => generation === this.generation && (!key || (globalThis.canvas?.scene?.id === scene.id && !isExecutionHalted(scene)));
+    const current = () => {
+      const actual = scene ? getRuntime(scene, { schemeId: state.schemeId }) : null;
+      return generation === this.generation && (!key || (globalThis.canvas?.scene?.id === scene.id && actual.runId === runId && !isExecutionHalted(scene, actual)));
+    };
     return this.queue(async () => {
       if (!current()) return;
       // Read current positions before the old scene's sheets are closed, including legacy sheets.
@@ -142,11 +157,13 @@ export class WorkspaceManager {
     }
   }
   close() {
+    const children = [...this.schemes.values()].map((manager) => manager.close()); this.schemes.clear();
     this.generation++;
-    const scene = globalThis.canvas?.scene, state = getRuntime(scene);
+    const scene = globalThis.canvas?.scene, schemeId = this.activeKey?.split(":")[1] ?? "main", state = getRuntime(scene, { schemeId });
     const key = scene && state.runId ? this.key(scene, state) : null;
     this.requestedKey = key; this.requestedRunId = state.runId;
     return this.queue(async () => {
+      await Promise.all(children);
       if (this.activeKey) await this.remember(this.activeKey, this.activeRunId);
       if (key) {
         const saved = game.user.getFlag(MODULE_ID, "workspaces")?.[key];

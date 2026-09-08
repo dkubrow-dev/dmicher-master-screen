@@ -2,6 +2,7 @@
   {{#if missing}}<p class="ms-note">Откройте сцену под учётной записью мастера.</p>{{else}}
   <header class="ms-toolbar"><h2>Диалоги и действия</h2><span class="ms-note">{{sceneName}}</span></header>
   <p class="ms-status">Ручной показ: ответы не выполняют события и не запускают автоматизацию. Каталог доступен даже после полной остановки сцены.</p>
+  <label class="ms-field">Схема<select name="catalogScheme">{{selectOptions schemes selected=schemeId valueAttr="schemeId" labelAttr="schemeName"}}</select></label>
   <label class="ms-field">Подготовленный эпизод<select name="catalogEpisode">{{selectOptions episodes selected=episodeId valueAttr="id" labelAttr="name"}}</select></label>
   <div class="ms-episode-tabs">{{#each dialogues}}<button type="button" data-catalog-action="select" data-dialogue-id="{{id}}" class="{{#if selected}}is-selected{{/if}}">{{name}}</button>{{else}}<p class="ms-note">В этом эпизоде нет диалогов.</p>{{/each}}</div>
   {{#if dialogue}}

@@ -11,6 +11,7 @@ const field = (root, name) => root?.querySelector(`[name="${name}"]`);
 const value = (root, name, fallback = "") => field(root, name)?.value ?? fallback;
 const checked = (root, name) => field(root, name)?.checked === true;
 const number = (root, name, label, options) => requireNumber(value(root, name), label, options);
+const editorContextKey = (context, id) => `${context.scene?.id}:${context.definition?.schemeId && context.definition.schemeId !== "main" ? `${context.definition.schemeId}:` : ""}${id}`;
 const errorMessage = (error) => {
   console.error(`${MODULE_ID} |`, error);
   ui.notifications.error(error?.message ?? "Не удалось выполнить действие ширмы.");
@@ -144,7 +145,7 @@ export class EditorApplication extends ScreenFormApplication {
   refresh() {
     const context = this.controller.getContext();
     const episodeId = context.episode?.id ?? context.definition?.episodes?.[0]?.id;
-    if (this.rendered && this.contextKey !== `${context.scene?.id}:${episodeId}`) return this.render({ force: true });
+    if (this.rendered && this.contextKey !== editorContextKey(context, episodeId)) return this.render({ force: true });
     return super.refresh();
   }
 
@@ -172,7 +173,7 @@ export class EditorApplication extends ScreenFormApplication {
       return { ...parent, missing: true, isGM: context.isGM, isConstructor: this.mode === "constructor" };
     }
     const episode = context.episode ?? context.definition.episodes[0];
-    const key = `${context.scene.id}:${episode?.id}`;
+    const key = editorContextKey(context, episode?.id);
     this.selectDraftContext(key);
     if ((!this.draft || !this.dirty) && episode) {
       this.draft = clone(episode);
@@ -191,12 +192,12 @@ export class EditorApplication extends ScreenFormApplication {
       schemeName: context.definition.schemeName,
       contextKey: this.contextKey,
       episode: draft ? { ...draft, zones: (draft.zones ?? []).map((zone) => ({ ...zone,
-        triggerFields: buildTriggerFields(zone.trigger, context.definition.episodes, { prefix: "zone-trigger", schemeName: context.definition.schemeName }) })) } : draft,
+        triggerFields: buildTriggerFields(zone.trigger, context.definition.episodes, { prefix: "zone-trigger", schemeId: context.definition.schemeId, schemeName: context.definition.schemeName }) })) } : draft,
       hasEpisode: Boolean(draft),
       episodes: context.definition.episodes.map((entry) => ({ ...entry,
         selected: entry.id === draft?.id,
         incoming: incoming.includes(entry.id),
-        allowed: context.runtime.halted || canTransition(context.definition, context.runtime.episodeId, entry.id)
+        allowed: true
       })),
       otherEpisodes: context.definition.episodes.filter((entry) => entry.id !== draft?.id).map((entry) => ({ ...entry, incoming: incoming.includes(entry.id) })),
       graph,
@@ -219,7 +220,7 @@ export class EditorApplication extends ScreenFormApplication {
         ...Array.from(context.scene.tiles?.values?.() ?? []).map((tile) => ({ value: `Tile:${tile.id}`, name: `Тайл · ${tile.name || tile.texture?.src?.split("/").pop() || tile.id}` }))
       ],
       interactions: (draft?.interactions ?? []).map((entry) => ({ ...entry, targetValue: `${entry.target.type}:${entry.target.id}`,
-        triggerFields: buildTriggerFields(entry.trigger, context.definition.episodes, { prefix: "action-trigger", schemeName: context.definition.schemeName }) })),
+        triggerFields: buildTriggerFields(entry.trigger, context.definition.episodes, { prefix: "action-trigger", schemeId: context.definition.schemeId, schemeName: context.definition.schemeName }) })),
       taggedObjects: (context.objects ?? []).map((object) => {
         const key = `${context.scene.id}:${object.type}:${object.id}`;
         return { ...object, sceneId: context.scene.id, tagsText: this.tagDrafts.get(key) ?? object.tags.join(", "), unsaved: this.tagDrafts.has(key) };
@@ -271,11 +272,16 @@ export class EditorApplication extends ScreenFormApplication {
     const root = this.element.querySelector("[data-episode-fields]");
     if (!root || !this.draft) return this.draft;
     const draft = clone(this.draft);
+    const block = root.dataset?.legacyBlock;
+    const includes = (name) => !block || block === name;
+    if (includes("episode")) {
     draft.name = value(root, "name").trim();
     if (!draft.name) throw new Error("Укажите название эпизода.");
     draft.allowFromAll = checked(root, "allowFromAll");
     draft.from = [...root.querySelectorAll('[name="from"]:checked')].map((input) => input.value);
     draft.stop = checked(root, "stop");
+    }
+    if (includes("entry")) {
     draft.pause = checked(root, "pause");
     draft.sound = value(root, "sound").trim();
     draft.spawns = [...root.querySelectorAll("[data-spawn-row]")].map((row) => ({
@@ -286,6 +292,8 @@ export class EditorApplication extends ScreenFormApplication {
       count: number(row, "spawnCount", "Количество подкреплений", { min: 1, max: 50 }),
       spacing: number(row, "spawnSpacing", "Шаг размещения")
     }));
+    }
+    if (includes("zones")) {
     draft.zones = [...root.querySelectorAll("[data-zone-row]")].map((row) => ({
       id: row.dataset.zoneRow,
       label: value(row, "zoneLabel").trim(),
@@ -294,6 +302,8 @@ export class EditorApplication extends ScreenFormApplication {
       height: number(row, "zoneHeight", "Высота зоны", { min: 1 }),
       targetEpisodeId: value(row, "zoneTarget"), trigger: readTriggerFields(row, "zone-trigger")
     }));
+    }
+    if (includes("subscriptions")) {
     draft.subscriptions = [...root.querySelectorAll("[data-subscription-row]")].map((row) => ({
       id: row.dataset.subscriptionRow, enabled: checked(row, "subscriptionEnabled"),
       event: value(row, "subscriptionEvent").trim(), kind: value(row, "subscriptionKind"),
@@ -302,13 +312,17 @@ export class EditorApplication extends ScreenFormApplication {
       audience: { gms: checked(row, "audienceGMs"), interactor: checked(row, "audienceInteractor"), nearby: checked(row, "audienceNearby"),
         range: number(row, "audienceRange", "Дальность сообщения"), visibleOnly: checked(row, "audienceVisible") }
     }));
+    }
+    if (includes("dialogues")) {
     draft.interactions = [...root.querySelectorAll("[data-interaction-row]")].map((row) => {
       const [type, id] = value(row, "actionTarget").split(":");
       return { id: row.dataset.interactionRow, name: value(row, "actionName").trim(), enabled: checked(row, "actionEnabled"),
         target: { type, id }, range: number(row, "actionRange", "Дальность взаимодействия"), eventName: value(row, "actionEvent").trim(),
         trigger: readTriggerFields(row, "action-trigger") };
     });
+    }
     for (const audience of ["gm", "players"]) {
+      if (!includes(audience === "gm" ? "workspaceGM" : "workspacePlayers")) continue;
       draft.workspace[audience] = [...root.querySelectorAll(`[data-workspace-row="${audience}"]`)].map((row) => ({
         uuid: value(row, "windowUuid").trim(),
         x: number(row, "windowX", "Позиция окна X"), y: number(row, "windowY", "Позиция окна Y"),
@@ -345,7 +359,7 @@ export class EditorApplication extends ScreenFormApplication {
 
   async handleAction(action, button) {
     const context = this.controller.getContext();
-    const currentKey = `${context.scene?.id}:${context.episode?.id ?? context.definition?.episodes?.[0]?.id}`;
+    const currentKey = editorContextKey(context, context.episode?.id ?? context.definition?.episodes?.[0]?.id);
     const shownKey = this.element?.querySelector?.("[data-editor-context]")?.dataset?.editorContext ?? this.contextKey;
     if (shownKey && shownKey !== currentKey) {
       void this.refresh();
@@ -508,21 +522,22 @@ export class TokenEditorApplication extends ScreenFormApplication {
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/token-editor.hbs` } };
 
-  constructor(controller, tokenId, { episodeId, ...options } = {}) {
-    const context = controller.getContext();
+  constructor(controller, tokenId, { episodeId, schemeId, ...options } = {}) {
+    const context = controller.getContext({ schemeId });
     const selectedId = episodeId ?? context.selectedEpisodeId;
-    super({ ...options, id: `dmicher-master-screen-token-${context.scene?.id}-${selectedId}-${tokenId}` });
+    super({ ...options, id: `dmicher-master-screen-token-${context.scene?.id}-${context.definition.schemeId}-${selectedId}-${tokenId}` });
     this.controller = controller;
     this.tokenId = tokenId;
     this.episodeId = selectedId;
     this.sceneId = context.scene?.id;
+    this.schemeId = context.definition.schemeId;
     this.draft = null;
     this.draftRevision = null;
   }
 
   async _prepareContext(options) {
     const parent = await super._prepareContext(options);
-    const context = this.controller.getContext();
+    const context = this.controller.getContext({ schemeId: this.schemeId });
     const token = context.tokens.find((entry) => entry.id === this.tokenId);
     const episode = context.definition.episodes.find((entry) => entry.id === this.episodeId);
     if (!token || !episode || context.scene?.id !== this.sceneId || !context.isGM) return { ...parent, missing: true };
@@ -538,8 +553,8 @@ export class TokenEditorApplication extends ScreenFormApplication {
       points: formatPointRows(this.draft.patrol.points),
       items: this.draft.shop.items.map((item) => ({ id: item.id, name: item.data?.name ?? "Предмет", img: item.data?.img, stock: item.stock })),
       shopTiles: this.draft.shop.display === "tiles",
-      shopTriggerFields: buildTriggerFields(this.draft.shop.trigger, context.definition.episodes, { prefix: "shop-trigger", schemeName: context.definition.schemeName }),
-      interactionTriggerFields: buildTriggerFields(this.draft.interaction.trigger, context.definition.episodes, { prefix: "interaction-trigger", schemeName: context.definition.schemeName }),
+      shopTriggerFields: buildTriggerFields(this.draft.shop.trigger, context.definition.episodes, { prefix: "shop-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
+      interactionTriggerFields: buildTriggerFields(this.draft.interaction.trigger, context.definition.episodes, { prefix: "interaction-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
       episodes: context.definition.episodes.map((entry) => ({ ...entry, selected: entry.id === this.draft.interaction.targetEpisodeId })),
       saveStatus: this.dirty ? "Есть несохранённые изменения" : "Настройки принадлежат выбранному эпизоду"
     };
@@ -607,7 +622,7 @@ export class TokenEditorApplication extends ScreenFormApplication {
   async handleAction(action, button) {
     if (this.controller.getContext().scene?.id !== this.sceneId) throw new Error("Выбрана другая сцена. Откройте настройки её токена.");
     if (action === "saveToken") {
-      await this.controller.saveToken(this.tokenId, this.readBehavior(), this.episodeId, { sceneId: this.sceneId, expectedRevision: this.draftRevision });
+      await this.controller.saveToken(this.tokenId, this.readBehavior(), this.episodeId, { sceneId: this.sceneId, schemeId: this.schemeId, expectedRevision: this.draftRevision });
       this.resetDraft();
       return this.render({ force: true });
     }

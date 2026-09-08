@@ -146,6 +146,70 @@
 .dmicher-master-screen .ms-object-tags [data-tag-status] { grid-column: 1 / -1; margin: 0; }
 .dmicher-master-screen .ms-emergency-stop { display: block; width: 100%; min-height: 52px; background: var(--dmicher-row-danger); border: 2px solid var(--dmicher-danger-text); color: var(--dmicher-danger-text); font-size: 1.05rem; font-weight: 700; }
 .dmicher-master-screen .ms-emergency-panel { border-color: var(--dmicher-danger-text); }
+.dmicher-master-screen .ms-ide-shell { height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; font-size: 12px; }
+.dmicher-master-screen .ms-ide-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 3px 5px; min-height: 30px; background: var(--dmicher-header-bg); border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-toolbar > span { display: flex; min-width: 0; gap: 2px; }
+.dmicher-master-screen .ms-ide-shell button { width: auto; min-width: 0; min-height: 24px; height: auto; padding: 2px 6px; font-size: 12px; line-height: 1.3; border-radius: 3px; box-shadow: none; }
+.dmicher-master-screen .ms-ide-toolbar button { white-space: nowrap; border-color: transparent; display: inline-flex; align-items: center; gap: 4px; }
+.dmicher-master-screen .ms-ide-toolbar button[aria-pressed="true"], .dmicher-master-screen .ms-ide-tabs button[aria-pressed="true"] { background: var(--dmicher-row-hover); border-bottom-color: var(--dmicher-accent); }
+.dmicher-master-screen .ms-ide-scene-line { display: flex; justify-content: space-between; align-items: center; gap: 4px; padding: 3px 8px; min-height: 26px; border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-scene-line > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.dmicher-master-screen .ms-ide-shell .ms-ide-emergency { color: var(--dmicher-danger-text); border-color: currentColor; flex: 0 0 auto; font-weight: 600; }
+.dmicher-master-screen .ms-ide-zones { display: grid; grid-template-rows: minmax(0, var(--ms-ide-main, 43%)) 7px minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
+.dmicher-master-screen[data-dock-side="bottom"] .ms-ide-zones { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, var(--ms-ide-main, 36%)) 7px minmax(0, 1fr); }
+.dmicher-master-screen .ms-ide-zone { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.dmicher-master-screen .ms-ide-tabs { display: flex; flex-wrap: nowrap; gap: 1px; padding: 2px 4px; border-bottom: 1px solid var(--dmicher-border-muted); background: var(--dmicher-surface-muted); min-height: 29px; flex-shrink: 0; }
+.dmicher-master-screen .ms-ide-tabs button { white-space: nowrap; border-color: transparent; border-bottom: 2px solid transparent; padding: 2px 5px; }
+.dmicher-master-screen .ms-ide-tabs .ms-ide-gear { margin-left: auto; }
+.dmicher-master-screen .ms-ide-tab-settings { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 4px 7px; background: var(--dmicher-surface-raised); border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-tab-settings label { display: inline-flex; gap: 4px; align-items: center; }
+.dmicher-master-screen .ms-ide-zone-content { overflow: auto; min-height: 0; min-width: 0; padding: 5px 7px; flex: 1; scrollbar-gutter: stable; }
+.dmicher-master-screen .ms-ide-main .ms-ide-zone-content { padding: 2px 0; }
+.dmicher-master-screen .ms-ide-divider { background: var(--dmicher-border-muted); cursor: row-resize; touch-action: none; position: relative; }
+.dmicher-master-screen .ms-ide-divider::after { content: ""; position: absolute; height: 3px; width: 38px; left: calc(50% - 19px); top: 2px; border-radius: 2px; background: var(--dmicher-accent); }
+.dmicher-master-screen[data-dock-side="bottom"] .ms-ide-divider { cursor: col-resize; }
+.dmicher-master-screen[data-dock-side="bottom"] .ms-ide-divider::after { width: 3px; height: 38px; left: 2px; top: calc(50% - 19px); }
+.dmicher-master-screen .ms-ide-divider:hover, .dmicher-master-screen .ms-ide-divider:focus-visible { background: var(--dmicher-row-hover); }
+.dmicher-master-screen .ms-ide-tree { width: 100%; margin: 0; border: 0; border-collapse: collapse; table-layout: fixed; background: transparent; }
+.dmicher-master-screen .ms-ide-tree tr { border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-tree td { padding: 1px 3px; height: 27px; }
+.dmicher-master-screen .ms-ide-tree td:last-child { width: 90px; text-align: right; white-space: nowrap; }
+.dmicher-master-screen .ms-ide-tree tr.is-selected, .dmicher-master-screen .ms-ide-list-row.is-selected, .dmicher-master-screen .ms-ide-block-link.is-selected { background: var(--dmicher-row-hover); outline: 1px solid var(--dmicher-accent); outline-offset: -1px; }
+.dmicher-master-screen .ms-ide-shell .ms-tree-name { display: inline-flex; align-items: center; border: 0; background: transparent; text-align: left; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.dmicher-master-screen .ms-ide-tree tr[aria-level="1"] .ms-tree-name { max-width: calc(100% - 22px); }
+.dmicher-master-screen .ms-ide-shell .ms-tree-toggle { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; padding: 1px 3px; width: 18px; vertical-align: middle; }
+.dmicher-master-screen .ms-ide-shell .ms-tree-child { padding-left: 22px; }
+.dmicher-master-screen .ms-color-swatch { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 2px; margin-right: 5px; font-size: 11px; }
+.dmicher-master-screen .ms-ide-node-actions { display: flex; flex-wrap: wrap; gap: 3px; padding: 3px 5px; border-top: 1px solid var(--dmicher-border-muted); flex-shrink: 0; }
+.dmicher-master-screen .ms-ide-list-row { display: flex; justify-content: space-between; align-items: center; gap: 4px; min-width: 0; padding: 2px 4px; border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-list-row > span:first-child { overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-ide-inline-actions { display: flex; gap: 2px; }
+.dmicher-master-screen .ms-ide-shell .ms-ide-block-link { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--dmicher-border-muted); text-align: left; padding: 6px 8px; background: transparent; }
+.dmicher-master-screen .ms-ide-detail fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.dmicher-master-screen .ms-ide-detail .ms-parameter-row, .dmicher-master-screen .ms-ide-detail .ms-subscriber-row { padding: 5px 0; border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-ide-shell .ms-field { font-size: 12px; gap: 3px; margin: 5px 0; }
+.dmicher-master-screen .ms-ide-shell .ms-field input, .dmicher-master-screen .ms-ide-shell .ms-field select { min-height: 25px; height: 25px; font-size: 12px; }
+.dmicher-master-screen .ms-ide-shell .ms-check { font-size: 12px; gap: 5px; margin: 5px 0; }
+.dmicher-master-screen .ms-ide-shell .ms-note { font-size: 11px; line-height: 1.4; margin: 4px 0 6px; }
+.dmicher-master-screen .ms-ide-shell h3, .dmicher-master-screen .ms-ide-shell h4 { font-size: 12px; margin: 8px 0 4px; padding: 0; }
+.dmicher-master-screen .ms-ide-shell .ms-node-heading { padding: 5px; border-radius: 3px; }
+.dmicher-master-screen .ms-ide-colors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.dmicher-master-screen .ms-ide-colors .dmicher-color-field { min-width: 0; }
+.dmicher-master-screen .ms-ide-shell .ms-grid-two, .dmicher-master-screen .ms-ide-shell .ms-grid-four { gap: 6px; }
+.dmicher-master-screen .ms-ide-shell .ms-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dmicher-master-screen .ms-ide-shell .ms-details, .dmicher-master-screen .ms-ide-shell .ms-section, .dmicher-master-screen .ms-ide-shell .ms-config-row { padding: 5px; margin: 5px 0; border-radius: 3px; }
+.dmicher-master-screen .ms-ide-shell .ms-details > summary { padding: 5px 0; }
+.dmicher-master-screen .ms-ide-shell .ms-token-row { padding: 4px; gap: 5px; border-radius: 3px; }
+.dmicher-master-screen .ms-ide-shell .ms-token-title img { width: 25px; height: 25px; }
+.dmicher-master-screen .ms-ide-save { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; position: sticky; bottom: -5px; padding: 5px 0; background: var(--dmicher-content-bg); border-top: 1px solid var(--dmicher-border-muted); margin-top: 6px; z-index: 2; }
+.dmicher-master-screen .ms-ide-save > span { margin-right: auto; }
+.dmicher-master-screen .ms-ide-choice { position: absolute; inset: 0; z-index: 20; background: #0008; display: flex; align-items: center; justify-content: center; padding: 10px; }
+.dmicher-master-screen .ms-ide-choice > div { padding: 12px; max-width: 400px; background: var(--dmicher-content-bg); border: 1px solid var(--dmicher-border); border-radius: 4px; }
+.dmicher-master-screen .ms-ide-choice button { margin: 2px; }
+@container ms-constructor (max-width: 440px) {
+  .dmicher-master-screen .ms-ide-mode-buttons button > span { display: none; }
+  .dmicher-master-screen .ms-ide-tabs button { padding-left: 3px; padding-right: 3px; font-size: 11px; }
+}
 @media (max-width: 640px) {
   .dmicher-master-screen .ms-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dmicher-master-screen .ms-shop-columns { grid-template-columns: 1fr; }

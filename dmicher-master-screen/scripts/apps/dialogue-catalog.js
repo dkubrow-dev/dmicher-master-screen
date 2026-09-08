@@ -1,5 +1,6 @@
 import { themedClasses } from "../ui.js";
 import { generics } from "../generics.js";
+import { getDefinitions, getDefinition } from "../store.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const MODULE_ID = "dmicher-master-screen";
@@ -18,6 +19,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
     super(options);
     this.controller = controller;
     this.sceneId = null;
+    this.schemeId = null;
     this.episodeId = null;
     this.dialogueId = null;
     this.nodeId = null;
@@ -32,11 +34,15 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
     if (!context.isGM || !context.scene) return { ...parent, missing: true };
     if (context.scene.id !== this.sceneId) {
       this.sceneId = context.scene.id;
+      this.schemeId = context.definition.schemeId;
       this.episodeId = context.selectedEpisodeId ?? context.definition.episodes[0]?.id;
       this.dialogueId = null;
       this.nodeId = null;
     }
-    const episode = context.definition.episodes.find((entry) => entry.id === this.episodeId) ?? context.definition.episodes[0];
+    const schemes = getDefinitions(context.scene);
+    if (!schemes.some((entry) => entry.schemeId === this.schemeId)) this.schemeId = schemes[0]?.schemeId;
+    const definition = getDefinition(context.scene, { schemeId: this.schemeId });
+    const episode = definition.episodes.find((entry) => entry.id === this.episodeId) ?? definition.episodes[0];
     this.episodeId = episode?.id;
     const dialogues = episode?.dialogues ?? [];
     const dialogue = dialogues.find((entry) => entry.id === this.dialogueId) ?? dialogues[0];
@@ -46,7 +52,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
     const target = dialogue?.target?.type === "Token" ? context.scene.tokens.get(dialogue.target.id) : context.scene.tiles?.get(dialogue?.target?.id);
     const targetName = (target) => (target?.type === "Token" ? context.scene.tokens.get(target.id)?.name : context.scene.tiles?.get(target?.id)?.name) || target?.id || "Не выбран";
     return { ...parent, sceneName: context.scene.name, sceneId: this.sceneId,
-      episodeId: this.episodeId, episodes: context.definition.episodes,
+      schemeId: this.schemeId, schemes, episodeId: this.episodeId, episodes: definition.episodes,
       dialogues: dialogues.map((entry) => ({ ...entry, selected: entry.id === this.dialogueId })),
       dialogue, targetName: targetName(dialogue?.target), node: node ? { ...node, art: node.art || target?.texture?.src || target?.actor?.img || "" } : node,
       nodes: (dialogue?.nodes ?? []).map((entry, index) => ({ id: entry.id, label: `${index + 1}. ${(entry.text || "Без текста").slice(0, 45)}` })),
@@ -63,7 +69,10 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
     this.events = new this.element.ownerDocument.defaultView.AbortController();
     const listeners = { signal: this.events.signal };
     this.element.addEventListener("change", (event) => {
-      if (event.target.name === "catalogEpisode") {
+      if (event.target.name === "catalogScheme") {
+        this.schemeId = event.target.value; this.episodeId = null; this.dialogueId = null; this.nodeId = null;
+        void this.refresh();
+      } else if (event.target.name === "catalogEpisode") {
         this.episodeId = event.target.value;
         this.dialogueId = null; this.nodeId = null;
         void this.refresh();
@@ -87,7 +96,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
     if (!context.isGM || context.scene?.id !== this.sceneId) throw new Error("Сцена изменилась. Обновите каталог под учётной записью мастера.");
     if (action === "select") { this.dialogueId = data.dialogueId; this.nodeId = null; return this.refresh(); }
     if (!this.dialogueId || !this.episodeId) throw new Error("Выберите диалог.");
-    const descriptor = { sceneId: this.sceneId, episodeId: this.episodeId, dialogueId: this.dialogueId };
+    const descriptor = { sceneId: this.sceneId, schemeId: this.schemeId, episodeId: this.episodeId, dialogueId: this.dialogueId };
     if (action === "self") return this.controller.dialogues.openManualDialogue(descriptor);
     if (action === "players") {
       if (!this.recipients.size) throw new Error("Выберите игроков для показа диалога.");

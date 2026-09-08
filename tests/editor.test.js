@@ -31,6 +31,7 @@ function fixture() {
   runtime.disabledTokens = ["guard"];
   const context = { definition, runtime, scene: { id: "scene", name: "Market" }, isGM: true,
     selectedEpisodeId: "calm", episode: definition.episodes[0], tokens: [{ id: "guard", name: "Guard", texture: { src: "guard.webp" } }] };
+  context.scene.getFlag = (_scope, key) => key === "definitions" ? { main: definition } : key === "runtimes" ? { main: runtime } : undefined;
   const saved = [];
   const controller = { getContext: () => context, saveToken: async (...args) => saved.push(args) };
   return { context, controller, saved };
@@ -75,7 +76,7 @@ test("director reads persisted disabled IDs and uses domain rules including emer
   const app = new EditorApplication(f.controller, { mode: "director" });
   const view = await app._prepareContext({});
   assert.equal(view.tokens[0].disabled, true);
-  assert.equal(view.episodes.find((entry) => entry.id === "tension").allowed, false);
+  assert.equal(view.episodes.find((entry) => entry.id === "tension").allowed, true, "manual GM transitions are unrestricted");
   assert.equal(view.episodes.find((entry) => entry.id === "stop").allowed, true);
   assert.equal(view.isDirector, true);
   assert.equal(view.schemeName, f.context.definition.schemeName);
@@ -189,7 +190,7 @@ test("shop manager joins the current session participant, ignoring supplied acto
   const view = await app._prepareContext({});
   assert.equal(view.shops[0].occupied, true);
   await app.handleAction("join", { tokenId: "guard", sessionId: "session-1", actorTokenId: "foreign" });
-  assert.deepEqual(f.calls, [["join", "guard", { actorTokenId: "pc", sessionId: "session-1", join: true }]]);
+  assert.deepEqual(f.calls, [["join", "guard", { actorTokenId: "pc", sessionId: "session-1", schemeId: "main", join: true }]]);
 });
 
 test("shop manager refuses stale sessions and already processed exchange requests", async () => {
@@ -311,7 +312,7 @@ test("manual dialogue catalog reads preparation while halted and calls only manu
   globalThis.ui = { notifications: { info() {} } };
   app.recipients.add("player");
   await app.handleAction("players");
-  assert.deepEqual(calls, [{ sceneId: "scene", episodeId: "calm", dialogueId: "talk", userIds: ["player"] }]);
+  assert.deepEqual(calls, [{ sceneId: "scene", schemeId: "main", episodeId: "calm", dialogueId: "talk", userIds: ["player"] }]);
   assert.equal(f.context.runtime.halted, true);
 });
 
@@ -342,7 +343,7 @@ for (const version of ["13.351", "14.366"]) {
     const manager = new ShopsManagerApplication(shops.controller);
     const managerTemplate = hbs.compile(readFileSync(new URL("../dmicher-master-screen/templates/shops-manager.hbs", import.meta.url), "utf8"));
     const managerOutput = managerTemplate(await manager._prepareContext({}));
-    assert.ok(managerOutput.includes('data-token-id="guard" data-message-id="message-1"'));
+    assert.match(managerOutput, /data-token-id="guard"[^>]*data-message-id="message-1"/);
     assert.ok(managerOutput.includes("&lt;script&gt;bad&lt;/script&gt;"));
     assert.ok(!managerOutput.includes("<script>"));
     for (const template of ["interaction", "actor-view", "shop", "dialogue", "dialogue-editor", "dialogue-catalog"]) {

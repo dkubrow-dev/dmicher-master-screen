@@ -18,8 +18,8 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/shop.hbs` } };
   constructor(controller, { sceneId, tokenId, actorTokenId, schemeId = "main", sessionId = null, join = false }, options = {}) {
-    const runId = controller.shop.getContext(sceneId, tokenId).runtime?.runId ?? "inactive";
-    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${runId}-${tokenId}-${actorTokenId}-${sessionId ?? "own"}` });
+    const runId = controller.shop.getContext(sceneId, tokenId, schemeId).runtime?.runId ?? "inactive";
+    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${schemeId}-${runId}-${tokenId}-${actorTokenId}-${sessionId ?? "own"}` });
     Object.assign(this, { controller, sceneId, tokenId, actorTokenId, schemeId, sessionId, join });
     this.runId = runId;
     this.requestId = newId(); this.draft = { giveItemIds: [], take: [] };
@@ -32,7 +32,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   async ensureSession() {
     if (this.session || this.sessionError || this.finished) return;
     if (this.join) {
-      const current = this.controller.shop.getContext(this.sceneId, this.tokenId).runtime?.shopSessions?.[this.tokenId];
+      const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId).runtime?.shopSessions?.[this.tokenId];
       if (!current || current.sessionId !== this.sessionId) throw new Error("Сессия участника уже завершилась.");
       this.session = current; this.readOnly = current.userId !== game.user.id;
     } else {
@@ -48,7 +48,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     const base = await super._prepareContext(options);
     let unavailable = "", actor;
     try { await this.ensureSession(); } catch (error) { this.sessionError = error.message; }
-    const current = this.controller.shop.getContext(this.sceneId, this.tokenId);
+    const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId);
     const receipt = Object.values(current.runtime?.tradeRequests ?? {}).find((record) => record.intent?.sessionId === this.sessionId
       && (record.intent.requestId === this.requestId || record.status === "pending"));
     if (receipt) {
@@ -104,7 +104,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.listeners?.abort();
     this.listeners = new this.element.ownerDocument.defaultView.AbortController();
     for (const node of this.element.querySelectorAll("[data-stock-drag]")) node.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData("text/plain", JSON.stringify({ type: "MasterScreenStock", entryId: node.dataset.stockDrag, tokenId: this.tokenId, sceneId: this.sceneId }));
+      event.dataTransfer.setData("text/plain", JSON.stringify({ type: "MasterScreenStock", entryId: node.dataset.stockDrag, tokenId: this.tokenId, sceneId: this.sceneId, schemeId: this.schemeId }));
     }, { signal: this.listeners.signal });
     for (const area of this.element.querySelectorAll("[data-offer-drop]")) {
       area.addEventListener("dragover", (event) => event.preventDefault(), { signal: this.listeners.signal });
@@ -123,13 +123,13 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   async drop(event, side) {
     try {
       const data = JSON.parse(event.dataTransfer?.getData("text/plain") || "{}");
-      if (side === "npc" && data.type === "MasterScreenStock" && data.tokenId === this.tokenId && data.sceneId === this.sceneId) {
+      if (side === "npc" && data.type === "MasterScreenStock" && data.tokenId === this.tokenId && data.sceneId === this.sceneId && data.schemeId === this.schemeId) {
         return this.edit((draft) => { const item = draft.take.find((item) => item.entryId === data.entryId);
           if (item) item.count++; else draft.take.push({ entryId: data.entryId, count: 1 }); });
       }
       if (side !== "player" || data.type !== "Item" || typeof data.uuid !== "string") throw new Error("Перенесите предмет в соответствующую колонку предложения.");
       const item = await fromUuid(data.uuid);
-      const current = this.controller.shop.getContext(this.sceneId, this.tokenId);
+      const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId);
       const actor = validateTradeContext(current, this.intent(), game.user);
       if (item?.documentName !== "Item" || item.parent?.uuid !== actor.uuid) throw new Error("Предмет не принадлежит выбранному персонажу.");
       return this.edit((draft) => { if (!draft.giveItemIds.includes(item.id)) draft.giveItemIds.push(item.id); });
@@ -172,7 +172,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.requestId = newId(); this.sessionError = null; this.feedback = "";
     return this.render({ force: true });
   }
-  static sheet() { return this.controller.shop.getContext(this.sceneId, this.tokenId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
+  static sheet() { return this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
   async close(options = {}) {
     this.listeners?.abort(); clearInterval(this.heartbeat); clearInterval(this.statusTimer);
     this.heartbeat = null; this.statusTimer = null;

@@ -1,5 +1,5 @@
 import { MODULE_ID } from "./model.js";
-import { asArray } from "./store.js";
+import { asArray, getRuntimes } from "./store.js";
 import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
 
 const clone = (value) => structuredClone(value);
@@ -20,16 +20,16 @@ export function createShopSessions({ context, save, lock, authority, validate, v
   const pending = new Map();
   const process = async (command, user) => {
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail("Неизвестная команда магазина.");
-    if ((command.schemeId ?? "main") !== "main") fail("Эта схема магазина не поддерживается.");
-    const initial = context(command.sceneId, command.tokenId);
+    const initial = context(command.sceneId, command.tokenId, command.schemeId ?? "main");
     if (!initial.scene) fail("Сцена магазина не найдена.");
     return lock(initial.scene, async () => {
-      const current = context(command.sceneId, command.tokenId), runtime = clone(current.runtime);
+      const current = context(command.sceneId, command.tokenId, command.schemeId ?? "main"), runtime = clone(current.runtime);
       runtime.shopSessions ??= {};
       const existing = runtime.shopSessions[command.tokenId];
       let session;
       if (command.kind === "open") {
         validate(current, command, user);
+        if (current.scene.getFlag && getRuntimes(current.scene).some((state) => state.schemeId !== runtime.schemeId && sessionIsLive(state.shopSessions?.[command.tokenId]))) fail("Этот магазин уже обслуживается в другой схеме. Завершите ту сессию.");
         if (sessionIsLive(existing) && (existing.userId !== user.id || existing.actorTokenId !== command.actorTokenId)) fail("Этот магазин уже занят другим участником и его персонажем.");
         const reusing = sessionIsLive(existing) && existing.runId === runtime.runId;
         const triggerKey = getTriggerKey(runtime, "shop", command.tokenId);
@@ -38,7 +38,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         if (!gate.allowed) fail(gate.reason);
         session = reusing ? existing : {
           sessionId: foundry.utils.randomID(), userId: user.id, actorTokenId: command.actorTokenId,
-          runId: runtime.runId, schemeId: "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
+          runId: runtime.runId, schemeId: runtime.schemeId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
         };
         if (!reusing) consumeTrigger(runtime, triggerKey, policy);
       } else if (command.kind === "release") {
@@ -50,7 +50,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         }
         await save(current.scene, runtime); onChange(current.scene); return null;
       } else {
-        session = requireShopSession(current, { ...command, runId: existing?.runId, actorTokenId: existing?.actorTokenId, schemeId: "main" }, user);
+        session = requireShopSession(current, { ...command, runId: existing?.runId, actorTokenId: existing?.actorTokenId, schemeId: runtime.schemeId ?? "main" }, user);
         session = clone(session);
         validate(current, { ...command, runId: session.runId, actorTokenId: session.actorTokenId }, user);
         if (command.kind === "offer") {
@@ -59,7 +59,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
           const draft = validateOffer(current, { ...command,
             giveItemIds: command.draft?.giveItemIds, take: command.draft?.take,
             actorTokenId: session.actorTokenId, runId: session.runId, sessionId: session.sessionId,
-            requestId: "draft", schemeId: "main", kind: "exchange" }, user);
+            requestId: "draft", schemeId: runtime.schemeId ?? "main", kind: "exchange" }, user);
           session.draft = clone(draft);
           session.revision = command.revision;
         }

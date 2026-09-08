@@ -101,7 +101,7 @@ test("only the elected full GM can admit events and invalid payloads produce no 
   game.user = game.users.get("player");
   await assert.rejects(f.events.emit(f.scene, { name: "test.event" }));
   game.user = game.users.get("a");
-  await assert.rejects(f.events.emit(f.scene, { name: "bad event" }));
+  await assert.rejects(f.events.emit(f.scene, { name: "bad/event" }));
   await assert.rejects(f.events.emit(f.scene, { name: "test.event", payload: { text: "x".repeat(8100) } }));
   assert.equal(getRuntime(f.scene).eventLog.length, 0);
 });
@@ -133,16 +133,11 @@ test("a script may await emitting another event without locking its own queue", 
   assert.equal(log[1].chainId, log[0].chainId); assert.equal(log[1].depth, 1);
 });
 
-test("automatic A-B episode cycles stop visibly at the chain depth limit", { timeout: 3000 }, async () => {
+test("the same event cannot create ambiguous A-B routes in a scheme", async () => {
   const f = fixture();
   f.definition.episodes[0].subscriptions = [{ id: "to-b", event: "episode.entered", kind: "transition", episodeId: "tension", enabled: true }];
   f.definition.episodes[1].subscriptions = [{ id: "to-a", event: "episode.entered", kind: "transition", episodeId: "calm", enabled: true }];
-  await f.runtime.enter(f.scene, "calm", { force: true });
-  await flush(); await f.events.whenIdle();
-  const log = getRuntime(f.scene).eventLog;
-  assert.equal(log.length, 17);
-  assert.equal(log.at(-1).status, "failed"); assert.equal(log.at(-1).depth, 16);
-  assert.match(getRuntime(f.scene).error, /16/);
+  await assert.rejects(f.runtime.enter(f.scene, "calm", { force: true }));
 });
 
 test("a running macro does not hold Stop and cannot run its next subscription afterward", async () => {

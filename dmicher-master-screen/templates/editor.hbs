@@ -59,13 +59,13 @@
     </details>
   </section>
 
-  <details class="ms-details"><summary>Теги объектов сцены</summary><p class="ms-note">Теги принадлежат токенам и тайлам этой сцены. Укажите их через запятую. Они используются в условиях запуска; регистр при сравнении не учитывается.</p>
+  <details class="ms-details" data-legacy-block="tags"><summary>Теги объектов сцены</summary><p class="ms-note">Теги принадлежат токенам и тайлам этой сцены. Укажите их через запятую. Они используются в условиях запуска; регистр при сравнении не учитывается.</p>
     <div class="ms-list">{{#each taggedObjects}}<div class="ms-object-tags" data-object-tags data-object-type="{{type}}" data-object-id="{{id}}" data-scene-id="{{sceneId}}"><label class="ms-field">{{name}} · {{type}}<input name="objectTags" value="{{tagsText}}" placeholder="hero, trusted"></label><button type="button" data-screen-action="saveObjectTags">Сохранить теги</button><span class="ms-note" data-tag-status>{{#if unsaved}}Не сохранено{{/if}}</span></div>{{else}}<p class="ms-note">Добавьте НИП или тайлы на карту.</p>{{/each}}</div>
   </details>
 
   {{#if hasEpisode}}
   <form data-screen-form="saveEpisode" data-episode-fields class="ms-episode-form">
-    <section class="ms-section">
+    <section class="ms-section" data-legacy-block="episode">
       <div class="ms-toolbar"><h2>Настройка эпизода</h2><code title="Постоянный ID эпизода">{{episode.id}}</code></div>
       <label class="ms-field">Название<input type="text" name="name" value="{{episode.name}}" maxlength="120" required></label>
       <label class="ms-check"><input type="checkbox" name="allowFromAll" {{checked episode.allowFromAll}}> Разрешить вход со всех эпизодов</label>
@@ -77,7 +77,7 @@
       <p class="ms-note">В таком эпизоде не выполняются реплики, движение, появления и остальные автоматические действия. Состояние документов не откатывается.</p>
     </section>
 
-    <details class="ms-details" open>
+    <details class="ms-details" data-legacy-block="tokens" open>
       <summary>Токены сцены</summary>
       <p class="ms-note">Настройте выбранный токен кнопкой или левым кликом по токену на карте в режиме конструктора.</p>
       <div class="ms-list">
@@ -87,7 +87,7 @@
       </div>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="dialogues">
       <summary>Диалоги и взаимодействия</summary>
       <p class="ms-note">Диалог показывает реплики и ответы. Прямое взаимодействие сразу сообщает событие, например нажатие на тайл рычага. Реакции на это событие задаются ниже.</p>
       <div class="ms-list">{{#each episode.dialogues}}<div class="ms-token-row"><span>{{name}}{{#unless enabled}} · выключен{{/unless}}</span><div class="ms-actions"><button type="button" data-screen-action="dialogue" data-dialogue-id="{{id}}">Настроить диалог</button><button type="button" data-screen-action="deleteDialogue" data-dialogue-id="{{id}}" class="ms-danger">Удалить</button></div></div>{{/each}}</div>
@@ -102,7 +102,7 @@
       <button type="button" data-screen-action="addInteraction">Добавить прямое действие</button>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="subscriptions">
       <summary>События и реакции эпизода</summary>
       <p class="ms-note">Имя события связывает источник с реакцией: например, ответ диалога сообщает <code>guard.warned</code>, а подписка запускает макрос, переводит эпизод или отправляет сообщение. Допустимы латинские строчные буквы, цифры, точки, дефис и подчёркивание.</p>
       {{#each subscriptions}}
@@ -117,7 +117,7 @@
       <button type="button" data-screen-action="addSubscription">Добавить реакцию на событие</button>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="entry">
       <summary>При входе: пауза, звук и подкрепление</summary>
       <p class="ms-note">Выполняется один раз при переходе. Переподключение не повторяет действия. Созданные токены сохраняются после выхода из эпизода.</p>
       <label class="ms-check"><input type="checkbox" name="pause" {{checked episode.pause}}> Поставить Foundry на паузу</label>
@@ -141,7 +141,7 @@
       </div>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="zones">
       <summary>Зоны перехода</summary>
       <p class="ms-note">Прямоугольные зоны в координатах карты. Вход токена персонажа игрока запускает разрешённый переход. Зоны действуют только в этом эпизоде.</p>
       {{#each episode.zones}}
@@ -162,7 +162,7 @@
       <button type="button" data-screen-action="addZone">Добавить зону</button>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="workspaceGM">
       <summary>Рабочий стол мастера</summary>
       <p class="ms-note">Окна документов и их положение при входе. Перетащите документ сюда или снимите расположение уже открытых листов. Ширма управляет только своими окнами.</p>
       <div data-workspace-drop="gm" class="ms-drop-zone">
@@ -177,7 +177,7 @@
       </div>
     </details>
 
-    <details class="ms-details">
+    <details class="ms-details" data-legacy-block="workspacePlayers">
       <summary>Окна игроков</summary>
       <p class="ms-note">Открываются только документы, которые игроку разрешено видеть средствами Foundry. Эта настройка не выдаёт новые права на документы.</p>
       <div data-workspace-drop="players" class="ms-drop-zone">
@@ -197,18 +197,18 @@
     </footer>
   </form>
   {{/if}}
-  <section class="ms-toolbar ms-footer"><span class="ms-note">JSON включает сцену и подготовку. Файлы карты и звуков остаются по своим путям.</span><div class="ms-actions"><button type="button" data-screen-action="import">Импорт JSON</button><button type="button" data-screen-action="export">Экспорт JSON</button></div><input type="file" data-import-file accept="application/json,.json" hidden></section>
+  <section class="ms-toolbar ms-footer" data-legacy-block="sceneIO"><span class="ms-note">JSON включает сцену и подготовку. Файлы карты и звуков остаются по своим путям.</span><div class="ms-actions"><button type="button" data-screen-action="import">Импорт JSON</button><button type="button" data-screen-action="export">Экспорт JSON</button></div><input type="file" data-import-file accept="application/json,.json" hidden></section>
   {{/if}}
 
   {{#if isDirector}}
-  <section class="ms-section ms-emergency-panel">
+  <section class="ms-section ms-emergency-panel" data-legacy-block="emergency">
     <button type="button" data-screen-action="haltScene" class="ms-emergency-stop"><i class="fa-solid fa-stop"></i> Остановить всю автоматизацию сцены</button>
     {{#if runtime.halted}}<p class="ms-status">Автоматизация остановлена. Мастер ведёт сцену вручную.</p>{{/if}}
     <p class="ms-note">Мгновенная остановка автоматизации. Положение, здоровье и предметы сохраняются. Ручные диалоги доступны в «Диалоги и действия».</p>
     <div class="ms-actions"><button type="button" data-screen-action="haltScheme">Остановить основную схему</button></div>
     <form data-screen-form="resumeScheme" class="ms-inline-form"><select name="resumeEpisode" aria-label="Эпизод для явного возобновления">{{selectOptions episodes valueAttr="id" labelAttr="name" blank="Выберите эпизод для возобновления"}}</select><button type="submit">Возобновить основную схему</button></form>
   </section>
-  <section class="ms-section">
+  <section class="ms-section" data-legacy-block="playback">
     <h2>{{activeName}}</h2>
     <p class="ms-note">Переход применяет подготовленное состояние и однократные действия. Повторный вход выполняет их заново. Переподключение оставляет текущее состояние.</p>
     <form data-screen-form="transition" class="ms-inline-form">
@@ -218,7 +218,7 @@
     <div class="ms-actions"><button type="button" data-screen-action="stop" class="ms-danger"><i class="fa-solid fa-hand"></i> Остановка · ручное управление</button><button type="button" data-screen-action="combat"><i class="fa-solid fa-dice-d20"></i> Бой и инициатива</button></div>
     {{#if activeStop}}<p class="ms-status">Автоматизация сцены остановлена. Положение, состояние и ресурсы персонажей сохраняются.</p>{{/if}}
   </section>
-  <section class="ms-section">
+  <section class="ms-section" data-legacy-block="automation">
     <h2>Управление объектами</h2>
     <p class="ms-note">Выключение сохраняется между эпизодами и переподключениями. Возврат под автоматизацию происходит только по вашей команде.</p>
     <div class="ms-list">
@@ -226,8 +226,8 @@
     </div>
   </section>
   {{#if runtime.error}}<p class="ms-error" role="alert">{{runtime.error}}</p>{{/if}}
-  <details class="ms-details"><summary>Допуск и счётчики триггеров</summary><p class="ms-note">Ручной допуск имеет приоритет над подготовленным флагом до следующего вашего переключения. Остальные условия продолжают действовать. Счётчик общий для триггера; можно сбросить его отдельно или для всей основной схемы.</p><div class="ms-list">{{#each triggerCounts}}<div class="ms-token-row"><span>{{episodeName}} · {{typeLabel}} · {{name}}<strong> · {{count}}</strong>{{#if canToggle}}<small class="ms-note">{{#if enabled}}Допуск включён{{else}}Допуск выключен{{/if}}</small>{{/if}}</span><div class="ms-actions">{{#if canToggle}}<button type="button" data-screen-action="toggleTrigger" data-trigger-key="{{key}}" data-enable="{{#if enabled}}false{{else}}true{{/if}}">{{#if enabled}}Выключить{{else}}Включить{{/if}}</button>{{/if}}<button type="button" data-screen-action="resetTrigger" data-trigger-key="{{key}}">Сбросить счётчик</button></div></div>{{else}}<p class="ms-note">В текущем эпизоде ещё нет триггеров.</p>{{/each}}</div><button type="button" data-screen-action="resetTriggers">Сбросить все счётчики</button></details>
-  <section class="ms-section"><h2>События сцены</h2><form data-screen-form="emitEvent" class="ms-inline-form"><input name="eventName" placeholder="Имя события для ручного запуска" aria-label="Имя события" pattern="[a-z][a-z0-9_.-]{0,99}" required><button type="submit">Сообщить событие</button></form><p class="ms-note">Последние 100 записей. Старые запуски и повторные уведомления не переигрывают события.</p><div class="ms-event-log">{{#each eventLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">Источник: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">Событий пока нет.</p>{{/each}}</div></section>
+  <details class="ms-details" data-legacy-block="counts"><summary>Допуск и счётчики триггеров</summary><p class="ms-note">Ручной допуск имеет приоритет над подготовленным флагом до следующего вашего переключения. Остальные условия продолжают действовать. Счётчик общий для триггера; можно сбросить его отдельно или для всей основной схемы.</p><div class="ms-list">{{#each triggerCounts}}<div class="ms-token-row"><span>{{episodeName}} · {{typeLabel}} · {{name}}<strong> · {{count}}</strong>{{#if canToggle}}<small class="ms-note">{{#if enabled}}Допуск включён{{else}}Допуск выключен{{/if}}</small>{{/if}}</span><div class="ms-actions">{{#if canToggle}}<button type="button" data-screen-action="toggleTrigger" data-trigger-key="{{key}}" data-enable="{{#if enabled}}false{{else}}true{{/if}}">{{#if enabled}}Выключить{{else}}Включить{{/if}}</button>{{/if}}<button type="button" data-screen-action="resetTrigger" data-trigger-key="{{key}}">Сбросить счётчик</button></div></div>{{else}}<p class="ms-note">В текущем эпизоде ещё нет триггеров.</p>{{/each}}</div><button type="button" data-screen-action="resetTriggers">Сбросить все счётчики</button></details>
+  <section class="ms-section" data-legacy-block="journal"><h2>События сцены</h2><form data-screen-form="emitEvent" class="ms-inline-form"><input name="eventName" placeholder="Имя события для ручного запуска" aria-label="Имя события" pattern="[a-z][a-z0-9_.-]{0,99}" required><button type="submit">Сообщить событие</button></form><p class="ms-note">Последние 100 записей. Старые запуски и повторные уведомления не переигрывают события.</p><div class="ms-event-log">{{#each eventLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">Источник: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">Событий пока нет.</p>{{/each}}</div></section>
   {{/if}}
   {{/if}}
 </div>

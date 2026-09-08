@@ -23,18 +23,18 @@ const defaultOpen = async (data) => {
 export function createManualDialogueService({ openWindow = defaultOpen, definitionOf = getDefinition, messageService } = {}) {
   const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "manual-dialogues" });
   const shown = new Set();
-  const getManualContext = ({ sceneId, episodeId, dialogueId }) => {
+  const getManualContext = ({ sceneId, episodeId, dialogueId, schemeId = "main" }) => {
     requireGM();
     const scene = game.scenes.get(sceneId);
     if (!scene) throw new Error("Сцена не найдена.");
-    const episode = definitionOf(scene).episodes.find((entry) => entry.id === episodeId);
+    const episode = definitionOf(scene, { schemeId }).episodes.find((entry) => entry.id === episodeId);
     const dialogue = episode?.dialogues?.find((entry) => entry.id === dialogueId);
     if (!dialogue) throw new Error("Диалог не найден в выбранном эпизоде.");
     const target = dialogue.target.type === "Tile" ? scene.tiles.get(dialogue.target.id) : scene.tokens.get(dialogue.target.id);
     const projection = manualDialogueData(dialogue, { includeEventNames: true });
     const fallbackArt = target?.texture?.src || target?.actor?.img || "";
     for (const node of projection.nodes) node.art ||= fallbackArt;
-    return { dialogue: projection, sourceName: target?.name || dialogue.name, sceneId, episodeId };
+    return { dialogue: projection, sourceName: target?.name || dialogue.name, sceneId, episodeId, schemeId };
   };
   const invitePlayers = async ({ userIds, ...selection }) => {
     const source = getManualContext(selection);

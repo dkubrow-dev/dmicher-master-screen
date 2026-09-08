@@ -70,12 +70,12 @@ test("serialized graph uses IDs and survives ambiguous display names", () => {
 
 test("invalid schemas and duplicate episode IDs are rejected before use", () => {
   assert.throws(() => normalizeDefinition({ ...defaultDefinition(), schemaVersion: 2 }));
-  assert.throws(() => normalizeDefinition({ ...defaultDefinition(), schemeId: "another" }));
+  assert.equal(normalizeDefinition({ ...defaultDefinition(), schemeId: "another" }).schemeId, "another");
   const definition = defaultDefinition();
   definition.episodes[1].id = definition.episodes[0].id;
   assert.throws(() => normalizeDefinition(definition));
   assert.throws(() => normalizeRuntime({ schemaVersion: 2 }));
-  assert.throws(() => normalizeRuntime({ ...emptyRuntime(), schemeId: "another" }));
+  assert.equal(normalizeRuntime({ ...emptyRuntime(), schemeId: "another" }).schemeId, "another");
 });
 
 test("zone, interaction and patrol transitions reject references to deleted episodes", () => {
@@ -225,7 +225,7 @@ test("dialogue identifiers and mutually exclusive continuation/event preserve a 
   assert.equal(normalizeDefinition(definition).episodes[0].dialogues[0].startNodeId, "start");
   episode.dialogues[0].nodes.push({ id: "start", text: "Ambiguous" });
   assert.throws(() => normalizeDefinition(definition));
-  assert.throws(() => normalizeRuntime({ ...emptyRuntime(), schemeId: "other" }));
+  assert.throws(() => normalizeRuntime({ ...emptyRuntime(), schemeId: "other/path" }));
 });
 
 test("scene object tags are normalized independently of episode definitions and require a GM", async () => {

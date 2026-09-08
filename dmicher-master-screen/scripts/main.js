@@ -49,18 +49,21 @@ Hooks.once("init", () => {
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
   removeControls = installControls(controller);
   const api = Object.freeze({ apiVersion: 1, version: VERSION,
+    openPanel: () => controller.openScreen("panel"), openWindow: () => controller.openScreen("window"),
     openConstructor: () => controller.setMode("constructor"), openDirector: () => controller.setMode("director"),
     openActor: () => controller.setMode("actor"), openShops: () => controller.openShops(),
     openDialogues: () => controller.openDialogues(),
     openHelp: (pageId, anchor) => { const app = controller.openHelp(); if (pageId) void app.navigate(pageId, anchor); return app; }, close: () => controller.closeScreen(),
-    transition: (episodeId) => controller.transition(episodeId),
+    transition: (episodeId, options) => controller.transition(episodeId, options),
+    InvokeDmicherMasterScreenEvent: (name, trigger) => controller.events.invoke(canvas.scene, name, trigger),
     emitEvent: (name, details) => controller.emitEvent(name, details),
     resetTriggers: (triggerKey) => controller.resetTriggers(triggerKey),
     setTriggerEnabled: (triggerKey, enabled) => controller.setTriggerEnabled(triggerKey, enabled),
-    haltScene: () => controller.haltScene(), haltScheme: () => controller.haltScheme(),
-    resumeScheme: (episodeId) => controller.resumeScheme(episodeId),
+    haltScene: () => controller.haltScene(), haltScheme: (schemeId) => controller.haltScheme(schemeId),
+    resumeScheme: (episodeId, schemeId) => controller.resumeScheme(episodeId, schemeId),
     getState: () => controller.getContext(), setAutomation: (tokenId, enabled) => controller.setAutomation(tokenId, enabled) });
   game.modules.get(MODULE_ID).api = api;
+  globalThis.InvokeDmicherMasterScreenEvent = api.InvokeDmicherMasterScreenEvent;
   unregister = generics.modules.register(MODULE_ID, { apiVersion: 1, api, capabilities: ["openConstructor", "openDirector", "openActor", "openShops", "openHelp"] });
 });
 
@@ -73,16 +76,17 @@ Hooks.once("ready", () => {
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
     void controller.dialogues.processCommand(message, userId).catch(notifyError);
     const command = message.getFlag?.(MODULE_ID, "interaction");
-    if (!command || !isAuthority() || command.schemeId !== "main" || command.sceneId !== canvas.scene?.id
-      || command.runId !== getRuntime(canvas.scene).runId || generics.chat.getMessageAuthorId(message) !== userId
+    if (!command || !isAuthority() || typeof command.schemeId !== "string" || command.sceneId !== canvas.scene?.id
+      || command.runId !== getRuntime(canvas.scene, { schemeId: command.schemeId }).runId || generics.chat.getMessageAuthorId(message) !== userId
       || !message.whisper.includes(game.user.id)) return;
-    void controller.runtime.interact(canvas.scene, command.tokenId, { sourceTokenId: command.sourceTokenId, user: game.users.get(userId) }).catch(notifyError);
+    void controller.runtime.interact(canvas.scene, command.tokenId, { sourceTokenId: command.sourceTokenId, user: game.users.get(userId), schemeId: command.schemeId }).catch(notifyError);
   });
   on(generics.chat.getChatMessageRenderHook(), (message, html) => controller.shop.renderChatMessage?.(message, html));
   attachCanvas();
 });
 
 globalThis.addEventListener?.("pagehide", () => {
+  controller?.editor?.layout?.dispose();
   controller?.runtime.dispose(); controller?.events.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   if (stage && tap) stage.off("pointertap", tap);
   for (const [name, id] of hooks) Hooks.off(name, id);

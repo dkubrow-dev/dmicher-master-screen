@@ -1,18 +1,19 @@
-import { MODULE_ID, getEpisode, canTransition, emptyRuntime } from "./model.js";
-import { getDefinition, getRuntime, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
+import { MODULE_ID, getEpisode, emptyRuntime } from "./model.js";
+import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
 import { createFoundryEffects, tokenCenter, sceneDistance, crossesRectangle, setTokenEmoji, clearTokenEmojis } from "./effects.js";
 import { getTriggerKey, getTriggerGate, consumeTrigger, resetEpisodeTriggerCounts } from "./triggers.js";
-import { executionGeneration, requestHalt, finishHalt, isExecutionHalted } from "./execution.js";
+import { executionGeneration, requestHalt, finishHalt, isExecutionHalted, notifyExecutionChange } from "./execution.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
 
 /** A small, scene-owned executor. Persisted entry claims are never replayed on connection. */
 export class EpisodeRuntime {
-  constructor({ onChange = () => {}, onWorkspace = async () => {}, onEvent = async () => {}, chat, effects, now = () => Date.now() } = {}) {
+  constructor({ onChange = () => {}, onWorkspace = async () => {}, onEvent = async () => {}, onTypedEvent, chat, effects, now = () => Date.now() } = {}) {
     this.onChange = onChange;
     this.onWorkspace = onWorkspace;
     this.onEvent = onEvent;
+    this.onTypedEvent = onTypedEvent;
     this.effects = effects ?? createFoundryEffects(chat ?? globalThis.game?.modules?.get("dmicher-generics")?.api?.chat);
     this.now = now;
     this.hooks = [];
@@ -28,7 +29,8 @@ export class EpisodeRuntime {
     this.disposed = false;
     const on = (name, callback) => this.hooks.push([name, Hooks.on(name, callback)]);
     on("canvasReady", () => { this.tickTimes.clear(); this.refresh(canvas.scene); });
-    on("canvasTearDown", () => { this.tickTimes.clear(); clearTokenEmojis(); });
+    on("canvasTearDown", () => { notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); clearTokenEmojis(); });
+    on("updateUser", () => notifyExecutionChange(globalThis.canvas?.scene));
     on("updateScene", (scene, changes) => {
       if (changes.flags?.[MODULE_ID] || Object.keys(changes).some((key) => key.startsWith(`flags.${MODULE_ID}`))) this.refresh(scene);
     });
@@ -69,14 +71,15 @@ export class EpisodeRuntime {
     const snapshot = { source: "runtime", ...event };
     queueMicrotask(() => {
       if (this.disposed || !isAuthority()) return;
-      void Promise.resolve().then(() => this.onEvent(scene, snapshot)).catch((error) => this.report(error));
+      void Promise.resolve().then(() => this.disposed || !isAuthority() ? undefined : this.onEvent(scene, snapshot))
+        .catch((error) => { if (!this.disposed) this.report(error); });
     });
   }
 
-  owns(scene, runId) {
+  owns(scene, runId, schemeId) {
+    const state = runId ? getRuntimeForRun(scene, runId) : schemeId ? getRuntime(scene, { schemeId }) : null;
     return Boolean(scene?.id) && !this.disposed && isAuthority() && globalThis.canvas?.scene?.id === scene.id
-      && !isExecutionHalted(scene)
-      && (!runId || getRuntime(scene).runId === runId);
+      && (!runId || state) && (state ? !isExecutionHalted(scene, state) : getRuntimes(scene).some((entry) => !isExecutionHalted(scene, entry)));
   }
 
   requireAuthority(scene) {
@@ -90,6 +93,7 @@ export class EpisodeRuntime {
   }
 
   async refresh(scene) {
+    notifyExecutionChange(scene);
     if (!scene || globalThis.canvas?.scene?.id !== scene.id) return;
     for (const token of asArray(scene.tokens)) this.refreshToken(token);
     this.onChange(scene, getRuntime(scene));
@@ -97,28 +101,32 @@ export class EpisodeRuntime {
 
   refreshToken(token) {
     if (!token?.parent || globalThis.canvas?.scene?.id !== token.parent.id) return;
-    const state = getRuntime(token.parent);
+    const state = getRuntimes(token.parent).find((entry) => entry.episode?.tokens?.[token.id] && !isExecutionHalted(token.parent, entry) && this.isTokenEnabled(entry, token.id));
+    if (!state) { setTokenEmoji(token, ""); return; }
     const config = state.episode?.tokens?.[token.id];
     setTokenEmoji(token, config && !isExecutionHalted(token.parent, state) && this.isTokenEnabled(state, token.id) ? config.emoji : "");
   }
 
-  async enter(scene, episodeId, { force = false, expectedRunId, eventContext, schemeId = "main" } = {}) {
+  async enter(scene, episodeId, { force = false, expectedRunId, eventContext, eventName, schemeId = "main" } = {}) {
     this.requireAuthority(scene);
-    if (schemeId !== "main") throw new Error("В версии 0.0.1 доступна основная схема.");
-    const generation = executionGeneration(scene);
+    const generation = executionGeneration(scene, schemeId);
     let entered;
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      const previous = getRuntime(scene);
-      if (executionGeneration(scene) !== generation) return null;
+      const previous = getRuntime(scene, { schemeId });
+      if (executionGeneration(scene, schemeId) !== generation) return null;
       const resuming = isExecutionHalted(scene, previous) && force && !expectedRunId;
       if (isExecutionHalted(scene, previous) && !resuming) throw new Error("Схема аварийно остановлена. Выберите эпизод и явно возобновите её.");
       if (expectedRunId && previous.runId !== expectedRunId) return null;
       if (previous.episodeId === episodeId && !force) return previous;
-      const definition = getDefinition(scene);
+      const definition = getDefinition(scene, { schemeId });
       const episode = getEpisode(definition, episodeId);
       if (!episode) throw new Error("Эпизод не найден.");
-      if (!resuming && previous.episodeId !== episodeId && !canTransition(definition, previous.episodeId, episodeId)) throw new Error("Переход к этому эпизоду запрещён графом.");
+      if (expectedRunId && (!eventName || !episode.events.includes(eventName))) throw new Error("Автоматический переход не разрешён таблицей событий эпизода.");
+      const managed = new Set(Object.entries(episode.tokens).filter(([id, config]) => config.enabled !== false && !previous.disabledTokens.includes(id) && !episode.stop).map(([id]) => id));
+      const conflict = getRuntimes(scene).find((entry) => entry.schemeId !== schemeId && !isExecutionHalted(scene, entry) && !entry.episode?.stop
+        && Object.keys(entry.episode?.tokens ?? {}).some((id) => managed.has(id) && this.isTokenEnabled(entry, id)));
+      if (conflict) throw new Error(`Токен уже управляется схемой «${getDefinition(scene, { schemeId: conflict.schemeId }).schemeName}». Отключите его автоматизацию в одной из схем.`);
       const state = {
         ...emptyRuntime(), schemeId: definition.schemeId, episodeId, runId: randomId(), enteredAt: this.now(),
         definitionRevision: definition.revision, disabledTokens: [...previous.disabledTokens], episode: clone(episode),
@@ -131,15 +139,18 @@ export class EpisodeRuntime {
       for (const [id, config] of Object.entries(episode.tokens)) {
         state.speech[id] = { nextAt: this.now() + Number(config.speech?.interval ?? 30) * 1000, sequence: 0 };
         state.patrol[id] = { index: 0 };
-        state.shops[id] ??= { items: clone(config.shop?.items ?? []) };
+        const sharedInventory = scene.getFlag(MODULE_ID, "shopInventories")?.[id]
+          ?? getRuntimes(scene).filter((entry) => entry.shops?.[id]).sort((a, b) => b.enteredAt - a.enteredAt)[0]?.shops[id];
+        state.shops[id] = sharedInventory ? clone(sharedInventory) : state.shops[id] ?? { items: clone(config.shop?.items ?? []) };
       }
       // Persist the new generation before touching the world. Reconnect only resumes this snapshot.
       await saveRuntime(scene, state);
-      if (executionGeneration(scene) !== generation) return getRuntime(scene);
-      finishHalt(scene, generation);
-      this.tickTimes.set(scene.id, this.now());
+      notifyExecutionChange(scene);
+      if (executionGeneration(scene, schemeId) !== generation) return getRuntime(scene, { schemeId });
+      finishHalt(scene, generation, schemeId);
+      this.tickTimes.set(`${scene.id}:${schemeId}`, this.now());
       await this.refresh(scene);
-      await this.once(scene, state.runId, "workspace", () => this.onWorkspace(scene, clone(episode.workspace), { runId: state.runId }));
+      await this.once(scene, state.runId, "workspace", () => this.onWorkspace(scene, clone(episode.workspace), { runId: state.runId, schemeId }));
       if (!episode.stop) {
         for (const [id, config] of Object.entries(episode.tokens)) {
           if (!this.currentToken(scene, state.runId, id)) continue;
@@ -156,28 +167,29 @@ export class EpisodeRuntime {
         for (const spawn of episode.spawns) await this.once(scene, state.runId, `spawn:${spawn.id}`, () => this.effects.spawn(scene, spawn, state.runId, () => this.owns(scene, state.runId)));
       }
       await this.refresh(scene);
-      entered = { name: "episode.entered", runId: state.runId, context: eventContext,
+      entered = { name: "episode.entered", runId: state.runId, schemeId, context: eventContext,
         payload: { episodeId, previousEpisodeId: previous.episodeId, schemeId: state.schemeId } };
-      return getRuntime(scene);
+      return getRuntime(scene, { schemeId });
     }).then((state) => { if (entered) this.emitEvent(scene, entered); return state; });
   }
 
   async halt(scene, { schemeId = "main", all = false } = {}) {
     this.requireAuthority(scene);
-    if (schemeId !== "main") throw new Error("В версии 0.0.1 доступна основная схема.");
-    const generation = requestHalt(scene);
-    this.tickTimes.delete(scene.id);
-    for (const token of asArray(scene.tokens)) setTokenEmoji(token, "");
+    const ids = all ? getDefinitions(scene).map((entry) => entry.schemeId) : [getDefinition(scene, { schemeId }).schemeId];
+    const generations = new Map(ids.map((id) => [id, requestHalt(scene, id)]));
+    for (const id of ids) this.tickTimes.delete(`${scene.id}:${id}`);
+    for (const token of asArray(scene.tokens)) this.refreshToken(token);
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      const state = getRuntime(scene);
-      state.halted = true;
-      state.haltedAt = this.now();
-      // Preserve the episode, NPC/world facts and pending receipts for diagnosis.
-      await saveRuntime(scene, state);
-      finishHalt(scene, generation);
+      const states = [];
+      for (const id of ids) {
+        const state = getRuntime(scene, { schemeId: id });
+        state.halted = true; state.haltedAt = this.now();
+        await saveRuntime(scene, state);
+        finishHalt(scene, generations.get(id), id); states.push(state);
+      }
       await this.refresh(scene);
-      return state;
+      return all ? states : states[0];
     });
   }
 
@@ -185,12 +197,12 @@ export class EpisodeRuntime {
 
   currentToken(scene, runId, tokenId) {
     if (!this.owns(scene, runId)) return false;
-    return Boolean(scene.tokens.get(tokenId)) && this.isTokenEnabled(getRuntime(scene), tokenId);
+    return Boolean(scene.tokens.get(tokenId)) && this.isTokenEnabled(getRuntimeForRun(scene, runId), tokenId);
   }
 
   async once(scene, runId, key, operation) {
     if (!this.owns(scene, runId)) return;
-    let state = getRuntime(scene);
+    let state = getRuntimeForRun(scene, runId);
     if (state.effects[key]) return;
     state.effects[key] = { status: "pending", at: this.now() };
     await saveRuntime(scene, state);
@@ -199,7 +211,7 @@ export class EpisodeRuntime {
     try { result = await operation(); }
     catch (cause) { error = cause; }
     if (!this.owns(scene, runId)) return;
-    state = getRuntime(scene);
+    state = getRuntimeForRun(scene, runId);
     state.effects[key] = { status: error ? "failed" : "done", at: this.now(), ...(error ? { error: error.message ?? String(error) } : {}) };
     if (error) state.error = `${key}: ${error.message ?? String(error)}`;
     await saveRuntime(scene, state);
@@ -207,12 +219,13 @@ export class EpisodeRuntime {
     return result;
   }
 
-  async setAutomation(scene, tokenId, enabled) {
+  async setAutomation(scene, tokenId, enabled, { schemeId = "main" } = {}) {
     this.requireAuthority(scene);
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
       if (!scene.tokens.get(tokenId)) throw new Error("Токен не найден.");
-      const state = getRuntime(scene);
+      const state = getRuntime(scene, { schemeId });
+      if (enabled && getRuntimes(scene).some((entry) => entry.schemeId !== schemeId && entry.episode?.tokens?.[tokenId] && this.isTokenEnabled(entry, tokenId) && !isExecutionHalted(scene, entry))) throw new Error("Токен уже управляется другой схемой.");
       state.disabledTokens = state.disabledTokens.filter((id) => id !== tokenId);
       if (!enabled) state.disabledTokens.push(tokenId);
       if (enabled && state.episode?.tokens?.[tokenId]) {
@@ -227,11 +240,11 @@ export class EpisodeRuntime {
     });
   }
 
-  async resetTriggers(scene, { triggerKey } = {}) {
+  async resetTriggers(scene, { triggerKey, schemeId = "main" } = {}) {
     this.requireAuthority(scene);
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      const state = getRuntime(scene), prefix = `${state.schemeId ?? "main"}:`;
+      const state = getRuntime(scene, { schemeId }), prefix = `${state.schemeId ?? "main"}:`;
       if (triggerKey && !triggerKey.startsWith(prefix)) throw new Error("Счётчик относится к другой схеме.");
       state.triggerCounts ??= {};
       if (triggerKey) delete state.triggerCounts[triggerKey];
@@ -242,13 +255,13 @@ export class EpisodeRuntime {
     });
   }
 
-  resetTriggerCounter(scene, triggerKey) { return this.resetTriggers(scene, { triggerKey }); }
+  resetTriggerCounter(scene, triggerKey) { return this.resetTriggers(scene, { triggerKey, schemeId: triggerKey?.split(":")[0] ?? "main" }); }
 
   async setTriggerEnabled(scene, triggerKey, enabled) {
     this.requireAuthority(scene);
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      const state = getRuntime(scene);
+      const state = getRuntime(scene, { schemeId: triggerKey?.split(":")[0] ?? "main" });
       if (!triggerKey?.startsWith(`${state.schemeId ?? "main"}:${state.episodeId}:`)) throw new Error("Триггер относится к другому эпизоду или схеме.");
       if (typeof enabled !== "boolean") throw new Error("Укажите включённое или выключенное состояние.");
       state.triggerEnabledOverrides ??= {};
@@ -262,15 +275,20 @@ export class EpisodeRuntime {
   async tick() {
     const scene = globalThis.canvas?.scene;
     if (this.busy || !this.owns(scene)) return;
-    const state = getRuntime(scene);
-    if (!state.episode || state.episode.stop || game.paused) { this.tickTimes.set(scene.id, this.now()); return; }
     this.busy = true;
-    let transition;
-    try {
-      transition = await withSceneLock(scene, async () => {
+    let jobs;
+    try { jobs = await Promise.all(getRuntimes(scene).map(async (state) => ({ state, transition: await this.tickScheme(scene, state) }))); }
+    finally { this.busy = false; }
+    await Promise.all(jobs.filter((job) => job.transition).map(({ state, transition }) => this.executePatrolCheck(scene, state, transition)));
+  }
+
+  async tickScheme(scene, state) {
+    const clockKey = `${scene.id}:${state.schemeId}`;
+    if (!state.episode || state.episode.stop || state.halted || game.paused) { this.tickTimes.set(clockKey, this.now()); return; }
+    return withSceneLock(scene, async () => {
         if (!this.owns(scene, state.runId)) return null;
-        const elapsed = Math.min(1, Math.max(0, (this.now() - (this.tickTimes.get(scene.id) ?? this.now())) / 1000));
-        this.tickTimes.set(scene.id, this.now());
+        const elapsed = Math.min(1, Math.max(0, (this.now() - (this.tickTimes.get(clockKey) ?? this.now())) / 1000));
+        this.tickTimes.set(clockKey, this.now());
         for (const [id, config] of Object.entries(state.episode.tokens)) {
           if (!this.currentToken(scene, state.runId, id)) continue;
           const token = scene.tokens.get(id);
@@ -283,18 +301,28 @@ export class EpisodeRuntime {
         }
         return null;
       });
-    } finally { this.busy = false; }
+  }
+
+  async executePatrolCheck(scene, state, transition) {
     // A world macro is not cancellable JavaScript. Await it outside the scene lock so Stop
     // and token overrides remain immediately available; stale results cannot transition.
     if (transition) {
       try {
         if (!this.currentToken(scene, transition.runId, transition.token.id)) return;
-        const result = await this.effects.macro(transition.uuid, transition);
+        const context = { chainId: randomId(), depth: 0, originSceneId: scene.id, originRunId: transition.runId, originSchemeId: state.schemeId };
+        const invoke = (name, trigger) => {
+          if (!this.currentToken(scene, transition.runId, transition.token.id)) throw new Error("Макрос проверки относится к остановленному или прежнему запуску.");
+          if (typeof this.onTypedEvent !== "function") throw new Error("Исполнитель типизированных событий не подключён.");
+          return this.onTypedEvent(scene, name, trigger, { context });
+        };
+        const result = await this.effects.macro(transition.uuid, { ...transition, InvokeDmicherMasterScreenEvent: invoke });
         let handled = false;
         if (result === true && transition.target && this.currentToken(scene, transition.runId, transition.token.id)) {
-          await this.enter(scene, transition.target, { expectedRunId: transition.runId });
+          await this.enter(scene, transition.target, { expectedRunId: transition.runId, schemeId: state.schemeId, eventName: transition.eventName });
           handled = true;
         }
+        if (result === true && transition.eventName) this.emitEvent(scene, { name: transition.eventName, runId: transition.runId, actorTokenId: transition.token.id, handled,
+          payload: { result: true, macroUuid: transition.uuid, tokenId: transition.token.id } });
         this.emitEvent(scene, { name: "patrol.check", runId: transition.runId, actorTokenId: transition.token.id, handled,
           payload: { result: result === true, macroUuid: transition.uuid, directRoute: handled, targetEpisodeId: transition.target || "" } });
       } catch (error) { await withSceneLock(scene, () => this.disableAfterError(scene, transition.runId, transition.token.id, error)); }
@@ -305,7 +333,7 @@ export class EpisodeRuntime {
   }
 
   async speechTick(scene, runId, token, config) {
-    const state = getRuntime(scene);
+    const state = getRuntimeForRun(scene, runId);
     const clock = state.speech[token.id] ?? { nextAt: this.now() + Number(config.speech.interval) * 1000, sequence: 0 };
     if (Number(clock.nextAt) > this.now()) return;
     const sequence = Number(clock.sequence ?? 0) + 1;
@@ -321,9 +349,9 @@ export class EpisodeRuntime {
   }
 
   async patrolTick(scene, runId, token, config, elapsed) {
-    const key = `${scene.id}:${getRuntime(scene).schemeId}:${runId}:${token.id}`;
+    const key = `${scene.id}:${getRuntimeForRun(scene, runId).schemeId}:${runId}:${token.id}`;
     if (this.macroJobs.has(key)) return null;
-    const state = getRuntime(scene), route = config.patrol;
+    const state = getRuntimeForRun(scene, runId), route = config.patrol;
     if (state.patrol[token.id]?.completed) return null;
     const index = Number(state.patrol[token.id]?.index ?? 0) % route.points.length;
     const point = route.points[index];
@@ -344,12 +372,14 @@ export class EpisodeRuntime {
     try { await token.update(target, { animate: true, animation: { duration: 500 } }); }
     catch (error) { await this.disableAfterError(scene, runId, token.id, error); return null; }
     if (!arrived || !this.currentToken(scene, runId, token.id)) return null;
-    const fresh = getRuntime(scene);
+    const fresh = getRuntimeForRun(scene, runId);
     fresh.patrol[token.id] = { index: (index + 1) % route.points.length, completed: route.points.length === 1 };
     await saveRuntime(scene, fresh);
     this.emitEvent(scene, { name: "patrol.arrived", runId, actorTokenId: token.id, payload: { pointIndex: index, x: point.x, y: point.y } });
+    if (point.eventName && !point.macroUuid) this.emitEvent(scene, { name: point.eventName, runId, actorTokenId: token.id,
+      payload: { pointIndex: index, x: point.x, y: point.y, tokenId: token.id } });
     if (!point.macroUuid || !this.currentToken(scene, runId, token.id)) return null;
-    const job = { key, uuid: point.macroUuid, scene, token, episode: clone(state.episode), runId, target: point.onTrue,
+    const job = { key, uuid: point.macroUuid, scene, token, episode: clone(state.episode), runId, target: point.onTrue, eventName: point.eventName,
       isCurrent: () => this.currentToken(scene, runId, token.id) };
     this.macroJobs.set(key, job);
     return job;
@@ -357,7 +387,7 @@ export class EpisodeRuntime {
 
   async saveError(scene, runId, error) {
     if (!this.owns(scene, runId)) return;
-    const state = getRuntime(scene);
+    const state = getRuntimeForRun(scene, runId);
     state.error = error.message ?? String(error);
     await saveRuntime(scene, state);
     this.report(error);
@@ -365,7 +395,7 @@ export class EpisodeRuntime {
 
   async disableAfterError(scene, runId, tokenId, error) {
     if (!this.owns(scene, runId)) return;
-    const state = getRuntime(scene);
+    const state = getRuntimeForRun(scene, runId);
     if (!state.disabledTokens.includes(tokenId)) state.disabledTokens.push(tokenId);
     state.error = error.message ?? String(error);
     await saveRuntime(scene, state);
@@ -376,10 +406,14 @@ export class EpisodeRuntime {
   async onTokenMove(token, previous) {
     const scene = token.parent;
     if (!this.owns(scene) || game.paused) return;
-    const runId = getRuntime(scene).runId;
+    for (const state of getRuntimes(scene)) await this.onSchemeTokenMove(scene, state.runId, token, previous);
+  }
+
+  async onSchemeTokenMove(scene, runId, token, previous) {
+    if (!this.owns(scene, runId) || !runId) return;
     const admitted = await withSceneLock(scene, async () => {
       if (!this.owns(scene, runId)) return null;
-      const state = getRuntime(scene);
+      const state = getRuntimeForRun(scene, runId);
       if (!state.episode || state.episode.stop) return null;
       const playerOwned = asArray(game.users).some((user) => Number(user.role) >= 1 && Number(user.role) <= 2 && token.actor?.testUserPermission?.(user, "OWNER"));
       if (!playerOwned) return null;
@@ -388,7 +422,7 @@ export class EpisodeRuntime {
         if (!crossesRectangle(previous, next, zone)) continue;
         const key = getTriggerKey(state, "zone", zone.id);
         if (!getTriggerGate(scene, state, zone.trigger, token, { triggerKey: key }).allowed) continue;
-        if (zone.targetEpisodeId && !canTransition(getDefinition(scene), state.episodeId, zone.targetEpisodeId)) continue;
+        if (zone.targetEpisodeId && !getEpisode(getDefinition(scene, { schemeId: state.schemeId }), zone.targetEpisodeId)?.events.includes(zone.eventName)) continue;
         consumeTrigger(state, key, zone.trigger);
         await saveRuntime(scene, state);
         return { state, zone };
@@ -397,18 +431,20 @@ export class EpisodeRuntime {
     });
     if (admitted) {
       const { state, zone } = admitted;
-      if (zone.targetEpisodeId) await this.enter(scene, zone.targetEpisodeId, { expectedRunId: state.runId });
+      if (zone.targetEpisodeId) await this.enter(scene, zone.targetEpisodeId, { expectedRunId: state.runId, schemeId: state.schemeId, eventName: zone.eventName });
       this.emitEvent(scene, { name: "zone.entered", runId: state.runId, actorTokenId: token.id, handled: Boolean(zone.targetEpisodeId),
         payload: { zoneId: zone.id, label: zone.label, directRoute: Boolean(zone.targetEpisodeId), targetEpisodeId: zone.targetEpisodeId || "" } });
+      if (zone.eventName && zone.eventName !== "zone.entered") this.emitEvent(scene, { name: zone.eventName, runId: state.runId, actorTokenId: token.id, handled: Boolean(zone.targetEpisodeId),
+        payload: { zoneId: zone.id, label: zone.label } });
     }
   }
 
-  async interact(scene, tokenId, { sourceTokenId, user = game.user } = {}) {
+  async interact(scene, tokenId, { sourceTokenId, user = game.user, schemeId = "main" } = {}) {
     this.requireAuthority(scene);
     const admission = await withSceneLock(scene, async () => {
       this.requireAuthority(scene);
       const currentUser = game.users.get(user?.id);
-      const state = getRuntime(scene), npc = scene.tokens.get(tokenId), config = state.episode?.tokens?.[tokenId];
+      const state = getRuntime(scene, { schemeId }), npc = scene.tokens.get(tokenId), config = state.episode?.tokens?.[tokenId];
       if (!currentUser || !npc || !config || !this.currentToken(scene, state.runId, tokenId)) throw new Error("Взаимодействие сейчас недоступно.");
       const source = scene.tokens.get(sourceTokenId);
       if (!currentUser.isGM) {
@@ -418,16 +454,18 @@ export class EpisodeRuntime {
       const key = getTriggerKey(state, "npc-interaction", tokenId), policy = config.interaction?.trigger;
       const gate = getTriggerGate(scene, state, policy, source, { triggerKey: key });
       if (!gate.allowed) throw new Error(gate.reason);
-      if (config.interaction?.targetEpisodeId && !canTransition(getDefinition(scene), state.episodeId, config.interaction.targetEpisodeId)) throw new Error("Переход к этому эпизоду запрещён графом.");
+      if (config.interaction?.targetEpisodeId && !getEpisode(getDefinition(scene, { schemeId }), config.interaction.targetEpisodeId)?.events.includes(config.interaction.eventName)) throw new Error("Переход не разрешён таблицей событий эпизода.");
       consumeTrigger(state, key, policy);
       await saveRuntime(scene, state);
       return { state, config, currentUser };
     });
     const { state, config, currentUser } = admission;
     const target = config.interaction?.targetEpisodeId;
-    const result = target ? await this.enter(scene, target, { expectedRunId: state.runId }) : state;
+    const result = target ? await this.enter(scene, target, { expectedRunId: state.runId, schemeId, eventName: config.interaction.eventName }) : state;
     this.emitEvent(scene, { name: "npc.interacted", runId: state.runId, actorTokenId: sourceTokenId ?? null, handled: Boolean(target),
       payload: { tokenId, userId: currentUser.id, directRoute: Boolean(target), targetEpisodeId: target || "" } });
+    if (config.interaction.eventName && config.interaction.eventName !== "npc.interacted") this.emitEvent(scene, { name: config.interaction.eventName, runId: state.runId,
+      actorTokenId: sourceTokenId ?? null, handled: Boolean(target), payload: { tokenId, userId: currentUser.id } });
     return result;
   }
 

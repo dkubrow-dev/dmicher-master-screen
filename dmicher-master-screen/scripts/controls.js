@@ -3,10 +3,8 @@ const ROOT = "screen-menu";
 export function buildControls(controller) {
   const definitions = [
     ["help", "Справка", "fa-solid fa-circle-question", () => controller.openHelp()],
-    ["constructor", "Конструктор", "fa-solid fa-diagram-project", () => controller.setMode("constructor")],
-    ["director", "Режиссёр", "fa-solid fa-clapperboard", () => controller.setMode("director")],
-    ["actor", "Актёр", "fa-solid fa-masks-theater", () => controller.setMode("actor")],
-    ["close", "Закрыть ширму", "fa-solid fa-xmark", () => controller.closeScreen()]
+    ["panel", "Ширма (панель)", "fa-solid fa-table-columns", () => controller.openScreen("panel")],
+    ["window", "Ширма (окно)", "fa-solid fa-up-right-from-square", () => controller.openScreen("window")]
   ];
   return { name: MODULE_ID, title: "▥ Ширма мастера", icon: "fa-solid fa-chalkboard", order: 91,
     visible: game.user?.isGM === true, activeTool: ROOT,

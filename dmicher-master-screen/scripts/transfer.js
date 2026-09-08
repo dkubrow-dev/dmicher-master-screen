@@ -1,5 +1,6 @@
 import { MODULE_ID, normalizeDefinition, normalizeObjectTags } from "./model.js";
-import { asArray, getDefinition, requireGM } from "./store.js";
+import { asArray, getDefinitions, requireGM } from "./store.js";
+import { getEventCatalog, normalizeCatalog } from "./event-catalog.js";
 
 const copy = (data) => structuredClone(data);
 function portable(document) {
@@ -20,7 +21,9 @@ export function remapReferences(value, mapping) {
 export async function exportBundle(scene) {
   requireGM();
   if (!scene) throw new Error("Сначала откройте сцену");
-  const definition = getDefinition(scene), actors = [], macros = [], journals = [];
+  const definitions = getDefinitions(scene), definition = definitions[0], actors = [], macros = [], journals = [];
+  const allEvents = getEventCatalog(scene);
+  const eventCatalog = normalizeCatalog({ ...allEvents, events: allEvents.events.filter((entry) => !entry.builtin), triggers: allEvents.triggers.filter((entry) => !entry.builtin) });
   const seen = new Set();
   async function include(uuid) {
     if (!uuid || seen.has(uuid)) return;
@@ -34,12 +37,14 @@ export async function exportBundle(scene) {
   }
   for (const token of asArray(scene.tokens)) if (token.actorId) await include(`Actor.${token.actorId}`);
   for (const note of asArray(scene.notes)) if (note.entryId) await include(`JournalEntry.${note.entryId}`);
-  for (const episode of definition.episodes) {
+  for (const episode of definitions.flatMap((entry) => entry.episodes)) {
     for (const spawn of episode.spawns) await include(spawn.actorUuid);
     for (const subscription of episode.subscriptions ?? []) if (subscription.kind === "macro") await include(subscription.macroUuid);
     for (const behavior of Object.values(episode.tokens)) for (const point of behavior.patrol.points) await include(point.macroUuid);
     for (const entry of [...episode.workspace.gm, ...episode.workspace.players]) await include(entry.uuid);
   }
+  for (const event of eventCatalog.events) for (const subscriber of event.subscribers) if (subscriber.kind === "macro") await include(subscriber.macroUuid);
+  for (const macro of eventCatalog.macros) await include(macro.uuid);
   const data = portable(scene);
   const objectTags = normalizeObjectTags(data.flags?.[MODULE_ID]?.objectTags);
   if (data.flags) delete data.flags[MODULE_ID];
@@ -49,7 +54,7 @@ export async function exportBundle(scene) {
   }
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,
-    definition, actors, macros, journals, exportedAt: new Date().toISOString() };
+    definition, definitions, eventCatalog, actors, macros, journals, exportedAt: new Date().toISOString() };
 }
 export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
@@ -58,6 +63,12 @@ export function validateBundle(value) {
     || !object(value.definition)) throw new Error("Это не JSON сцены Ширмы версии 1");
   if (value.systemId !== game.system.id) throw new Error("Предметы и персонажи требуют той же игровой системы");
   normalizeDefinition(value.definition);
+  if (value.definitions) {
+    if (!Array.isArray(value.definitions) || value.definitions.length > 100 || !value.definitions.length) throw new Error("Некорректный список схем.");
+    const schemes = value.definitions.map(normalizeDefinition);
+    if (new Set(schemes.map((entry) => entry.schemeId)).size !== schemes.length || new Set(schemes.map((entry) => entry.schemeName.toLocaleLowerCase())).size !== schemes.length) throw new Error("Схемы должны иметь уникальные названия и идентификаторы.");
+  }
+  if (value.eventCatalog) normalizeCatalog(value.eventCatalog);
   const uuids = new Set();
   for (const [field, type] of [["actors", "Actor"], ["macros", "Macro"], ["journals", "JournalEntry"]]) {
     if (!Array.isArray(value[field]) || value[field].length > 500) throw new Error(`Некорректный список ${field}`);
@@ -101,11 +112,12 @@ export async function importBundle(value) {
       const mapped = mapping.get(`JournalEntry.${note.entryId}`);
       if (mapped) note.entryId = mapped.slice("JournalEntry.".length);
     }
-    const definition = normalizeDefinition(remapReferences(value.definition, mapping));
+    const definitions = (value.definitions ?? [value.definition]).map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
     data.active = false; data.navigation = false;
     data.flags ??= {};
     const objectTags = normalizeObjectTags(data.flags[MODULE_ID]?.objectTags);
-    data.flags[MODULE_ID] = { definitions: { main: { ...definition, revision: 1 } }, objectTags };
+    data.flags[MODULE_ID] = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, { ...entry, revision: 1 }])),
+      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)), objectTags };
     const Scene = CONFIG.Scene?.documentClass ?? getDocumentClass("Scene");
     const scene = await Scene.create(data, { keepEmbeddedIds: true });
     if (!scene) throw new Error("Не удалось создать сцену");

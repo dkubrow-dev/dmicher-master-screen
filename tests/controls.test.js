@@ -8,7 +8,7 @@ function fixture() {
   const actions = [], errors = [];
   globalThis.game = { user: { isGM: true } };
   globalThis.ui = { notifications: { error: (message) => errors.push(message) } };
-  const controller = { openHelp: () => actions.push("help"), setMode: (mode) => actions.push(mode), closeScreen: () => actions.push("close") };
+  const controller = { openHelp: () => actions.push("help"), openScreen: (presentation) => actions.push(presentation) };
   return { actions, errors, controller };
 }
 
@@ -26,14 +26,15 @@ test("category activation uses a hidden no-op tool and never opens the first act
   assert.equal(Object.values(control.tools).filter((tool) => tool.visible).sort((a, b) => a.order - b.order)[0].name, "help");
 });
 
-test("all second-level actions are explicit buttons routed to the right mode", async () => {
+test("all second-level actions explicitly open help, the panel or the browser window", async () => {
   const f = fixture(), control = buildControls(f.controller);
-  for (const key of ["help", "constructor", "director", "actor", "close"]) {
+  for (const key of ["help", "panel", "window"]) {
     assert.equal(control.tools[key].button, true);
     control.tools[key].onChange({}, true);
     await flush();
   }
-  assert.deepEqual(f.actions, ["help", "constructor", "director", "actor", "close"]);
+  assert.deepEqual(f.actions, ["help", "panel", "window"]);
+  assert.equal(Object.values(control.tools).filter((tool) => tool.visible).length, 3);
   assert.notEqual(control.activeTool, "help");
 });
 
@@ -41,15 +42,15 @@ test("players have no visible category and cannot invoke a retained GM action", 
   const f = fixture(), original = buildControls(f.controller);
   game.user.isGM = false;
   assert.equal(buildControls(f.controller).visible, false);
-  original.tools.director.onChange({}, true);
+  original.tools.panel.onChange({}, true);
   await flush();
   assert.deepEqual(f.actions, []);
 });
 
 test("a rejected asynchronous action reports the useful error instead of leaking rejection", async () => {
   const f = fixture();
-  f.controller.setMode = async () => { throw new Error("Mode unavailable"); };
-  buildControls(f.controller).tools.actor.onChange({}, true);
+  f.controller.openScreen = async () => { throw new Error("Mode unavailable"); };
+  buildControls(f.controller).tools.window.onChange({}, true);
   await flush();
   assert.deepEqual(f.errors, ["Mode unavailable"]);
 });

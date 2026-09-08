@@ -1,6 +1,7 @@
 export const MODULE_ID = "dmicher-master-screen";
 export const VERSION = "0.0.1";
 export const DEFAULT_SCHEME_ID = "main";
+export const normalizeColor = (value, fallback = "#36404A") => /^#[0-9a-f]{6}$/i.test(String(value)) ? String(value).toUpperCase() : fallback;
 export const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
 const clone = (value) => structuredClone(value);
 const list = (value) => Array.isArray(value) ? value : [];
@@ -36,7 +37,7 @@ export function defaultTokenBehavior() {
 }
 
 export function defaultEpisode(name = "Новый эпизод", id = randomId()) {
-  return { id, name, allowFromAll: true, from: [], stop: false, pause: false, sound: "",
+  return { id, name, background: "#36404A", textColor: "#FFFFFF", events: [], allowFromAll: true, from: [], stop: false, pause: false, sound: "",
     spawns: [], tokens: {}, zones: [], dialogues: [], interactions: [], subscriptions: [], workspace: { gm: [], players: [] } };
 }
 
@@ -55,7 +56,7 @@ export function normalizeDialogue(raw = {}, ids = new Set()) {
     return { id: uniqueId(node.id, nodeIds, "Страница диалога"), text: text(node.text, 12000), art: text(node.art, 1024),
       responses: list(node.responses).slice(0, 30).map((response) => ({
         id: uniqueId(response.id, responseIds, "Ответ"), label: text(response.label, 200),
-        nextNodeId: text(response.nextNodeId, 64), eventName: text(response.eventName, 96).trim()
+        nextNodeId: text(response.nextNodeId, 64), eventName: text(response.eventName, 100).trim()
       })) };
   });
   const startNodeId = text(raw.startNodeId || nodes[0]?.id, 64);
@@ -74,7 +75,7 @@ function normalizeSubscriptions(entries) {
   return list(entries).slice(0, 100).map((entry) => {
     if (entry.kind && !["macro", "transition", "chat"].includes(entry.kind)) throw new Error("Подписка выполняет макрос, переход эпизода или сообщение в чат");
     return { id: uniqueId(entry.id, ids, "Подписка"), enabled: entry.enabled !== false,
-      event: text(entry.event, 96).trim(), kind: ["transition", "chat"].includes(entry.kind) ? entry.kind : "macro",
+      event: text(entry.event, 100).trim(), kind: ["transition", "chat"].includes(entry.kind) ? entry.kind : "macro",
       macroUuid: text(entry.macroUuid, 256), episodeId: text(entry.episodeId, 64), text: text(entry.text, 12000),
       audience: { gms: entry.audience?.gms !== false, interactor: entry.audience?.interactor === true,
         nearby: entry.audience?.nearby === true, range: number(entry.audience?.range, 30, 0, 100000),
@@ -88,14 +89,14 @@ function normalizeInteractions(entries) {
     if (entry.target?.type && !["Token", "Tile"].includes(entry.target.type)) throw new Error("Взаимодействие привязывается к токену или тайлу");
     return { id: uniqueId(entry.id, ids, "Взаимодействие"), name: text(entry.name, 100).trim() || "Взаимодействовать",
       enabled: entry.enabled !== false, target: { type: entry.target?.type === "Tile" ? "Tile" : "Token", id: text(entry.target?.id, 64) },
-      range: number(entry.range, 5, 0, 100000), eventName: text(entry.eventName, 96).trim(), trigger: normalizeTrigger(entry.trigger) };
+      range: number(entry.range, 5, 0, 100000), eventName: text(entry.eventName, 100).trim(), trigger: normalizeTrigger(entry.trigger) };
   });
 }
 
 export function defaultDefinition() {
   const episodes = [defaultEpisode("Спокойствие", "calm"), defaultEpisode("Напряжение", "tension"),
     defaultEpisode("Тревога", "alarm"), { ...defaultEpisode("Остановка", "stop"), stop: true }];
-  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: "Основная схема", revision: 0, episodes };
+  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: "Основная схема", background: "#36404A", textColor: "#FFFFFF", order: 0, revision: 0, episodes };
 }
 
 export function normalizeTokenBehavior(value = {}) {
@@ -116,15 +117,15 @@ export function normalizeTokenBehavior(value = {}) {
       })) },
     patrol: { enabled: value.patrol?.enabled === true, speed: number(value.patrol?.speed, 5, 0.1, 1000),
       points: list(value.patrol?.points).slice(0, 200).map((point) => ({
-        x: number(point.x), y: number(point.y), macroUuid: text(point.macroUuid, 256), onTrue: text(point.onTrue, 64)
+        x: number(point.x), y: number(point.y), macroUuid: text(point.macroUuid, 256), onTrue: text(point.onTrue, 64), eventName: text(point.eventName, 100)
       })) },
-    interaction: { ...base.interaction, label: text(value.interaction?.label, 80), targetEpisodeId: text(value.interaction?.targetEpisodeId, 64), trigger: normalizeTrigger(value.interaction?.trigger) } };
+    interaction: { ...base.interaction, label: text(value.interaction?.label, 80), targetEpisodeId: text(value.interaction?.targetEpisodeId, 64), eventName: text(value.interaction?.eventName, 100), trigger: normalizeTrigger(value.interaction?.trigger) } };
 }
 
 export function normalizeDefinition(value) {
   if (!value) return defaultDefinition();
   if (value.schemaVersion !== 1) throw new Error("Неподдерживаемая версия определения Ширмы");
-  if (value.schemeId && value.schemeId !== DEFAULT_SCHEME_ID) throw new Error("В версии 0.0.1 доступна основная схема");
+  if (value.schemeId && !/^[a-zA-Z0-9_-]+$/.test(value.schemeId)) throw new Error("Некорректный идентификатор схемы");
   if (!Array.isArray(value.episodes) || value.episodes.length > 100) throw new Error("Допустимо до 100 эпизодов");
   const ids = new Set();
   const episodes = value.episodes.map((raw) => {
@@ -135,7 +136,8 @@ export function normalizeDefinition(value) {
       uuid: text(entry.uuid, 256), x: number(entry.x), y: number(entry.y),
       width: number(entry.width, 500, 150, 4000), height: number(entry.height, 450, 100, 4000)
     })).filter((entry) => entry.uuid);
-    return { id, name: text(raw.name, 100).trim() || "Эпизод", allowFromAll: raw.allowFromAll !== false,
+    return { id, name: text(raw.name, 100).trim() || "Эпизод", background: normalizeColor(raw.background), textColor: normalizeColor(raw.textColor, "#FFFFFF"),
+      events: [...new Set(list(raw.events).map((entry) => text(entry, 100).trim()).filter(Boolean))], allowFromAll: raw.allowFromAll !== false,
       from: [...new Set(list(raw.from).map((entry) => text(entry, 64)))], stop: raw.stop === true,
       pause: raw.pause === true, sound: text(raw.sound, 1024),
       spawns: list(raw.spawns).slice(0, 50).map((spawn) => ({ id: text(spawn.id || randomId(), 64),
@@ -147,12 +149,41 @@ export function normalizeDefinition(value) {
       })),
       zones: list(raw.zones).slice(0, 100).map((zone) => ({ id: text(zone.id || randomId(), 64), label: text(zone.label, 80),
         x: number(zone.x), y: number(zone.y), width: number(zone.width, 100, 1), height: number(zone.height, 100, 1),
-        targetEpisodeId: text(zone.targetEpisodeId, 64), trigger: normalizeTrigger(zone.trigger) })),
+        targetEpisodeId: text(zone.targetEpisodeId, 64), eventName: text(zone.eventName, 100), trigger: normalizeTrigger(zone.trigger) })),
       dialogues: (() => { const ids = new Set(); return list(raw.dialogues).slice(0, 100).map((dialogue) => normalizeDialogue(dialogue, ids)); })(),
       interactions: normalizeInteractions(raw.interactions),
       subscriptions: normalizeSubscriptions(raw.subscriptions),
       workspace: { gm: windows(raw.workspace?.gm), players: windows(raw.workspace?.players) } };
   });
+  // Older definitions stored a direct target on a trigger. Give that specific source
+  // an explicit event route; general entered/interacted events stay independent.
+  const bindLegacyRoute = (source, targetId, name) => {
+    if (!targetId) return;
+    source.eventName ||= name;
+    const target = episodes.find((entry) => entry.id === targetId);
+    if (target && !target.events.includes(source.eventName)) target.events.push(source.eventName);
+  };
+  for (const episode of episodes) {
+    for (const subscription of episode.subscriptions) if (subscription.kind === "transition" && subscription.episodeId && subscription.event) {
+      const target = episodes.find((entry) => entry.id === subscription.episodeId);
+      if (target && !target.events.includes(subscription.event)) target.events.push(subscription.event);
+    }
+    for (const zone of episode.zones) bindLegacyRoute(zone, zone.targetEpisodeId, `zone.${episode.id}.${zone.id}`);
+    for (const [tokenId, behavior] of Object.entries(episode.tokens)) {
+      bindLegacyRoute(behavior.interaction, behavior.interaction.targetEpisodeId, `npc.${episode.id}.${tokenId}`);
+      behavior.patrol.points.forEach((point, index) => bindLegacyRoute(point, point.onTrue, `patrol.${episode.id}.${tokenId}.${index}`));
+    }
+  }
+  const names = new Set(), routes = new Map();
+  for (const episode of episodes) {
+    const name = episode.name.toLocaleLowerCase();
+    if (names.has(name)) throw new Error("Названия эпизодов внутри схемы должны быть уникальными");
+    names.add(name);
+    for (const event of episode.events) {
+      if (routes.has(event)) throw new Error(`Событие «${event}» ведёт в несколько эпизодов одной схемы`);
+      routes.set(event, episode.id);
+    }
+  }
   for (const episode of episodes) {
     episode.from = episode.from.filter((id) => ids.has(id) && id !== episode.id);
     const references = [...episode.zones.map((zone) => zone.targetEpisodeId),
@@ -160,7 +191,8 @@ export function normalizeDefinition(value) {
       ...Object.values(episode.tokens).flatMap((token) => [token.interaction.targetEpisodeId, ...token.patrol.points.map((point) => point.onTrue)])];
     if (references.some((id) => id && !ids.has(id))) throw new Error("Переход ссылается на отсутствующий эпизод");
   }
-  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: text(value.schemeName, 100) || "Основная схема",
+  return { schemaVersion: 1, schemeId: value.schemeId || DEFAULT_SCHEME_ID, schemeName: text(value.schemeName, 100).trim() || "Основная схема",
+    background: normalizeColor(value.background), textColor: normalizeColor(value.textColor, "#FFFFFF"), order: number(value.order, 0, 0, 10000),
     revision: Math.floor(number(value.revision, 0, 0, Number.MAX_SAFE_INTEGER)), episodes };
 }
 
@@ -199,8 +231,8 @@ export function transitionsText(definition) {
     : episode.from.map((from) => `${from} -> ${episode.id}`)).join("\n");
 }
 
-export function emptyRuntime() {
-  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, episodeId: null, runId: "", enteredAt: 0, definitionRevision: 0,
+export function emptyRuntime(schemeId = DEFAULT_SCHEME_ID) {
+  return { schemaVersion: 1, schemeId, episodeId: null, runId: "", enteredAt: 0, definitionRevision: 0,
     halted: false, haltedAt: 0,
     disabledTokens: [], episode: null, effects: {}, speech: {}, patrol: {}, shops: {}, shopSessions: {}, tradeRequests: {},
     dialogueSessions: {}, dialogueCommands: {}, eventLog: [], eventClaims: {}, triggerCounts: {}, triggerEnabledOverrides: {}, error: "" };
@@ -208,6 +240,6 @@ export function emptyRuntime() {
 export function normalizeRuntime(value) {
   if (!value) return emptyRuntime();
   if (value.schemaVersion !== 1) throw new Error("Неподдерживаемое состояние Ширмы");
-  if (value.schemeId && value.schemeId !== DEFAULT_SCHEME_ID) throw new Error("В версии 0.0.1 доступна основная схема");
+  if (value.schemeId && !/^[a-zA-Z0-9_-]+$/.test(value.schemeId)) throw new Error("Некорректный идентификатор схемы");
   return { ...emptyRuntime(), ...clone(value), disabledTokens: [...new Set(list(value.disabledTokens))] };
 }

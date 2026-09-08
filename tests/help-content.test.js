@@ -25,5 +25,5 @@ test("help language selection preserves deep links and translates page content",
   assert.deepEqual(ru.pages.map(p => p.id), en.pages.map(p => p.id));
   for (let index = 0; index < ru.pages.length; index++) assert.notEqual(ru.pages[index].html, en.pages[index].html);
   assert.deepEqual(getScreenHelpContent("de"), en);
-  assert.deepEqual(ru.footer, ["author", "thanks", "premium"]);
+  assert.deepEqual(ru.footer, ["author", "thanks", "modules"]);
 });

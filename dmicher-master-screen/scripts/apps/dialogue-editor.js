@@ -18,12 +18,13 @@ export class DialogueEditorApplication extends ScreenFormApplication {
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/dialogue-editor.hbs` } };
 
-  constructor(controller, dialogueId, { episodeId, ...options } = {}) {
-    const context = controller.getContext();
+  constructor(controller, dialogueId, { episodeId, schemeId, ...options } = {}) {
+    const context = controller.getContext({ schemeId });
     const episode = episodeId ?? context.selectedEpisodeId;
-    super({ ...options, id: `dmicher-master-screen-dialogue-editor-${context.scene?.id}-${episode}-${dialogueId}` });
+    super({ ...options, id: `dmicher-master-screen-dialogue-editor-${context.scene?.id}-${context.definition.schemeId}-${episode}-${dialogueId}` });
     this.controller = controller;
     this.sceneId = context.scene?.id;
+    this.schemeId = context.definition.schemeId;
     this.episodeId = episode;
     this.dialogueId = dialogueId;
     this.nodeId = null;
@@ -32,7 +33,7 @@ export class DialogueEditorApplication extends ScreenFormApplication {
   }
 
   async _prepareContext(options) {
-    const parent = await super._prepareContext(options), context = this.controller.getContext();
+    const parent = await super._prepareContext(options), context = this.controller.getContext({ schemeId: this.schemeId });
     const episode = context.definition.episodes.find((entry) => entry.id === this.episodeId);
     const dialogue = episode?.dialogues?.find((entry) => entry.id === this.dialogueId);
     if (!context.isGM || context.scene?.id !== this.sceneId || !dialogue) return { ...parent, missing: true };
@@ -49,7 +50,7 @@ export class DialogueEditorApplication extends ScreenFormApplication {
     return { ...parent, dialogue: this.draft, episodeName: episode.name, node,
       nodes: this.draft.nodes.map((entry, index) => ({ ...entry, caption: `${index + 1}. ${(entry.text || "Без текста").slice(0, 45)}`, selected: entry.id === this.nodeId })),
       targetValue: `${this.draft.target.type}:${this.draft.target.id}`, targets,
-      triggerFields: buildTriggerFields(this.draft.trigger, context.definition.episodes, { prefix: "dialogue-trigger", schemeName: context.definition.schemeName }),
+      triggerFields: buildTriggerFields(this.draft.trigger, context.definition.episodes, { prefix: "dialogue-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
       saveStatus: this.dirty ? "Есть несохранённые изменения" : "Изменения применяются при следующем входе в эпизод"
     };
   }
@@ -87,9 +88,9 @@ export class DialogueEditorApplication extends ScreenFormApplication {
   }
 
   async handleAction(action, button) {
-    if (this.controller.getContext().scene?.id !== this.sceneId) throw new Error("Вернитесь на сцену редактируемого диалога.");
+    if (this.controller.getContext({ schemeId: this.schemeId }).scene?.id !== this.sceneId) throw new Error("Вернитесь на сцену редактируемого диалога.");
     if (action === "saveDialogue") {
-      await this.controller.saveDialogue(this.readDialogue(), this.episodeId, { sceneId: this.sceneId, expectedRevision: this.draftRevision });
+      await this.controller.saveDialogue(this.readDialogue(), this.episodeId, { sceneId: this.sceneId, schemeId: this.schemeId, expectedRevision: this.draftRevision });
       this.resetDraft();
       return this.render({ force: true });
     }

@@ -1,0 +1,35 @@
+<div class="ms-ide-shell">
+  <div data-dock-divider class="ms-dock-divider" role="separator" tabindex="0" aria-label="Размер панели ширмы"></div>
+  <header class="ms-ide-toolbar">
+    <span class="ms-ide-mode-buttons" role="group" aria-label="Режим ширмы">
+      <button type="button" data-screen-action="constructor" aria-pressed="{{isConstructor}}" title="Подготовка сцены"><i class="fa-solid fa-pen-ruler"></i><span>Конструктор</span></button>
+      <button type="button" data-screen-action="director" aria-pressed="{{isDirector}}" title="Управление событиями сцены"><i class="fa-solid fa-clapperboard"></i><span>Режиссёр</span></button>
+      <button type="button" data-screen-action="actor" title="Открыть окно Актёра" aria-label="Открыть окно Актёра"><i class="fa-solid fa-masks-theater"></i></button>
+    </span>
+    <span class="ms-ide-display-buttons" role="group" aria-label="Представление ширмы">
+      <button type="button" data-screen-action="togglePresentation" title="{{presentationTitle}}" aria-label="{{presentationTitle}}"><i class="fa-solid {{presentationIcon}}"></i></button>
+      <button type="button" data-screen-action="ideSide" data-side="right" title="Вертикальная ширма справа" aria-pressed="{{isRight}}" aria-label="Вертикальная ширма"><i class="fa-solid fa-table-columns"></i></button>
+      <button type="button" data-screen-action="ideSide" data-side="bottom" title="Горизонтальная ширма снизу" aria-pressed="{{isBottom}}" aria-label="Горизонтальная ширма"><i class="fa-solid fa-window-maximize"></i></button>
+      <button type="button" data-screen-action="close" title="Закрыть ширму" aria-label="Закрыть ширму"><i class="fa-solid fa-xmark"></i></button>
+    </span>
+  </header>
+  <div class="ms-ide-scene-line"><strong title="{{sceneName}}">▥ {{sceneName}}</strong>{{#if isDirector}}<button type="button" class="ms-ide-emergency" data-screen-action="haltScene" title="Остановить всю автоматизацию всех схем">■ Остановить всё</button>{{/if}}</div>
+  {{#if missing}}<p class="ms-note">Откройте сцену на столе Foundry.</p>{{else}}
+  <div class="ms-ide-zones" data-editor-context="{{contextKey}}">
+    <section class="ms-ide-zone ms-ide-main" aria-label="Основная зона">
+      <nav class="ms-ide-tabs" aria-label="Основные вкладки">{{#each mainTabs}}{{#if visible}}<button type="button" data-screen-action="ideTab" data-zone="main" data-id="{{id}}" aria-pressed="{{active}}">{{label}}</button>{{/if}}{{/each}}<button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="main" title="Показать или скрыть вкладки" aria-label="Состав основных вкладок"><i class="fa-solid fa-gear"></i></button></nav>
+      {{#if mainSettings}}<div class="ms-ide-tab-settings">{{#each mainTabs}}<label><input type="checkbox" data-tab-visibility="main" value="{{id}}" {{checked visible}}> {{label}}</label>{{/each}}</div>{{/if}}
+      <div class="ms-ide-zone-content" data-main-content>
+        {{{mainHTML}}}
+      </div>
+      <footer class="ms-ide-node-actions">{{{nodeActions}}}</footer>
+    </section>
+    <div class="ms-ide-divider" data-ide-divider role="separator" tabindex="0" aria-label="Размер основной и дополнительной зон" aria-valuemin="20" aria-valuemax="80"></div>
+    <section class="ms-ide-zone ms-ide-detail" aria-label="Дополнительная зона">
+      <nav class="ms-ide-tabs" aria-label="Дополнительные вкладки">{{#each detailTabs}}{{#if visible}}<button type="button" data-screen-action="ideTab" data-zone="detail" data-id="{{id}}" aria-pressed="{{active}}">{{label}}</button>{{/if}}{{/each}}<button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="detail" title="Показать или скрыть вкладки" aria-label="Состав дополнительных вкладок"><i class="fa-solid fa-gear"></i></button></nav>
+      {{#if detailSettings}}<div class="ms-ide-tab-settings">{{#each detailTabs}}<label><input type="checkbox" data-tab-visibility="detail" value="{{id}}" {{checked visible}}> {{label}}</label>{{/each}}</div>{{/if}}
+      <div class="ms-ide-zone-content" data-detail-content>{{{detailHTML}}}</div>
+    </section>
+  </div>
+  {{/if}}
+</div>
