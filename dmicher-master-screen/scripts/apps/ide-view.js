@@ -146,15 +146,13 @@ export function renderOtherList(mode, selected) {
   return OTHER_BLOCKS.filter((block) => block.mode === mode).map((block) => `<button class="ms-ide-block-link ${selected === block.id ? "is-selected" : ""}" type="button" data-screen-action="selectOther" data-id="${block.id}">${esc(block.name)}</button>`).join("");
 }
 
-export function renderMenu(zone, hidden, active, branch) {
+export function renderMenu(zone, hidden, active) {
   const tree = zone === "main" ? MAIN_MENU : DETAIL_MENU;
   const visible = (node) => leaves([node]).some((id) => !hidden.includes(id));
-  const level = (nodes, depth) => {
-    const id = `${zone}-${depth}`;
-    return `<div class="ms-menu-level"><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="-1" class="ms-menu-arrow" aria-label="Предыдущие вкладки">‹</button><nav class="ms-menu-strip" data-menu-strip="${id}" aria-label="${zone === "main" ? "Основные вкладки" : "Дополнительные вкладки"}">${nodes.filter(visible).map((node) => `<button type="button" data-screen-action="${node.children ? "menuCategory" : "ideTab"}" data-zone="${zone}" data-id="${node.id}" ${node.children ? `aria-expanded="${branch === node.id}"` : `aria-pressed="${active === node.id}"`} class="${node.children && leaves([node]).includes(active) ? "has-active-child" : ""}">${esc(node.label)}${node.children ? " ▾" : ""}</button>`).join("")}</nav><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="1" class="ms-menu-arrow" aria-label="Следующие вкладки">›</button></div>`;
-  };
-  const expanded = menuPath(tree, branch).filter((node) => node.children && visible(node));
-  return level(tree, 0) + expanded.map((node, index) => level(node.children, index + 1)).join("");
+  const entry = (node, popup = false) => `<button type="button" role="menuitem" data-screen-action="${node.children ? "menuCategory" : "ideTab"}" data-zone="${zone}" data-id="${node.id}" ${popup ? 'tabindex="-1"' : ""} ${node.children ? `aria-haspopup="menu" aria-controls="ms-menu-${zone}-${node.id}" aria-expanded="false"` : `aria-pressed="${active === node.id}"`} class="${node.children && leaves([node]).includes(active) ? "has-active-child" : ""}">${esc(node.label)}${node.children ? popup ? " ▸" : " ▾" : ""}</button>`;
+  const popups = (nodes, parent = "") => nodes.filter(visible).filter((node) => node.children).map((node) => `<nav id="ms-menu-${zone}-${node.id}" class="ms-menu-popup" data-menu-popup="${node.id}" data-zone="${zone}" data-parent-menu="${parent}" role="menu" aria-label="${esc(node.label)}" popover="manual">${node.children.filter(visible).map((child) => entry(child, true)).join("")}</nav>${popups(node.children, node.id)}`).join("");
+  const id = `${zone}-0`;
+  return `<div class="ms-menu-level"><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="-1" class="ms-menu-arrow" aria-label="Предыдущие вкладки">‹</button><nav class="ms-menu-strip" role="menubar" data-menu-strip="${id}" aria-label="${zone === "main" ? "Основные вкладки" : "Дополнительные вкладки"}">${tree.filter(visible).map((node) => entry(node)).join("")}</nav><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="1" class="ms-menu-arrow" aria-label="Следующие вкладки">›</button></div>${popups(tree)}`;
 }
 
 export function renderMenuSettings(zone, hidden) {

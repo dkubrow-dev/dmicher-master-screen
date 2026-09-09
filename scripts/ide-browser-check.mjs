@@ -65,6 +65,48 @@ try {
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.schemeName === "Market square");
     const clickAction = (action) => app.locator(`[data-screen-action="${action}"]`).click();
     const saveParameters = () => app.locator('[data-ide-parameters] button[type="submit"]').click();
+    const clickTab = async (id) => {
+      const target = app.locator(`[data-screen-action="ideTab"][data-id="${id}"]`);
+      if (!await target.isVisible()) { const parent = ["shops", "dialogues"].includes(id) ? "tools" : "automation"; await app.locator(`[data-screen-action="menuCategory"][data-id="${parent}"]`).click(); }
+      await target.click();
+    };
+    // A category overlays content without rebuilding the parameter form or adding a row.
+    const tabHeight = await app.locator('.ms-ide-main .ms-ide-tabs').evaluate((element) => element.getBoundingClientRect().height);
+    const contentTop = await app.locator('[data-main-content]').evaluate((element) => element.getBoundingClientRect().top);
+    await page.evaluate(() => { globalThis.originalParameterInput = controller.editor.element.querySelector('[name="schemeName"]'); });
+    const toolsMenu = app.locator('[data-menu-popup="tools"]'), toolsButton = app.locator('[data-screen-action="menuCategory"][data-id="tools"]');
+    await toolsButton.click(); await toolsMenu.waitFor({ state: "visible" });
+    assert.equal(await app.locator('.ms-ide-main .ms-ide-tabs').evaluate((element) => element.getBoundingClientRect().height), tabHeight);
+    assert.equal(await app.locator('[data-main-content]').evaluate((element) => element.getBoundingClientRect().top), contentTop);
+    assert.equal(await page.evaluate(() => originalParameterInput === controller.editor.element.querySelector('[name="schemeName"]')), true);
+    await page.screenshot({ path: path.join(output, `${version}-dropdown-menu.png`) });
+    await toolsMenu.hover(); await page.mouse.move(30, 300); await toolsMenu.waitFor({ state: "hidden" });
+    await toolsButton.focus(); await page.keyboard.press("ArrowDown");
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.id), "shops");
+    await page.keyboard.press("ArrowDown"); assert.equal(await page.evaluate(() => document.activeElement.dataset.id), "dialogues");
+    await page.keyboard.press("Escape"); assert.equal(await toolsButton.getAttribute("aria-expanded"), "false");
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.id), "tools");
+    // Item rename persists on blur and Enter while Constructor is active, including a background refresh.
+    await page.evaluate(() => openNativeItemForm()); const nativeName = page.locator('#native-item-fixture [name="name"]');
+    await nativeName.fill("Constructor item"); await page.keyboard.press("Enter");
+    assert.equal(await page.evaluate(() => nativeItem.name), "Constructor item");
+    await nativeName.fill("After screen refresh"); await page.evaluate(() => controller.changed(scene));
+    assert.equal(await nativeName.inputValue(), "After screen refresh");
+    assert.equal(await nativeName.evaluate((element) => element === document.activeElement), true);
+    await page.locator('#native-item-fixture [type="submit"]').click();
+    assert.equal(await page.evaluate(() => nativeItem.name), "After screen refresh");
+    assert.equal(await page.evaluate(() => controller.mode), "constructor");
+    await page.evaluate(() => document.getElementById("native-item-fixture").remove());
+    // A native method=dialog form embedded by another tool must retain browser submit behavior.
+    await page.evaluate(() => {
+      const dialog = document.createElement("dialog"); dialog.id = "foreign-item-dialog";
+      dialog.innerHTML = '<form method="dialog"><input name="name" value="New embedded Item"><button type="submit" value="saved">Save</button></form>';
+      controller.editor.element.append(dialog); dialog.showModal();
+    });
+    await page.locator('#foreign-item-dialog [name="name"]').fill("Renamed embedded Item"); await page.keyboard.press("Enter");
+    assert.equal(await page.locator('#foreign-item-dialog').evaluate((element) => element.open), false);
+    assert.equal(await page.locator('#foreign-item-dialog').evaluate((element) => element.returnValue), "saved");
+    await page.evaluate(() => document.getElementById("foreign-item-dialog").remove());
     const closeObjectForms = () => page.evaluate(async () => { for (const item of foundry.applications.instances.values()) if (["ObjectInfoApplication", "ObjectBehaviorApplication"].includes(item.constructor.name)) await item.close(); });
     const objectMenu = async (target, index) => {
       await page.evaluate((target) => controller.openObjectMenu(target, { x: 200, y: 200 }), target);
@@ -74,8 +116,11 @@ try {
     const attachAsset = async (target, kind, assetId, assign = false) => {
       if (assign) {
         await objectMenu(target, 0); const info = page.locator('.ms-object-info'); await info.locator('[name="object-scheme"]').selectOption("main");
-        await info.locator('[name="object-notes"]').fill("Object form browser check"); await info.locator('[data-screen-action="save"]').click();
-        await page.waitForFunction((key) => scene.flags["dmicher-master-screen"].objectBindings?.bindings[key]?.notes === "Object form browser check", `${target.type}:${target.id}`);
+        const notes = info.locator('[name="object-notes"]'); await notes.fill("Object form browser check"); await notes.press("Shift+Enter"); await notes.pressSequentially("Second line");
+        assert.ok((await notes.inputValue()).includes("\n"));
+        if (target.type === "Token") assert.equal(await info.locator('[name="object-player-character"]').isChecked(), false);
+        await notes.press("Enter"); await info.waitFor({ state: "detached" });
+        await page.waitForFunction((key) => scene.flags["dmicher-master-screen"].objectBindings?.bindings[key]?.notes === "Object form browser check\nSecond line", `${target.type}:${target.id}`);
         await closeObjectForms();
       }
       await objectMenu(target, 1); const behavior = page.locator('.ms-object-behavior');
@@ -92,11 +137,11 @@ try {
     await app.locator('[name="schemeName"]').fill("Retained scheme draft");
     await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
     assert.equal(await app.locator('[name="schemeName"]').inputValue(), "Retained scheme draft");
-    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click();
+    await clickTab("events");
     assert.equal(await app.locator("[data-ide-parameters]").count(), 0);
     await app.locator('[data-select-kind="event"] td:last-child').first().click();
     assert.equal(await app.locator('[name="eventName"]').count(), 1);
-    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    await clickTab("scene");
     assert.equal(await app.locator('[name="schemeName"]').inputValue(), "Retained scheme draft");
     await clickAction("discardParameters");
     await app.locator('[name="description"]').fill("Draft while runtime changes");
@@ -160,7 +205,7 @@ try {
     await app.locator('[data-screen-action="ideSide"][data-side="right"]').click();
     // A typed event with ordered built-in subscribers and a macro binding.
     await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click(); await clickAction("addEvent");
+    await clickTab("events"); await clickAction("addEvent");
     await app.locator('[name="eventName"]').fill("bell.rang"); await clickAction("addSubscriber"); await clickAction("addSubscriber");
     await app.locator('[data-subscriber-index="1"] [name="subscriberAction"]').selectOption("unpause");
     await app.locator('[data-screen-action="moveSubscriber"][data-index="1"][data-delta="-1"]').click(); await saveParameters();
@@ -173,10 +218,10 @@ try {
     await page.evaluate(async () => { const { EventCatalog } = await import("/modules/dmicher-master-screen/scripts/event-catalog.js"); const catalog = new EventCatalog(scene), trigger = catalog.list().triggers.find((entry) => entry.id === controller.editor.selection.id); trigger.parameters[0].required = false; await catalog.saveTrigger(trigger); await controller.editor.refresh(); });
     await app.locator('[name="parameterDescription"]').fill("Optional loudness"); await saveParameters();
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].eventCatalog.triggers.find((entry) => entry.id === controller.editor.selection.id).parameters[0].required), false);
-    await app.locator('[data-screen-action="ideTab"][data-id="macros"]').click();
+    await clickTab("macros");
     await app.locator('[data-macro-drop]').evaluate((element) => { const dataTransfer = new DataTransfer(); dataTransfer.setData("text/plain", JSON.stringify({ type: "Macro", uuid: "Macro.demo" })); element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer })); });
     await app.locator(`[name="macroTrigger"][value="${triggerId}"]`).check(); await saveParameters();
-    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click();
+    await clickTab("events");
     await app.locator(`[data-screen-action="selectNode"][data-id="${eventId}"]`).click();
     assert.equal(await app.locator('[data-subscriber-index="0"] [name="subscriberAction"]').inputValue(), "unpause");
     await clickAction("addSubscriber");
@@ -186,8 +231,8 @@ try {
     await app.locator('[data-subscriber-index="3"] [name="subscriberKind"]').selectOption("trigger");
     await app.locator('[name="subscriberParameters"]').fill("{ incomplete");
     await app.locator('[data-screen-action="ideTab"][data-zone="detail"][data-id="reference"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="macros"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click();
+    await clickTab("macros");
+    await clickTab("events");
     await app.locator('[data-screen-action="ideTab"][data-zone="detail"][data-id="parameters"]').click();
     assert.equal(await app.locator('[name="subscriberParameters"]').inputValue(), "{ incomplete");
     await clickAction("discardParameters");
@@ -198,10 +243,10 @@ try {
     await page.locator('dialog [data-close-menu]').click();
     await app.locator(`[data-screen-action="selectNode"][data-id="${triggerId}"]`).click();
     await app.locator('[name="triggerName"]').waitFor();
-    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    await clickTab("scene");
     // Select an episode, then a single legacy block. Saving it must preserve all hidden blocks.
     await app.locator('[data-screen-action="selectNode"][data-id="calm"][data-scheme-id="main"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="other"]').click();
+    await clickTab("other");
     await app.locator('[data-screen-action="selectOther"][data-id="entry"]').click();
     await app.locator('[name="sound"]').fill("audio/bell.ogg");
     assert.equal(await app.locator('[data-episode-fields] [data-legacy-block]').count(), 1);
@@ -211,7 +256,7 @@ try {
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].dialogues.length), 1);
     // Independent catalogs are authored through real forms, with two shops and a reusable dialogue.
     await app.locator('[data-screen-action="menuCategory"][data-id="tools"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="shops"]').click();
+    await clickTab("shops");
     const dropItem = async (uuid) => app.locator('[data-shop-stock-drop]').evaluate((element, value) => { const dataTransfer = new DataTransfer(); dataTransfer.setData("text/plain", JSON.stringify({ type: "Item", uuid: value })); element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer })); }, uuid);
     await clickAction("addShopAsset"); await app.locator('[name="assetName"]').fill("General goods"); await dropItem("Item.rope");
     await app.locator('[name="shopStock"]').fill("3"); await app.locator('[name="shopDisplay"]').selectOption("tiles"); await saveParameters();
@@ -233,7 +278,7 @@ try {
     await preview.locator('[name="distance"]').fill("999"); await preview.locator('[name="showBlocked"]').uncheck(); await preview.locator('[data-screen-action="applyPreview"]').click();
     assert.equal(await preview.locator('[data-preview-allowed]').getAttribute("data-preview-allowed"), "false");
     await page.evaluate(async () => { for (const app of foundry.applications.instances.values()) if (app.constructor.name === "InteractionPreviewApplication") await app.close(); });
-    await app.locator('[data-screen-action="ideTab"][data-id="dialogues"]').click(); await clickAction("addDialogueAsset");
+    await clickTab("dialogues"); await clickAction("addDialogueAsset");
     await app.locator('[name="assetName"]').fill("Tavern welcome"); await app.locator('[name="dialoguePageName"]').fill("Greeting"); await app.locator('[name="dialoguePageText"]').fill("Welcome, traveller.");
     const firstPage = await app.locator('[data-asset-page]').getAttribute("data-asset-page");
     await clickAction("addAssetPage"); await app.locator('[name="dialoguePageName"]').fill("Farewell"); await app.locator('[name="dialoguePageText"]').fill("Safe travels.");
@@ -257,13 +302,37 @@ try {
     assert.equal(await page.evaluate(() => JSON.stringify(scene.flags)), dialogueFlags);
     await page.screenshot({ path: path.join(output, `${version}-preview.png`) });
     await page.evaluate(async () => { for (const app of foundry.applications.instances.values()) if (app.constructor.name === "InteractionPreviewApplication") await app.close(); });
-    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    await clickTab("scene");
     await app.locator('[data-select-kind="scheme"][data-select-id="main"] td:last-child').click();
     assert.equal(await app.locator('.ms-owned-objects [data-screen-action="objectInfo"]').count() >= 2, true);
     await app.locator('[name="entryEpisodeId"]').selectOption("alarm"); await saveParameters();
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.entryEpisodeId), "alarm");
+    // Object tabs have independent responsibilities; a routine is explicit and saved without execution.
+    await objectMenu({ type: "Token", id: "waiter" }, 1); const behavior = page.locator('.ms-object-behavior');
+    assert.deepEqual(await behavior.locator('.ms-object-tabs [data-tab]').evaluateAll((elements) => elements.map((element) => element.dataset.tab)), ["transitions", "features", "routine", "automation"]);
+    await behavior.locator('[name="entry-x"]').fill("230"); await behavior.locator('[name="entry-y"]').fill("170");
+    await behavior.locator('[data-screen-action="restore-position"]').click();
+    assert.deepEqual(await page.evaluate(() => ({ x: scene.tokens.get("waiter").x, y: scene.tokens.get("waiter").y })), { x: 230, y: 170 });
+    await behavior.locator('[data-tab="features"]').click(); assert.equal(await behavior.locator('[data-screen-action="add-feature"]').count(), 0);
+    await behavior.locator('[data-tab="routine"]').click(); assert.equal(await behavior.locator('[data-routine-index]').count(), 0);
+    await behavior.locator('[data-screen-action="add-routine"]').click();
+    await behavior.locator('[name="routine-0-episode"]').selectOption("calm");
+    for (let index = 0; index < 6; index++) await behavior.locator('[data-screen-action="add-routine-step"]').click();
+    assert.equal(await behavior.locator('[name="routine-0-step-0-next"]').inputValue(), "2");
+    await behavior.locator('[name="routine-0-step-1-kind"]').selectOption("emotion");
+    assert.deepEqual(JSON.parse(await behavior.locator('[name="routine-0-step-1-parameters"]').inputValue()), { emoji: "" });
+    await behavior.locator('[name="routine-0-step-1-parameters"]').fill('{"emoji":"!"}');
+    await behavior.locator('[name="routine-0-step-1-next"]').fill("3, 999");
+    await behavior.locator('[data-screen-action="save"]').click();
+    await page.waitForFunction(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:waiter"].routines?.[0]?.steps.length === 6);
+    assert.deepEqual(await page.evaluate(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:waiter"].routines[0].steps[1].next), [3]);
+    const bounds = await behavior.evaluate((element) => { const scroll = element.querySelector('.ms-object-scroll'), footer = element.querySelector('.ms-object-form > footer'); return { overflow: scroll.scrollHeight > scroll.clientHeight, footerBottom: footer.getBoundingClientRect().bottom, windowBottom: element.getBoundingClientRect().bottom }; });
+    assert.equal(bounds.overflow, true); assert.ok(bounds.footerBottom <= bounds.windowBottom + 1);
+    await page.screenshot({ path: path.join(output, `${version}-routine-scroll.png`) });
+    await behavior.locator('[data-tab="automation"]').click(); assert.equal(await behavior.locator('[data-screen-action="add-feature"]').count(), 2);
+    await closeObjectForms();
     await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="sources"]').click();
+    await clickTab("sources");
     await app.locator('[data-select-kind="sources"] td:last-child').first().click();
     assert.equal(await app.locator('[data-screen-action="configureTool"]').count(), 1);
     // Switch both orientations and resize both boundaries.
@@ -284,7 +353,7 @@ try {
     const outer = await app.locator("[data-dock-divider]").boundingBox();
     await page.mouse.move(outer.x + outer.width / 2, outer.y + 3); await page.mouse.down(); await page.mouse.move(outer.x + outer.width / 2, outer.y - 100); await page.mouse.up();
     const bottomSize = await page.evaluate(() => controller.editor.dock.preferences.bottom); assert.ok(bottomSize > 400);
-    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    await clickTab("scene");
     await app.locator('[data-screen-action="director"]').click();
     assert.equal(await page.locator("#dmicher-master-screen-editor").count(), 1);
     assert.equal(await app.locator('[data-screen-action="haltScene"]').count(), 1);

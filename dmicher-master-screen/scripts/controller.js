@@ -353,6 +353,11 @@ export class ScreenController {
     const allowed = (token) => token?.id !== targetTokenId && token?.actor && !token.hidden
       && (game.user.isGM || token.actor.testUserPermission(game.user, "OWNER"));
     if (actorTokenId) return allowed(currentScene()?.tokens.get(actorTokenId)) ? actorTokenId : undefined;
+    // A self-target is explicit intent and survives clicking the NPC, which may change
+    // the controlled-token set. Targeting never grants ownership or cross-scene access.
+    const targeted = asArray(game.user.targets).map((token) => currentScene()?.tokens.get((token.document ?? token).id)).filter(allowed);
+    if (targeted.length === 1) return targeted[0].id;
+    if (targeted.length > 1) return undefined;
     const controlled = asArray(canvas.tokens?.controlled).map((token) => token.document ?? token).filter(allowed);
     if (controlled.length === 1) return controlled[0].id;
     const candidates = this.getPlayerTokens().filter(allowed);

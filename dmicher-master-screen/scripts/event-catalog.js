@@ -190,6 +190,7 @@ export function mergeCatalogDependencies(scene, source = {}) {
 
 function eventIsReferenced(scene, name) {
   return assetDialogues(scene).some((dialogue) => dialogue.pages.some((page) => page.responses.some((response) => response.eventName === name)))
+    || objectRoutineSteps(scene).some((step) => step.kind === "event" && step.parameters.eventName === name)
     || objectFeatures(scene).some((feature) => feature.eventName === name || feature.patrol?.points?.some((point) => point.eventName === name))
     || getDefinitions(scene).some((definition) => definition.episodes.some((episode) => episode.events.includes(name)
     || episode.subscriptions.some((entry) => entry.event === name) || episode.interactions.some((entry) => entry.eventName === name)
@@ -199,6 +200,7 @@ function eventIsReferenced(scene, name) {
 }
 const assetDialogues = (scene) => scene?.getFlag(MODULE_ID, "interactionCatalog")?.dialogues ?? [];
 const objectFeatures = (scene) => Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {}).flatMap((binding) => binding?.features ?? []);
+const objectRoutineSteps = (scene) => Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {}).flatMap((binding) => (binding?.routines ?? []).flatMap((routine) => routine.steps));
 export class EventCatalog {
   constructor(scene) { this.scene = scene; }
   list() { return getEventCatalog(this.scene); }
@@ -215,6 +217,12 @@ export class EventCatalog {
         const trigger = typed.triggers.find((entry) => entry.id === feature.triggerId), event = events.find((entry) => entry.id === trigger?.eventId);
         if (!event) throw new Error("Триггер используется особенностью объекта.");
         validateTypedTrigger(typed, event, { ...feature.parameters, type: trigger.name });
+      }
+      const routineSteps = current._objectBindings ? Object.values(current._objectBindings.bindings).flatMap((binding) => (binding?.routines ?? []).flatMap((routine) => routine.steps)) : objectRoutineSteps(this.scene);
+      for (const step of routineSteps) if (step.kind === "event") {
+        const p = step.parameters, trigger = typed.triggers.find((entry) => entry.id === p.triggerId), event = events.find((entry) => entry.id === trigger?.eventId);
+        if (!event || event.name !== p.eventName) throw new Error("Триггер используется шагом распорядка и должен принадлежать его событию.");
+        validateTypedTrigger(typed, event, { ...p.parameters, type: trigger.name });
       }
       const fields = { eventCatalog: next, ...(current._definitions ? { definitions: current._definitions } : {}),
         ...(current._interactionCatalog ? { interactionCatalog: current._interactionCatalog } : {}), ...(current._objectBindings ? { objectBindings: current._objectBindings } : {}) };
@@ -247,8 +255,9 @@ export class EventCatalog {
         assets.revision = (assets.revision ?? 0) + 1; catalog._interactionCatalog = assets;
       }
       if (bindings) {
-        for (const binding of Object.values(bindings.bindings)) for (const feature of binding.features ?? []) {
-          replace(feature, "eventName"); feature.patrol?.points?.forEach((point) => replace(point, "eventName"));
+        for (const binding of Object.values(bindings.bindings)) {
+          for (const feature of binding?.features ?? []) { replace(feature, "eventName"); feature.patrol?.points?.forEach((point) => replace(point, "eventName")); }
+          for (const routine of binding?.routines ?? []) for (const step of routine.steps) if (step.kind === "event") replace(step.parameters, "eventName");
         }
         bindings.revision = (bindings.revision ?? 0) + 1; catalog._objectBindings = bindings;
       }
@@ -270,7 +279,8 @@ export class EventCatalog {
   deleteTrigger(id) { return this.change((catalog) => {
     if (!catalog.triggers.some((entry) => entry.id === id)) throw new Error("Встроенный или отсутствующий триггер нельзя удалить.");
     if (catalog.events.some((event) => event.subscribers.some((entry) => entry.triggerId === id)) || catalog.macros.some((entry) => entry.triggerIds.includes(id))
-      || objectFeatures(this.scene).some((feature) => feature.triggerId === id)) throw new Error("Сначала удалите подписки на триггер.");
+      || objectFeatures(this.scene).some((feature) => feature.triggerId === id)
+      || objectRoutineSteps(this.scene).some((step) => step.kind === "event" && step.parameters.triggerId === id)) throw new Error("Сначала удалите подписки на триггер.");
     catalog.triggers = catalog.triggers.filter((entry) => entry.id !== id);
   }); }
   saveMacro(value, options = {}) { return this.change((catalog) => {
@@ -279,6 +289,7 @@ export class EventCatalog {
   }, options); }
   removeMacro(uuid) { return this.change((catalog) => {
     if (objectFeatures(this.scene).some((feature) => feature.macroUuid === uuid || feature.patrol?.points?.some((point) => point.macroUuid === uuid))) throw new Error("Макрос используется особенностью объекта.");
+    if (objectRoutineSteps(this.scene).some((step) => step.kind === "macro" && step.parameters.macroUuid === uuid)) throw new Error("Макрос используется распорядком объекта.");
     catalog.macros = catalog.macros.filter((entry) => entry.uuid !== uuid);
   }); }
   exportTrigger(id) {

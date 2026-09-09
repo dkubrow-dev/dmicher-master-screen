@@ -1,5 +1,5 @@
 import { getRuntimes } from "./store.js";
-import { resolveObjectShop, resolveObjectDialogue } from "./scene-objects.js";
+import { resolveObjectShop, resolveObjectDialogue, getObjectBindings } from "./scene-objects.js";
 import { sceneDistance, tokenCenter } from "./effects.js";
 import { getTriggerGate, getTriggerKey } from "./triggers.js";
 import { isExecutionHalted } from "./execution.js";
@@ -17,6 +17,7 @@ export function validateObjectAccess({ scene, runtime, descriptor, target, trigg
   const fail = (text) => { throw new Error(text); };
   if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail("Сцена или эпизод изменились. Откройте взаимодействие заново.");
   if (isExecutionHalted(scene, runtime) || runtime.episode?.stop || !descriptor?.enabled || !target || target.hidden
+    || getObjectBindings(scene).bindings[objectKey(descriptor?.target)]?.playerCharacter
     || (descriptor.target.type === "Token" && (runtime.disabledTokens?.includes(target.id) || runtime.episode?.tokens?.[target.id]?.enabled === false))) fail("Взаимодействие сейчас недоступно.");
   const actorToken = scene.tokens?.get(actorTokenId);
   if (!user || !actorToken?.actor || actorToken.hidden || (descriptor.target.type === "Token" && actorToken.id === target.id)
@@ -44,7 +45,7 @@ export function listAvailableInteractions(scene, rawTarget, actorToken, user = g
       const sessions = kind === "shop" ? Object.values(runtime.shopSessions ?? {}) : Object.values(runtime.dialogueSessions ?? {});
       const resuming = sessions.some((session) => session.userId === user?.id && session.actorTokenId === (actorToken?.document?.id ?? actorToken?.id)
         && session.runId === runtime.runId && objectKey(session.target) === objectKey(target)
-        && (kind === "shop" ? session.status === "pending" || session.expiresAt > Date.now() : session.status === "active"));
+        && (kind === "shop" ? session.status === "pending" || session.expiresAt > Date.now() : ["active", "finished"].includes(session.status)));
       try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: kind }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: resuming }); }
       catch { continue; }
       result.push({ kind, id: resolved.asset.id, name: resolved.asset.name, target: { ...target }, schemeId: runtime.schemeId, runId: runtime.runId });

@@ -55,6 +55,7 @@ export async function exportBundle(scene) {
     if (feature.kind === "macro") await include(feature.macroUuid);
     if (feature.kind === "patrol") for (const point of feature.patrol.points) await include(point.macroUuid);
   }
+  for (const binding of Object.values(objectBindings.bindings)) for (const routine of binding.routines) for (const step of routine.steps) if (step.kind === "macro") await include(step.parameters.macroUuid);
   const data = portable(scene);
   const objectTags = normalizeObjectTags(data.flags?.[MODULE_ID]?.objectTags);
   if (data.flags) delete data.flags[MODULE_ID];

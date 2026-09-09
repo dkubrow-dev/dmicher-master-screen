@@ -6,6 +6,7 @@ import { generics } from "./generics.js";
 import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
 import { createManualDialogueService } from "./manual-dialogues.js";
 import { EVENT_NAME } from "./event-catalog.js";
+import { beginInteractionPause, freezeInteractionClock, dialogueSessionIsLive, INTERACTION_LEASE_MS } from "./interaction-pause.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -45,6 +46,7 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
     const initial = context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target);
     if (!initial.scene) fail("Сцена не найдена.");
     const events = [];
+    const releasePause = command.kind === "start" ? beginInteractionPause(initial.scene, command.target ?? initial.dialogue?.target) : () => {};
     const result = await lock(initial.scene, async () => {
       if (!authority()) fail("Исполняющий мастер изменился.");
       const state = clone(runtimeOf(initial.scene, { schemeId: command.schemeId ?? "main" }));
@@ -80,7 +82,7 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
           const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
           validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, command.actorTokenId, user, command.runId);
           session = state.dialogueSessions[sessionKey(user.id, command.actorTokenId)];
-          if (!(session?.status === "active" && session.runId === state.runId && session.dialogueId === dialogue.id
+          if (!(["active", "finished"].includes(session?.status) && session.runId === state.runId && session.dialogueId === dialogue.id
             && (!session.target || objectKey(session.target) === objectKey(dialogue.target)))) {
             const triggerKey = getTriggerKey(state, "dialogue", interactionTriggerId(dialogue));
             const gate = getTriggerGate(initial.scene, state, dialogue.trigger, initial.scene.tokens.get(command.actorTokenId), { triggerKey });
@@ -91,10 +93,11 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
               schemeId: state.schemeId, runId: state.runId, nodeId: dialogue.startNodeId, step: 0, status: "active" };
             state.dialogueSessions[sessionKey(user.id, command.actorTokenId)] = session;
           }
-        } else if (command.kind === "answer") {
+          if (dialogue.target.type === "Token") freezeInteractionClock(state, dialogue.target.id);
+        } else if (["answer", "renew"].includes(command.kind)) {
           session = Object.values(state.dialogueSessions).find((entry) => entry.sessionId === command.sessionId && entry.userId === user.id);
-          if (!session || session.status !== "active") fail("Разговор уже завершён.");
-          if (session.nodeId !== command.nodeId || session.step !== command.step) fail("Этот ответ относится к предыдущему шагу разговора.");
+          if (!dialogueSessionIsLive(session)) fail("Разговор уже завершён.");
+          if (command.kind === "answer" && (session.status !== "active" || session.nodeId !== command.nodeId || session.step !== command.step)) fail("Этот ответ относится к предыдущему шагу разговора.");
           if (command.target && objectKey(command.target) !== objectKey(session.target)) fail("Ответ относится к другому объекту.");
           dialogue = context(command.sceneId, session.dialogueId, command.schemeId ?? "main", session.target).dialogue;
         } else fail("Неизвестное действие диалога.");
@@ -118,15 +121,18 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
         if (!currentNode.responses?.length) session.status = "finished";
         const payload = { dialogueId: dialogue.id, responseId: selected?.id ?? null, target: clone(dialogue.target), userId: user.id };
         if (selected?.eventName && !(selected.eventName === "dialogue.finished" && session.status === "finished")) emit(selected.eventName, session, payload);
-        if (session.status === "finished") emit("dialogue.finished", session, payload, "finished");
+        if (session.status === "finished" && !session.finishedEmitted) {
+          emit("dialogue.finished", session, payload, "finished"); session.finishedEmitted = true;
+        }
         if (admittedTrigger) consumeTrigger(state, admittedTrigger, dialogue.trigger);
+        session.expiresAt = Date.now() + INTERACTION_LEASE_MS;
         response = visibleSession(session, dialogue, target);
       }
       state.dialogueCommands[commandKey] = clone(response);
       for (const old of Object.keys(state.dialogueCommands).slice(0, -200)) delete state.dialogueCommands[old];
       await save(initial.scene, state);
       return response;
-    });
+    }).finally(releasePause);
     // SceneEvents admits work using the same Scene lock, so emit only after releasing it.
     for (const event of events) {
       try {
@@ -191,6 +197,7 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
       return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step });
     },
     leaveSession: (command) => send({ ...command, kind: "leave" }),
+    renewSession: (command) => send({ ...command, kind: "renew" }),
     async processCommand(message, initiatingUserId) {
       const command = message.getFlag?.(MODULE_ID, "dialogueCommand");
       if (!command || !authority()) return false;

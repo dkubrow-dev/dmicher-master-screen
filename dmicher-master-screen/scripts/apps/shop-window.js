@@ -31,7 +31,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       sessionId: this.sessionId, runId: this.runId, requestId: this.requestId, ...extra };
   }
   async ensureSession() {
-    if (this.session || this.sessionError || this.finished) return;
+    if (this.session || this.sessionError || this.finished || this.closing) return;
     if (this.join) {
       const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).runtime?.shopSessions?.[this.shopId];
       if (!current || current.sessionId !== this.sessionId) throw new Error("Сессия участника уже завершилась.");
@@ -44,6 +44,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.sessionId = this.session.sessionId; this.runId = this.session.runId;
     this.actorTokenId = this.session.actorTokenId; this.draft = clone(this.session.draft);
     this.revision = this.session.revision ?? 0;
+    if (this.closing && !this.join) void this.controller.shop.releaseSession(this.intent()).catch(() => {});
   }
   async _prepareContext(options) {
     const base = await super._prepareContext(options);
@@ -175,6 +176,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   }
   static sheet() { return this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
   async close(options = {}) {
+    this.closing = true;
     this.listeners?.abort(); clearInterval(this.heartbeat); clearInterval(this.statusTimer);
     this.heartbeat = null; this.statusTimer = null;
     if (this.sessionId && !this.readOnly && !this.pending && !this.finished && !this.busy) {

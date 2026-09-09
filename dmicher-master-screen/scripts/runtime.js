@@ -5,6 +5,8 @@ import { getTriggerKey, getTriggerGate, consumeTrigger, resetEpisodeTriggerCount
 import { executionGeneration, requestHalt, finishHalt, isExecutionHalted, notifyExecutionChange } from "./execution.js";
 import { materializeEpisode, getSceneObject, getObjectBindings } from "./scene-objects.js";
 import { objectKey, interactionTriggerId, validateObjectAccess } from "./interaction-access.js";
+import { isInteractionPaused, freezeInteractionClock } from "./interaction-pause.js";
+import { TokenRoutineRuntime } from "./routine-runtime.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -24,6 +26,7 @@ export class EpisodeRuntime {
     this.macroJobs = new Map();
     this.busy = false;
     this.disposed = false;
+    this.routines = new TokenRoutineRuntime(this);
   }
 
   start() {
@@ -61,6 +64,7 @@ export class EpisodeRuntime {
     this.previousPositions.clear();
     this.tickTimes.clear();
     this.macroJobs.clear();
+    this.routines.dispose();
     clearTokenEmojis();
   }
 
@@ -103,10 +107,12 @@ export class EpisodeRuntime {
 
   refreshToken(token) {
     if (!token?.parent || globalThis.canvas?.scene?.id !== token.parent.id) return;
-    const state = getRuntimes(token.parent).find((entry) => entry.episode?.tokens?.[token.id] && !isExecutionHalted(token.parent, entry) && this.isTokenEnabled(entry, token.id));
+    const binding = getObjectBindings(token.parent).bindings[`Token:${token.id}`];
+    const state = getRuntimes(token.parent).find((entry) => entry.episode?.tokens?.[token.id] && !isExecutionHalted(token.parent, entry) && this.isTokenEnabled(entry, token.id)
+      && (!binding || !binding.playerCharacter && binding.schemeId === entry.schemeId && !binding.conflictingSchemeIds?.length));
     if (!state) { setTokenEmoji(token, ""); return; }
     const config = state.episode?.tokens?.[token.id];
-    setTokenEmoji(token, config && !isExecutionHalted(token.parent, state) && this.isTokenEnabled(state, token.id) ? config.emoji : "");
+    setTokenEmoji(token, config && !isExecutionHalted(token.parent, state) && this.isTokenEnabled(state, token.id) ? state.routineStates?.[token.id]?.emoji ?? config.emoji : "");
   }
 
   async enter(scene, episodeId, { force = false, expectedRunId, eventContext, eventName, schemeId = "main" } = {}) {
@@ -137,11 +143,14 @@ export class EpisodeRuntime {
         shops: clone(previous.shops), tradeRequests: clone(previous.tradeRequests ?? {}),
         shopSessions: Object.fromEntries(Object.entries(previous.shopSessions ?? {}).filter(([, session]) => session.status === "pending")),
         objectEntries: clone(previous.objectEntries ?? {}),
+        routineStates: {}, interactionClocks: {},
         eventLog: clone(previous.eventLog ?? []), eventClaims: clone(previous.eventClaims ?? {}),
         dialogueSessions: {}, dialogueCommands: clone(previous.dialogueCommands ?? {}), triggerCounts: clone(previous.triggerCounts ?? {}),
         triggerEnabledOverrides: clone(previous.triggerEnabledOverrides ?? {})
       };
       resetEpisodeTriggerCounts(state, episode);
+      for (const routine of episode.routines ?? []) state.routineStates[routine.target.id] = { stepId: routine.steps[0]?.id ?? null,
+        status: routine.steps.length ? "ready" : "done", sequence: 0 };
       for (const [id, config] of Object.entries(episode.tokens)) {
         state.speech[id] = { nextAt: this.now() + Number(config.speech?.interval ?? 30) * 1000, sequence: 0 };
         state.patrol[id] = { index: 0 };
@@ -168,6 +177,7 @@ export class EpisodeRuntime {
         for (const config of episode.objects ?? []) {
           const key = objectKey(config.target), target = getSceneObject(scene, config.target);
           if (!target || (config.target.type === "Token" && state.disabledTokens.includes(config.target.id))) continue;
+          if (config.target.type === "Token" && isInteractionPaused(scene, config.target.id)) continue;
           // Entry preparation is claimed in persistent state before any document change.
           // A reconnect and later explicit episode transitions never repeat this first placement.
           if (!state.objectEntries[key]) {
@@ -231,10 +241,11 @@ export class EpisodeRuntime {
     if (Object.keys(changes).length) return target.update(changes, { animate: false });
   }
 
-  currentToken(scene, runId, tokenId) {
+  currentToken(scene, runId, tokenId, { ignoreInteractionPause = false } = {}) {
     if (!this.owns(scene, runId)) return false;
     const state = getRuntimeForRun(scene, runId), binding = getObjectBindings(scene).bindings[`Token:${tokenId}`];
-    if (binding && (binding.schemeId !== state.schemeId || binding.conflictingSchemeIds?.length)) return false;
+    if (binding && (binding.playerCharacter || binding.schemeId !== state.schemeId || binding.conflictingSchemeIds?.length)) return false;
+    if (!ignoreInteractionPause && isInteractionPaused(scene, tokenId)) return false;
     return Boolean(scene.tokens.get(tokenId)) && this.isTokenEnabled(state, tokenId);
   }
 
@@ -317,7 +328,10 @@ export class EpisodeRuntime {
     let jobs;
     try { jobs = await Promise.all(getRuntimes(scene).map(async (state) => ({ state, transition: await this.tickScheme(scene, state) }))); }
     finally { this.busy = false; }
-    await Promise.all(jobs.filter((job) => job.transition).map(({ state, transition }) => this.executePatrolCheck(scene, state, transition)));
+    await Promise.all(jobs.filter((job) => job.transition).flatMap(({ state, transition }) => [
+      ...(transition.routineJobs ?? []).map((job) => this.routines.execute(job)),
+      ...(transition.patrol ? [this.executePatrolCheck(scene, state, transition.patrol)] : [])
+    ]));
   }
 
   async tickScheme(scene, state) {
@@ -327,17 +341,40 @@ export class EpisodeRuntime {
         if (!this.owns(scene, state.runId)) return null;
         const elapsed = Math.min(1, Math.max(0, (this.now() - (this.tickTimes.get(clockKey) ?? this.now())) / 1000));
         this.tickTimes.set(clockKey, this.now());
+        const routineJobs = [];
         for (const [id, config] of Object.entries(state.episode.tokens)) {
-          if (!this.currentToken(scene, state.runId, id)) continue;
+          if (!this.currentToken(scene, state.runId, id, { ignoreInteractionPause: true })) continue;
+          const current = getRuntimeForRun(scene, state.runId);
+          if (isInteractionPaused(scene, id)) {
+            if (!current.interactionClocks?.[id]) { freezeInteractionClock(current, id, this.now()); await saveRuntime(scene, current); }
+            continue;
+          }
+          let tokenElapsed = elapsed;
+          if (current.interactionClocks?.[id]) {
+            if (current.speech[id]) current.speech[id].nextAt = this.now() + current.interactionClocks[id].speechRemainingMs;
+            delete current.interactionClocks[id]; await saveRuntime(scene, current); tokenElapsed = 0;
+          }
           const token = scene.tokens.get(id);
+          const routine = state.episode.routines?.find((entry) => entry.target.id === id);
+          if (routine) {
+            try { const job = await this.routines.tick(scene, current, token, routine, tokenElapsed); if (job) routineJobs.push(job); }
+            catch (error) {
+              const latest = getRuntimeForRun(scene, state.runId);
+              if (latest && this.currentToken(scene, state.runId, id, { ignoreInteractionPause: true })) {
+                latest.routineStates[id].status = "failed"; latest.error = `Распорядок «${token.name}»: ${error.message}`;
+                await saveRuntime(scene, latest); this.onChange(scene);
+              }
+            }
+            continue;
+          }
           if (config.speech?.phrases?.length && Number(config.speech.interval) > 0) await this.speechTick(scene, state.runId, token, config);
           if (!this.currentToken(scene, state.runId, id)) continue;
           if (config.patrol?.enabled && config.patrol.points.length) {
-            const macroJob = await this.patrolTick(scene, state.runId, token, config, elapsed);
-            if (macroJob) return macroJob;
+            const macroJob = await this.patrolTick(scene, state.runId, token, config, tokenElapsed);
+            if (macroJob) return { routineJobs, patrol: macroJob };
           }
         }
-        return null;
+        return { routineJobs };
       });
   }
 
@@ -354,6 +391,7 @@ export class EpisodeRuntime {
           return this.onTypedEvent(scene, name, trigger, { context });
         };
         const result = await this.effects.macro(transition.uuid, { ...transition, InvokeDmicherMasterScreenEvent: invoke });
+        if (!this.currentToken(scene, transition.runId, transition.token.id)) return;
         let handled = false;
         if (result === true && transition.target && this.currentToken(scene, transition.runId, transition.token.id)) {
           await this.enter(scene, transition.target, { expectedRunId: transition.runId, schemeId: state.schemeId, eventName: transition.eventName });
@@ -363,7 +401,9 @@ export class EpisodeRuntime {
           payload: { result: true, macroUuid: transition.uuid, tokenId: transition.token.id } });
         this.emitEvent(scene, { name: "patrol.check", runId: transition.runId, actorTokenId: transition.token.id, handled,
           payload: { result: result === true, macroUuid: transition.uuid, directRoute: handled, targetEpisodeId: transition.target || "" } });
-      } catch (error) { await withSceneLock(scene, () => this.disableAfterError(scene, transition.runId, transition.token.id, error)); }
+      } catch (error) {
+        if (!isInteractionPaused(scene, transition.token.id)) await withSceneLock(scene, () => this.disableAfterError(scene, transition.runId, transition.token.id, error));
+      }
       finally {
         if (this.macroJobs.get(transition.key) === transition) this.macroJobs.delete(transition.key);
       }

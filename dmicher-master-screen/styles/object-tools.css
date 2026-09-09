@@ -4,7 +4,23 @@
 .dmicher-master-screen.ms-object-menu button:hover, .dmicher-master-screen.ms-object-menu button:focus-visible { background: var(--dmicher-hover-bg, #ffffff20); }
 .dmicher-master-screen .ms-object-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .dmicher-master-screen .ms-object-tabs button { flex: 1; }
-.dmicher-master-screen .ms-object-form { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+.dmicher-master-screen .ms-object-form { display: flex; flex: 1; min-height: 0; height: 100%; flex-direction: column; gap: 10px; padding: 10px; overflow: hidden; }
+.dmicher-master-screen .ms-object-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; overflow: auto; scrollbar-gutter: stable; }
+.dmicher-master-screen .ms-object-scroll > * { flex-shrink: 0; }
+.dmicher-master-screen .ms-object-tabs, .dmicher-master-screen .ms-object-form > footer { flex: 0 0 auto; }
+.dmicher-master-screen.ms-object-info > .window-content, .dmicher-master-screen.ms-object-behavior > .window-content { min-height: 0; }
+/* Legacy token editors and other standalone forms must also shrink inside a resized window. */
+.dmicher-master-screen .window-content > .ms-body { flex: 1; min-height: 0; }
+.dmicher-master-screen .ms-routine-table-scroll { overflow-x: auto; }
+.dmicher-master-screen .ms-routine-table { width: 100%; min-width: 480px; table-layout: fixed; }
+.dmicher-master-screen .ms-routine-table th:first-child { width: 32px; }
+.dmicher-master-screen .ms-routine-table th:nth-child(2) { width: 120px; }
+.dmicher-master-screen .ms-routine-table th:nth-child(4) { width: 80px; }
+.dmicher-master-screen .ms-routine-table th:last-child { width: 35px; }
+.dmicher-master-screen .ms-routine-table td, .dmicher-master-screen .ms-automation-table td { vertical-align: top; padding: 4px; }
+.dmicher-master-screen .ms-routine-table textarea { width: 100%; min-height: 115px; font-family: monospace; font-size: 12px; }
+.dmicher-master-screen .ms-routine-table select, .dmicher-master-screen .ms-routine-table input { width: 100%; }
+.dmicher-master-screen .ms-automation-table { width: 100%; }
 .dmicher-master-screen .ms-object-form label { display: flex; flex-direction: column; gap: 3px; }
 .dmicher-master-screen .ms-object-form label.ms-check { flex-direction: row; align-items: center; gap: 6px; }
 .dmicher-master-screen .ms-object-form textarea { min-height: 70px; resize: vertical; }

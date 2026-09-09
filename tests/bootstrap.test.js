@@ -311,3 +311,23 @@ test("entry episode is selected without executing and an ambiguous player select
     assert.equal(controller.getActingTokenId("guard"), undefined);
   } finally { await f.dispose(); }
 });
+
+test("a single owned self-target selects the acting character without requiring a scheme", async () => {
+  const f = fixture(14);
+  try {
+    const controller = new ScreenController(); game.user = game.users.get("player");
+    const pc = (id, owned = true) => ({ id, hidden: false, actor: { testUserPermission: () => owned } });
+    f.scene.tokens.set("pc1", pc("pc1")); f.scene.tokens.set("pc2", pc("pc2")); f.scene.tokens.set("foreign", pc("foreign", false));
+    canvas.tokens.controlled = [{ document: f.scene.tokens.get("pc2") }];
+    game.user.targets = new Set([{ document: f.scene.tokens.get("pc1") }]);
+    assert.equal(controller.getActingTokenId(undefined, "guard"), "pc1");
+    assert.equal(controller.getActingTokenId("foreign", "guard"), undefined);
+    game.user.targets.add({ document: f.scene.tokens.get("pc2") });
+    assert.equal(controller.getActingTokenId(undefined, "guard"), undefined);
+    game.user.targets = new Set([{ document: f.scene.tokens.get("foreign") }]);
+    assert.equal(controller.getActingTokenId(undefined, "guard"), "pc2");
+    game.user.targets = new Set([{ document: { id: "absent" } }]);
+    assert.equal(controller.getActingTokenId(undefined, "guard"), "pc2");
+    assert.deepEqual(f.scene.updates, []);
+  } finally { await f.dispose(); }
+});

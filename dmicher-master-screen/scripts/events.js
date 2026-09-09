@@ -15,7 +15,7 @@ const escapeHTML = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&
 function objectFeatureCurrent(scene, { featureId, objectTarget, schemeId }) {
   if (!featureId) return true;
   const state = getRuntime(scene, { schemeId }), binding = getObjectBindings(scene).bindings[objectKey(objectTarget)];
-  return Boolean(getSceneObject(scene, objectTarget) && binding?.schemeId === schemeId
+  return Boolean(getSceneObject(scene, objectTarget) && !binding?.playerCharacter && binding?.schemeId === schemeId
     && !(objectTarget.type === "Token" && (state.disabledTokens.includes(objectTarget.id) || state.episode?.tokens?.[objectTarget.id]?.enabled === false))
     && binding.features.some((feature) => feature.id === featureId && feature.enabled
       && (!feature.episodeIds.length || feature.episodeIds.includes(state.episodeId))));

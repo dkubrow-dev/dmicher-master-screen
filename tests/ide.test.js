@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeIDEPreferences, clampRatio } from "../dmicher-master-screen/scripts/apps/screen-layout.js";
-import { renderSceneTree, renderEventTree, renderParameters, eventSources } from "../dmicher-master-screen/scripts/apps/ide-view.js";
+import { renderSceneTree, renderEventTree, renderParameters, eventSources, renderMenu } from "../dmicher-master-screen/scripts/apps/ide-view.js";
 import { MAIN_MENU, menuRows, menuPath, menuParent, toggleMenuNode } from "../dmicher-master-screen/scripts/apps/navigation-tree.js";
 import { schemeBadges } from "../dmicher-master-screen/scripts/apps/scheme-badges.js";
 import { matchingActorTokens, readAssetForm, renderAssetBindings, renderDialogueGraph } from "../dmicher-master-screen/scripts/apps/asset-forms.js";
@@ -18,6 +18,17 @@ test("menu categories aggregate descendants and remain navigation-only across th
   assert.deepEqual(toggleMenuNode(nodes, hidden, "root", true), []);
   assert.equal(toggleMenuNode([{ id: "only" }], [], "only", false), null);
   assert.deepEqual(MAIN_MENU.map((node) => node.id), ["scene", "tools", "automation", "other"]);
+});
+
+test("both menus keep one first-level carousel and place child navigation in closed overlays", () => {
+  for (const zone of ["main", "detail"]) {
+    const html = renderMenu(zone, [], zone === "main" ? "shops" : "parameters", "tools");
+    assert.equal((html.match(/class="ms-menu-level"/g) ?? []).length, 1);
+    assert.equal((html.match(/role="menubar"/g) ?? []).length, 1);
+    assert.equal((html.match(/data-screen-action="scrollMenu"/g) ?? []).length, 2);
+    assert.ok(!html.includes('aria-expanded="true"'));
+    if (zone === "main") { assert.ok(html.includes('popover="manual"')); assert.ok(html.includes('data-menu-popup="tools"')); }
+  }
 });
 
 test("scheme badges report the actual run colours and distinguish an unstarted or stopped scheme", () => {

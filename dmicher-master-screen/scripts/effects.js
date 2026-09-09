@@ -93,6 +93,12 @@ export function createFoundryEffects(chat) {
       if (!helper?.play) throw new Error("Проигрывание звука Foundry недоступно.");
       return helper.play({ src, volume: 0.8, loop: false }, true);
     },
+    async bubble(token, phrase, enabled = () => true) {
+      if (!enabled()) return;
+      const bubbles = globalThis.canvas?.hud?.bubbles;
+      if (!bubbles?.broadcast) throw new Error("Реплики над токеном Foundry недоступны.");
+      return bubbles.broadcast(token, escapeHTML(phrase), { requireVisible: true, pan: false });
+    },
     async spawn(scene, spawn, runId, isCurrent) {
       const actor = await fromUuid(spawn.actorUuid);
       if (!actor || actor.documentName !== "Actor" || !actor.getTokenDocument) throw new Error("Актор подкрепления не найден.");
@@ -109,11 +115,12 @@ export function createFoundryEffects(chat) {
       }
       return created;
     },
-    async macro(uuid, { scene, token, episode, runId, InvokeDmicherMasterScreenEvent, isCurrent = () => true }) {
+    async macro(uuid, { scene, token, episode, runId, parameters, stepId, InvokeDmicherMasterScreenEvent, isCurrent = () => true }) {
       const macro = await fromUuid(uuid);
       if (!isCurrent()) return;
       if (!macro || macro.documentName !== "Macro" || macro.type !== "script" || !macro.canExecute) throw new Error("Проверка требует доступный скриптовый макрос Foundry.");
-      return macro.execute({ actor: token.actor, token: token.object, scene, episode, runId, InvokeDmicherMasterScreenEvent });
+      return macro.execute({ actor: token.actor, token: token.object, scene, episode, runId, InvokeDmicherMasterScreenEvent,
+        ...(parameters !== undefined ? { parameters: structuredClone(parameters), stepId, objectTarget: { type: "Token", id: token.id }, sceneObject: token } : {}) });
     }
   };
 }

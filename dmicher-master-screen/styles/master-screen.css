@@ -239,6 +239,12 @@
 .dmicher-master-screen .ms-preview-result { border-top: 1px solid var(--dmicher-border-muted); padding-top: 8px; }
 .dmicher-master-screen [data-select-kind] { cursor: pointer; }
 .dmicher-master-screen .ms-menu-levels { flex: 1; min-width: 0; }
+.dmicher-master-screen .ms-ide-tabs { flex-shrink: 0; }
+.dmicher-master-screen .ms-menu-popup { position: fixed; inset: auto; margin: 0; padding: 4px; min-width: 145px; max-width: min(320px, calc(100vw - 8px)); max-height: min(400px, calc(100vh - 8px)); overflow-y: auto; flex-direction: column; gap: 2px; border: 1px solid var(--dmicher-border); border-radius: 4px; background: var(--dmicher-content-bg); color: var(--dmicher-text); box-shadow: 0 6px 18px #0006; }
+.dmicher-master-screen .ms-menu-popup:not(:popover-open) { display: none; }
+.dmicher-master-screen .ms-menu-popup:popover-open { display: flex; }
+.dmicher-master-screen .ms-menu-popup > button { flex: 0 0 auto; min-height: 27px; width: 100%; text-align: left; justify-content: flex-start; padding: 3px 8px; }
+.dmicher-master-screen .ms-menu-popup::backdrop { pointer-events: none; }
 .dmicher-master-screen .ms-menu-level { display: flex; min-width: 0; }
 .dmicher-master-screen .ms-menu-strip { display: flex; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; gap: 1px; }
 .dmicher-master-screen .ms-menu-strip::-webkit-scrollbar { display: none; }

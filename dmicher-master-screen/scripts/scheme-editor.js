@@ -140,7 +140,7 @@ export class SchemeEditor {
     const scoped = (entry) => !entry.episodeIds.length || entry.episodeIds.includes(episodeId);
     const owned = Object.values(getObjectBindings(this.scene).bindings).some((binding) => binding.schemeId === from && (
       binding.episodes[episodeId] || [binding.shop, binding.dialogue].some((entry) => entry && scoped(entry))
-      || binding.features.some(scoped) || binding.legacyVariants.some((entry) => entry.episodeId === episodeId)));
+      || binding.features.some(scoped) || binding.routines.some((entry) => entry.episodeId === episodeId) || binding.routineOverrides.includes(episodeId) || binding.legacyVariants.some((entry) => entry.episodeId === episodeId)));
     if (owned) throw new Error("Эпизод содержит настройки объектов исходной схемы. Сначала разделите или явно переназначьте объекты: другая схема не может управлять ими одновременно.");
     const next = standaloneEpisode(episode);
     next.name = unique(destination.episodes, name ?? episode.name);

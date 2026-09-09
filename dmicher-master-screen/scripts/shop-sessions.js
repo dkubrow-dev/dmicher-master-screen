@@ -2,6 +2,7 @@ import { MODULE_ID } from "./model.js";
 import { asArray, getRuntimes } from "./store.js";
 import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
 import { objectKey, interactionTriggerId } from "./interaction-access.js";
+import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
 
 const clone = (value) => structuredClone(value);
 const leaseMs = 120_000;
@@ -27,6 +28,8 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail("Неизвестная команда магазина.");
     const initial = context(command.sceneId, command.target ?? command.tokenId, command.schemeId ?? "main");
     if (!initial.scene) fail("Сцена магазина не найдена.");
+    const target = initial.target ?? { type: "Token", id: command.tokenId };
+    const releasePause = command.kind === "open" ? beginInteractionPause(initial.scene, target) : () => {};
     return lock(initial.scene, async () => {
       if (!authority()) fail("Исполняющий мастер изменился.");
       const current = context(command.sceneId, command.target ?? command.tokenId, command.schemeId ?? "main"), runtime = clone(current.runtime);
@@ -54,10 +57,12 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         if (!gate.allowed) fail(gate.reason);
         session = reusing ? existing : {
           sessionId: foundry.utils.randomID(), userId: user.id, actorTokenId: command.actorTokenId,
+          target: clone(target),
           ...(current.shopId ? { shopId, actorId: actor.id, target: clone(current.target) } : {}),
           runId: runtime.runId, schemeId: runtime.schemeId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
         };
         if (!reusing) consumeTrigger(runtime, triggerKey, policy);
+        if (target.type === "Token") freezeInteractionClock(runtime, target.id);
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;
         if (existing.userId !== user.id && !user.isGM) fail("Нельзя завершить чужую сессию магазина.");
@@ -85,7 +90,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       session.expiresAt = Date.now() + leaseMs;
       runtime.shopSessions[shopId] = session;
       await save(current.scene, runtime); onChange(current.scene); return clone(session);
-    });
+    }).finally(releasePause);
   };
   const send = async (command) => {
     command = { ...command, schemeId: command.schemeId ?? "main" };

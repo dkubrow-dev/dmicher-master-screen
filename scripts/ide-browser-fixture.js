@@ -57,6 +57,18 @@ game.macros.set("demo", new MacroFixture({ id: "demo", name: "Example macro" }))
 game.items = new Map();
 for (const data of [{ id: "rope", name: "Rope", type: "equipment", img: "icons/svg/item-bag.svg", system: { quantity: 7 } }, { id: "apple", name: "Apple", type: "consumable", img: "icons/svg/item-bag.svg", system: { quantity: 2 } }]) game.items.set(data.id, { ...data, documentName: "Item", uuid: `Item.${data.id}`, toObject: () => structuredClone(data) });
 globalThis.fromUuid = async (uuid) => uuid?.startsWith("Item.") ? game.items.get(uuid.split(".")[1]) : game.macros.get(uuid?.split(".")[1]);
+// Item sheets use their own change/submit owner, as in Foundry DocumentSheetV2
+// with submitOnChange. This external form must not be handled by the docked editor.
+globalThis.openNativeItemForm = () => {
+  document.getElementById("native-item-fixture")?.remove();
+  const form = document.createElement("form"); form.id = "native-item-fixture"; form.className = "application item";
+  Object.assign(form.style, { position: "fixed", left: "120px", top: "140px", width: "320px", height: "140px", padding: "15px", zIndex: "80", background: "#303038" });
+  form.innerHTML = '<label>Native Item name<input name="name" value="New Item" required></label><button type="submit">Save Item</button>';
+  const item = { id: "native-fixture", name: "New Item", updates: [] }; globalThis.nativeItem = item;
+  const save = (event) => { event.preventDefault(); if (!form.checkValidity()) return; const name = new FormData(form).get("name"); item.name = name; item.updates.push(name); };
+  form.addEventListener("submit", save); form.addEventListener("change", save);
+  document.body.append(form); Hooks.callAll("renderApplicationV2", { element: form }, form); form.elements.name.focus();
+};
 const { defaultDefinition, defaultTokenBehavior, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
 const definition = defaultDefinition(); definition.schemeName = "Town square";
 definition.episodes[0].tokens.guard = defaultTokenBehavior();
@@ -74,6 +86,7 @@ const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: 
    for (const [id] of Object.entries(target[parts.at(-1)] ?? {})) if (id.startsWith("-=")) { delete target[parts.at(-1)][id.slice(2)]; delete target[parts.at(-1)][id]; }
  } };
 const token = { id: "guard", name: "Guard", x: 100, y: 100, texture: { src: "" }, getFlag() {}, actor: { id: "guard-actor", name: "Guard actor", testUserPermission: () => false } };
+token.update = async function (changes) { Object.assign(this, structuredClone(changes)); return this; };
 scene.tokens.set(token.id, token); game.scenes.set(scene.id, scene);
 scene.tiles.set("menu", { id: "menu", name: "Menu", x: 150, y: 150, hidden: false, width: 100, height: 100, texture: { src: "" } });
 scene.tokens.set("waiter", { ...token, id: "waiter", name: "Waiter", actor: { id: "waiter-actor", name: "Waiter actor", testUserPermission: () => false } });

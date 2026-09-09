@@ -28,6 +28,10 @@ Constructor and Director share a compact panel or separate browser window. A hie
 
 ## Основа модели
 
+В «Поведении объекта» теперь четыре вкладки: Переходы, Особенности, Рутина и Автоматизация. Рутина задаёт шаги для конкретного эпизода: ожидание, движение, реплику, эмоцию, событие или макрос. Открытый разговор или торговля приостанавливают рутину НИП до закрытия взаимодействий. Персонаж игрока может оставаться без схемы; соответствующая галка отключает его автоматизацию. Допускаются выбор своего токена и таргет на нём с кликом по объекту.
+
+Object Behavior has four tabs: Transitions, Features, Routine and Automation. Each episode routine contains wait, move, speech, emotion, event or macro steps. Open dialogue or trade sessions pause the NPC's routine until closed. A player character may remain unassigned; its checkbox disables automation. Select your token, or target it and click the object, to interact.
+
 - Сцена объединяет объекты, состояния, события и взаимодействия.
 - Эпизод определяет действующее поведение и представление сцены.
 - Схема — граф эпизодов с собственным состоянием. Несколько схем одной сцены независимо запускаются и останавливаются; две активные схемы не должны одновременно управлять одним токеном.

@@ -11,6 +11,7 @@ import { generics } from "../generics.js";
 import { SceneAssets, legacyAssetId } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
+import { bindIDEMenus } from "./ide-menu.js";
 
 const esc = generics.utilities.escapeHTML;
 const clone = (value) => structuredClone(value);
@@ -49,6 +50,7 @@ export class MasterScreenApplication extends EditorApplication {
   _insertElement(element) { super._insertElement(element); this.layout.attach(element); }
 
   async _onClose(options) {
+    this.menuController?.dispose();
     this.menuDialog?.close(); this.menuDialog?.remove(); this.menuObserver?.disconnect();
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.layout.dispose();
@@ -282,6 +284,7 @@ export class MasterScreenApplication extends EditorApplication {
       event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.schemeId).catch(notify);
     }, listeners);
     this.menuObserver?.disconnect();
+    this.menuController?.dispose(); this.menuController = bindIDEMenus(this.element);
     const updateOverflow = () => { for (const strip of this.element.querySelectorAll("[data-menu-strip]")) {
       const overflow = strip.scrollWidth > strip.clientWidth + 1;
       for (const arrow of strip.parentElement.querySelectorAll(".ms-menu-arrow")) { arrow.hidden = !overflow; arrow.disabled = Number(arrow.dataset.direction) < 0 ? strip.scrollLeft <= 1 : strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1; }
@@ -519,9 +522,10 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "ideSide") { this.captureParameterDraft(); this.layout.setSide(button.dataset.side); return this.render({ force: true }); }
     if (action === "tabSettings") return this.openMenuSettings(button.dataset.zone);
-    if (action === "menuCategory") { this.captureParameterDraft(); this.menuBranch = this.menuBranch === button.dataset.id ? null : button.dataset.id; return this.render({ force: true }); }
+    if (action === "menuCategory") return this.menuController.open(button);
     if (action === "scrollMenu") { const strip = this.element.querySelector(`[data-menu-strip="${button.dataset.menuId}"]`); strip?.scrollBy({ left: Number(button.dataset.direction) * strip.clientWidth * .75, behavior: "smooth" }); return; }
     if (action === "ideTab") {
+      this.menuController.close();
       if (button.dataset.zone === "main") return this.switchMainTab(button.dataset.id);
       this.captureParameterDraft();
       this.layout.preferences[`${button.dataset.zone}Tab`] = button.dataset.id; this.layout.save();

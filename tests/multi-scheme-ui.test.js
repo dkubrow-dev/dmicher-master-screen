@@ -5,6 +5,7 @@ import { defaultDefinition } from "../dmicher-master-screen/scripts/model.js";
 class App {
   constructor(options = {}) { this.options = options; this.rendered = true; }
   async _prepareContext() { return {}; }
+  async _onRender() {}
   render() { return this; }
   async close() { this.rendered = false; }
 }
@@ -64,4 +65,34 @@ test("manual dialogue catalog projects saved dialogues from every scheme indepen
   assert.match(context.dialogue.id, /^legacy-dialogue-/);
   await window.handleAction("self");
   assert.deepEqual(sent[0], { sceneId: "map", dialogueId: context.dialogue.id, pageId: "start" });
+});
+
+test("closing a dialogue or shop while admission is pending releases its eventual NPC lease", async () => {
+  let resolveDialogue, resolveShop;
+  const released = [];
+  const service = { getContext: () => ({ runtime: { runId: "run" } }),
+    requestStart: () => new Promise((resolve) => { resolveDialogue = resolve; }), leaveSession: async (intent) => released.push(intent.sessionId) };
+  const dialogue = new DialogueApplication(service, { sceneId: "map", dialogueId: "talk", actorTokenId: "hero" });
+  const preparing = dialogue._prepareContext({}); await new Promise((resolve) => setImmediate(resolve));
+  await dialogue.close(); resolveDialogue({ sessionId: "dialogue-lease", status: "finished", responses: [] }); await preparing;
+  const shopService = { getContext: () => ({ runtime: { runId: "run" } }),
+    requestSession: () => new Promise((resolve) => { resolveShop = resolve; }), releaseSession: async (intent) => released.push(intent.sessionId) };
+  const shop = new ShopApplication({ shop: shopService }, { sceneId: "map", tokenId: "merchant", actorTokenId: "hero" });
+  const opening = shop.ensureSession(); await shop.close();
+  resolveShop({ sessionId: "shop-lease", runId: "run", actorTokenId: "hero", draft: { giveItemIds: [], take: [] } }); await opening;
+  assert.deepEqual(released, ["dialogue-lease", "shop-lease"]);
+});
+
+test("the last dialogue page renews its lease until Close and disposes the timer", async () => {
+  const originalSet = globalThis.setInterval, originalClear = globalThis.clearInterval;
+  let callback, cleared = false; const renewed = [];
+  globalThis.setInterval = (fn, ms) => { assert.equal(ms, 30000); callback = fn; return { unref() {} }; };
+  globalThis.clearInterval = () => { cleared = true; };
+  try {
+    const service = { getContext: () => ({ runtime: { runId: "run" } }), renewSession: async (intent) => renewed.push(intent), leaveSession: async () => {} };
+    const app = new DialogueApplication(service, { sceneId: "map", dialogueId: "talk", actorTokenId: "hero", target: { type: "Token", id: "npc" } });
+    app.view = { sessionId: "lease", status: "finished", responses: [] }; await app._onRender({}, {});
+    callback(); await Promise.resolve(); assert.equal(renewed[0].sessionId, "lease"); assert.equal(renewed[0].target.id, "npc");
+    await app.close(); assert.equal(cleared, true); assert.equal(app.leaseTimer, null);
+  } finally { globalThis.setInterval = originalSet; globalThis.clearInterval = originalClear; }
 });

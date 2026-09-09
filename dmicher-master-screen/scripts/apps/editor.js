@@ -54,9 +54,12 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
         .finally(() => { if (button.isConnected) button.disabled = false; });
     }, options);
     this.element.addEventListener("submit", (event) => {
-      event.preventDefault();
       const action = event.target.dataset.screenForm;
-      if (action) void Promise.resolve(this.handleAction(action, event.submitter, event)).catch(errorMessage);
+      // Embedded native forms own their submit contract. Only Screen's marked forms
+      // may be prevented and routed to its action handler.
+      if (!action) return;
+      event.preventDefault();
+      void Promise.resolve(this.handleAction(action, event.submitter, event)).catch(errorMessage);
     }, options);
     return options;
   }

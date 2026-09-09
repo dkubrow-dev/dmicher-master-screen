@@ -25,6 +25,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
         this.startPromise ??= this.service.requestStart({ sceneId: this.sceneId, dialogueId: this.dialogueId, target: this.target, actorTokenId: this.actorTokenId, schemeId: this.schemeId, runId: this.runId });
         this.view = await this.startPromise;
         this.error = this.view.error ?? "";
+        if (this.closing && this.view.sessionId) void this.service.leaveSession({ sceneId: this.sceneId, schemeId: this.schemeId, sessionId: this.view.sessionId }).catch(() => {});
       } catch (error) { this.error = error.message; }
     }
     const current = this.service.getContext(this.sceneId, this.dialogueId, this.schemeId, this.target);
@@ -35,6 +36,16 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     return { ...base, ...this.view, busy: this.busy, error: this.error || unavailable,
       responses: unavailable || this.view?.status !== "active" ? [] : (this.view?.responses ?? []).map((response) => ({ ...response, disabled: this.busy })),
       finished: this.view?.status === "finished", missing: !this.view };
+  }
+  async _onRender(context, options) {
+    await super._onRender(context, options);
+    if (!["active", "finished"].includes(this.view?.status) || this.error) { clearInterval(this.leaseTimer); this.leaseTimer = null; return; }
+    this.leaseTimer ??= setInterval(() => {
+      if (!this.rendered || this.closing || !["active", "finished"].includes(this.view?.status)) return;
+      void this.service.renewSession({ sceneId: this.sceneId, schemeId: this.schemeId, sessionId: this.view.sessionId, target: this.target })
+        .catch((error) => { this.error = error.message; clearInterval(this.leaseTimer); this.leaseTimer = null; if (this.rendered) this.render({ force: true }); });
+    }, 30_000);
+    this.leaseTimer.unref?.();
   }
   static async answer(_event, button) {
     if (this.busy || this.closing || this.view?.status !== "active") return;
@@ -50,6 +61,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   refresh() { if (this.rendered && !this.closing) return this.render({ force: true }); }
   async close(options = {}) {
     this.closing = true;
+    clearInterval(this.leaseTimer); this.leaseTimer = null;
     if (this.view?.sessionId) {
       // The local Leave button must work even while the GM is disconnected.
       void this.service.leaveSession({ sceneId: this.sceneId, schemeId: this.schemeId, sessionId: this.view.sessionId }).catch(() => {});

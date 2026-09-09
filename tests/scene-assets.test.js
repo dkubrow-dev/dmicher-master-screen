@@ -202,3 +202,91 @@ test("episode JSON remaps its object scopes and can reuse an existing all-episod
   assert.deepEqual(next.shop.episodeIds, [episode.id]); assert.deepEqual(next.shop.trigger.episodeIds, [episode.id]);
   assert.equal(next.schemeId, target.schemeId);
 });
+
+test("removing a deleted object clears explicit and legacy references without resurrecting its binding", async () => {
+  const f = fixture(), definition = defaultDefinition(), behavior = defaultTokenBehavior();
+  behavior.shop = { ...behavior.shop, enabled: true, items: shopData().items };
+  definition.episodes[0].tokens.npc = behavior;
+  f.scene.flags[MODULE_ID].definitions = { main: definition };
+  f.scene.flags[MODULE_ID].objectTags = { Token: { npc: ["merchant"] } };
+  await f.objects.save(descriptor, { notes: "Note" });
+  const shopId = f.assets.list().shops[0].id;
+  f.scene.tokens.delete("npc");
+  await f.objects.remove(descriptor, { expectedRevision: f.objects.list().revision });
+  assert.equal(f.objects.get(descriptor), null); assert.equal(getDefinitions(f.scene)[0].episodes[0].tokens.npc, undefined);
+  assert.equal(f.assets.getShop(shopId).id, shopId); assert.deepEqual(getObjectTags(f.scene, descriptor), []);
+  assert.equal(f.scene.getFlag(MODULE_ID, "runtimes"), undefined);
+  await f.objects.remove(descriptor);
+  assert.equal(f.objects.get(descriptor), null);
+});
+
+test("player character flags retain preparation but exclude all object automation from new snapshots", async () => {
+  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { schemeId: scheme.schemeId, shop: { shopId: shop.id }, playerCharacter: true,
+    entry: { position: { x: 25, y: 30 } }, routines: [{ episodeId: scheme.entryEpisodeId, steps: [{ id: 1, kind: "wait", parameters: { seconds: 1 }, next: [] }] }] });
+  const snapshot = materializeEpisode(f.scene, f.editor.get(scheme.schemeId), f.editor.get(scheme.schemeId).episodes[0]);
+  assert.equal(snapshot.tokens.npc, undefined); assert.deepEqual(snapshot.shops, []); assert.deepEqual(snapshot.objects, []); assert.deepEqual(snapshot.routines, []);
+  assert.equal(f.objects.get(descriptor).shop.shopId, shop.id);
+  await f.objects.save({ type: "Token", id: "pc" }, { playerCharacter: true, tags: ["hero"] });
+  assert.equal(f.objects.get({ type: "Token", id: "pc" }).schemeId, null);
+  await assert.rejects(f.objects.save(descriptor, { playerCharacter: "true" }));
+  await assert.rejects(f.objects.save({ type: "Tile", id: "counter" }, { playerCharacter: true }));
+});
+
+test("legacy patrols are read projections until an explicit routine replaces their executor", async () => {
+  const f = fixture(), definition = defaultDefinition(), behavior = defaultTokenBehavior();
+  behavior.patrol = { enabled: true, speed: 5, points: [{ x: 10, y: 20, macroUuid: "Macro.old" }, { x: 30, y: 40 }] };
+  behavior.entrySpeech = "Entry"; behavior.speech.phrases = ["Periodic"];
+  definition.episodes[0].tokens.npc = behavior; f.scene.flags[MODULE_ID].definitions = { main: definition };
+  const before = copy(f.scene.flags);
+  assert.equal(f.objects.get(descriptor).routines[0].legacy, true); assert.deepEqual(f.scene.flags, before);
+  await f.objects.save(descriptor, { notes: "Changed" });
+  await f.objects.save(descriptor, { routines: f.objects.get(descriptor).routines });
+  assert.deepEqual(f.scene.getFlag(MODULE_ID, "objectBindings").bindings["Token:npc"].routines, []);
+  let snapshot = materializeEpisode(f.scene, getDefinitions(f.scene)[0], getDefinitions(f.scene)[0].episodes[0]);
+  assert.equal(snapshot.tokens.npc.patrol.enabled, true); assert.equal(snapshot.routines.length, 0);
+  await f.objects.save(descriptor, { routines: [{ episodeId: "calm", steps: [] }] });
+  snapshot = materializeEpisode(f.scene, getDefinitions(f.scene)[0], getDefinitions(f.scene)[0].episodes[0]);
+  assert.equal(snapshot.tokens.npc.patrol.enabled, false); assert.equal(snapshot.tokens.npc.entrySpeech, ""); assert.deepEqual(snapshot.tokens.npc.speech.phrases, []);
+  assert.equal(snapshot.routines.length, 1); assert.deepEqual(snapshot.routines[0].steps, []);
+  await f.objects.save(descriptor, { routines: [] });
+  assert.deepEqual(f.objects.get(descriptor).routines, []);
+  snapshot = materializeEpisode(f.scene, getDefinitions(f.scene)[0], getDefinitions(f.scene)[0].episodes[0]);
+  assert.equal(snapshot.tokens.npc.patrol.enabled, false); assert.deepEqual(snapshot.tokens.npc.speech.phrases, []); assert.equal(snapshot.tokens.npc.entrySpeech, "");
+  assert.deepEqual(f.objects.get(descriptor).routineOverrides, ["calm"]);
+});
+
+test("discarding a converted legacy routine before its first save still suppresses the original patrol", async () => {
+  const f = fixture(), definition = defaultDefinition(), behavior = defaultTokenBehavior();
+  behavior.patrol = { enabled: true, speed: 5, points: [{ x: 10, y: 20 }] };
+  definition.episodes[0].tokens.npc = behavior; f.scene.flags[MODULE_ID].definitions = { main: definition };
+  assert.equal(f.objects.get(descriptor).routines[0].legacy, true);
+  await f.objects.save(descriptor, { routines: [] });
+  assert.deepEqual(f.objects.get(descriptor).routines, []);
+  assert.deepEqual(f.objects.get(descriptor).routineOverrides, ["calm"]);
+  const snapshot = materializeEpisode(f.scene, getDefinitions(f.scene)[0], getDefinitions(f.scene)[0].episodes[0]);
+  assert.equal(snapshot.tokens.npc.patrol.enabled, false);
+});
+
+test("routine events and macros participate in catalog reference checks, rename, and scoped JSON", async () => {
+  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), event = await f.events.saveEvent({ name: "routine.done" });
+  const trigger = await f.events.saveTrigger({ name: "routine.result", eventId: event.id, parameters: [{ name: "count", type: "integer" }] });
+  await f.events.saveMacro({ uuid: "Macro.action", triggerIds: [trigger.id] });
+  const steps = [{ id: 5, kind: "event", parameters: { eventName: event.name, triggerId: trigger.id, parameters: { count: 2 } }, next: [9] },
+    { id: 9, kind: "macro", parameters: { macroUuid: "Macro.action", parameters: { note: "data" } }, next: [] }];
+  await f.objects.save(descriptor, { schemeId: scheme.schemeId, routines: [{ episodeId: scheme.entryEpisodeId, steps }] });
+  await assert.rejects(f.events.deleteTrigger(trigger.id)); await assert.rejects(f.events.removeMacro("Macro.action"));
+  await assert.rejects(f.events.saveTrigger({ ...trigger, parameters: [{ name: "count", type: "boolean" }] }));
+  const other = await f.events.saveEvent({ name: "other.event" });
+  await assert.rejects(f.events.saveTrigger({ ...trigger, eventId: other.id }));
+  await f.events.saveEvent({ ...event, name: "routine.complete" });
+  assert.equal(f.objects.get(descriptor).routines[0].steps[0].parameters.eventName, "routine.complete");
+  const receiver = f.create("receiver"), imported = await new SchemeEditor(receiver).importScheme(f.editor.exportScheme(scheme.schemeId));
+  const binding = new SceneObjects(receiver).get(descriptor), catalog = getEventCatalog(receiver);
+  assert.equal(binding.routines[0].episodeId, imported.entryEpisodeId);
+  assert.equal(binding.routines[0].steps[0].parameters.triggerId, catalog.triggers.find((entry) => entry.name === trigger.name).id);
+  assert.ok(catalog.macros.some((entry) => entry.uuid === "Macro.action"));
+  const replacement = await f.editor.createEpisode(scheme.schemeId, { name: "New entry" });
+  await f.editor.updateScheme(scheme.schemeId, { entryEpisodeId: replacement.id }); await f.editor.deleteEpisode(scheme.schemeId, scheme.entryEpisodeId);
+  assert.deepEqual(f.objects.get(descriptor).routines, []);
+});

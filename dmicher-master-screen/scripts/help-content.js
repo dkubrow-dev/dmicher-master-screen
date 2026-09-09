@@ -228,7 +228,7 @@ export function getScreenHelpContent(language = globalThis.game?.i18n?.lang) {
   pages.push(...SCREEN_HELP_SETTINGS.map(value => ({ id: value.id, title: title(value), html: value.fields.map(f => `<section><h3 id="${f[1]}">${f[ru ? 2 : 3]}</h3><p>${f[ru ? 4 : 5]}</p></section>`).join("") })));
   const entry = id => ({ id, pageId: id, title: pages.find(p => p.id === id).title });
   return { pages, footer: ["author", "thanks", "modules"], labels: { contents: ru ? "Содержание" : "Contents", resizeNavigation: ru ? "Изменить ширину меню" : "Resize navigation" }, tree: [
-    { id: "prepare", title: ru ? "Подготовка" : "Preparation", children: ["start", "constructor", "objects", "catalog-tools", "events", "macros", "npc", "dialogues", "triggers", "workspace", "transfer"].map(entry) },
+    { id: "prepare", title: ru ? "Подготовка" : "Preparation", children: ["start", "constructor", "objects", "catalog-tools", "routines", "events", "macros", "npc", "dialogues", "triggers", "workspace", "transfer"].map(entry) },
     { id: "play", title: ru ? "Проведение игры" : "Running the game", children: ["director", "stop", "trade", "actor"].map(entry) },
     { id: "settings", title: ru ? "Настройки" : "Settings", children: SCREEN_HELP_SETTINGS.map(p => entry(p.id)) }
   ] };
