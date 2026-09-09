@@ -1,6 +1,7 @@
 import { MODULE_ID } from "./model.js";
 import { getRuntime, saveRuntime, withSceneLock, isAuthority, asArray } from "./store.js";
-import { sceneDistance, tokenCenter } from "./effects.js";
+import { resolveObjectDialogue } from "./scene-objects.js";
+import { objectKey, validateObjectAccess, interactionTriggerId } from "./interaction-access.js";
 import { generics } from "./generics.js";
 import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
 import { createManualDialogueService } from "./manual-dialogues.js";
@@ -12,34 +13,23 @@ const random = () => foundry.utils.randomID();
 const targetOf = (scene, descriptor) => descriptor?.type === "Token" ? scene.tokens.get(descriptor.id)
   : descriptor?.type === "Tile" ? scene.tiles.get(descriptor.id) : null;
 
-export function getDialogueContext(sceneId, dialogueId, schemeId = "main") {
+export function getDialogueContext(sceneId, dialogueId, schemeId = "main", source) {
   const scene = game.scenes.get(sceneId), runtime = scene ? getRuntime(scene, { schemeId }) : null;
-  const dialogue = runtime?.episode?.dialogues?.find((entry) => entry.id === dialogueId);
+  const resolved = source && scene && runtime ? resolveObjectDialogue(scene, source, { schemeId, episodeId: runtime.episodeId }) : null;
+  const candidates = runtime?.episode?.dialogues?.filter((entry) => entry.id === dialogueId) ?? [];
+  // Catalog assets require an object; old snapshots retain their unambiguous target.
+  const legacy = candidates.length === 1 && !candidates[0].dialogueId ? candidates[0] : null;
+  const dialogue = source ? (resolved?.asset.id === dialogueId || resolved?.config.legacyDialogueId === dialogueId ? resolved.config : null) : legacy;
   return { scene, runtime, dialogue, target: scene && dialogue ? targetOf(scene, dialogue.target) : null };
 }
 
 export function validateDialogueAccess({ scene, runtime, descriptor, target, triggerType = "dialogue" }, actorTokenId, user, runId) {
-  if (!scene || canvas.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail("Сцена или эпизод изменились. Откройте взаимодействие заново.");
-  if (runtime.halted || runtime.episode?.stop || !descriptor?.enabled || !target || target.hidden
-    || (descriptor.target.type === "Token" && runtime.disabledTokens?.includes(target.id))) fail("Взаимодействие сейчас недоступно.");
-  const actorToken = scene.tokens.get(actorTokenId);
-  if (!user || !actorToken?.actor || actorToken.hidden || (descriptor.target.type === "Token" && actorToken.id === target.id)
-    || (!user.isGM && !actorToken.actor.testUserPermission?.(user, "OWNER"))) fail("Нужен принадлежащий вам персонаж на карте.");
-  const origin = tokenCenter(actorToken, scene);
-  const destination = descriptor.target.type === "Token" ? tokenCenter(target, scene)
-    : { x: Number(target.x) + Number(target.width) / 2, y: Number(target.y) + Number(target.height) / 2 };
-  if (actorToken.level != null && target.level != null && actorToken.level !== target.level) fail("Объект находится на другом уровне сцены.");
-  if (sceneDistance(scene, origin, destination) > Number(descriptor.range ?? 5)) fail("Персонаж слишком далеко от объекта.");
-  if (!actorToken.object?.checkCollision || actorToken.object.checkCollision(destination, { origin, type: "sight", mode: "any" })) fail("Объект должен находиться в прямой видимости персонажа.");
-  const gate = getTriggerGate(scene, runtime, descriptor.trigger, actorToken,
-    { triggerKey: getTriggerKey(runtime, triggerType, descriptor.id), ignoreQuota: true });
-  if (!gate.allowed) fail(gate.reason);
-  return actorToken;
+  return validateObjectAccess({ scene, runtime, descriptor, target, triggerType }, actorTokenId, user, runId);
 }
 
 function visibleSession(session, dialogue, target) {
   const node = dialogue.nodes.find((entry) => entry.id === session.nodeId);
-  return { sessionId: session.sessionId, dialogueId: dialogue.id, actorTokenId: session.actorTokenId,
+  return { sessionId: session.sessionId, dialogueId: dialogue.id, actorTokenId: session.actorTokenId, target: clone(dialogue.target),
     nodeId: session.nodeId, step: session.step, status: session.status, targetName: target.name ?? dialogue.name,
     title: dialogue.name, text: node?.text ?? "", art: node?.art || target.texture?.src || target.actor?.img || "",
     responses: session.status === "active" ? (node?.responses ?? []).map(({ id, label }) => ({ id, label })) : [] };
@@ -52,10 +42,11 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
   const inFlight = new Map(), knownSessions = new Map();
   const sessionKey = (userId, actorTokenId) => `${userId}:${actorTokenId}`;
   const process = async (command, user, commandId) => {
-    const initial = context(command.sceneId, command.dialogueId, command.schemeId ?? "main");
+    const initial = context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target);
     if (!initial.scene) fail("Сцена не найдена.");
     const events = [];
     const result = await lock(initial.scene, async () => {
+      if (!authority()) fail("Исполняющий мастер изменился.");
       const state = clone(runtimeOf(initial.scene, { schemeId: command.schemeId ?? "main" }));
       state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
       const commandKey = `${user.id}:${commandId}`;
@@ -85,16 +76,18 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
       } else {
         let session, dialogue, admittedTrigger = null;
         if (command.kind === "start") {
-          dialogue = state.episode?.dialogues?.find((entry) => entry.id === command.dialogueId);
+          dialogue = context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target).dialogue;
           const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
           validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, command.actorTokenId, user, command.runId);
           session = state.dialogueSessions[sessionKey(user.id, command.actorTokenId)];
-          if (!(session?.status === "active" && session.runId === state.runId && session.dialogueId === dialogue.id)) {
-            const triggerKey = getTriggerKey(state, "dialogue", dialogue.id);
+          if (!(session?.status === "active" && session.runId === state.runId && session.dialogueId === dialogue.id
+            && (!session.target || objectKey(session.target) === objectKey(dialogue.target)))) {
+            const triggerKey = getTriggerKey(state, "dialogue", interactionTriggerId(dialogue));
             const gate = getTriggerGate(initial.scene, state, dialogue.trigger, initial.scene.tokens.get(command.actorTokenId), { triggerKey });
             if (!gate.allowed) fail(gate.reason);
             admittedTrigger = triggerKey;
             session = { sessionId: random(), userId: user.id, actorTokenId: command.actorTokenId, dialogueId: dialogue.id,
+              target: clone(dialogue.target), actorId: initial.scene.tokens.get(command.actorTokenId)?.actor?.id,
               schemeId: state.schemeId, runId: state.runId, nodeId: dialogue.startNodeId, step: 0, status: "active" };
             state.dialogueSessions[sessionKey(user.id, command.actorTokenId)] = session;
           }
@@ -102,9 +95,11 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
           session = Object.values(state.dialogueSessions).find((entry) => entry.sessionId === command.sessionId && entry.userId === user.id);
           if (!session || session.status !== "active") fail("Разговор уже завершён.");
           if (session.nodeId !== command.nodeId || session.step !== command.step) fail("Этот ответ относится к предыдущему шагу разговора.");
-          dialogue = state.episode?.dialogues?.find((entry) => entry.id === session.dialogueId);
+          if (command.target && objectKey(command.target) !== objectKey(session.target)) fail("Ответ относится к другому объекту.");
+          dialogue = context(command.sceneId, session.dialogueId, command.schemeId ?? "main", session.target).dialogue;
         } else fail("Неизвестное действие диалога.");
         const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
+        if (session.actorId && session.actorId !== initial.scene.tokens.get(session.actorTokenId)?.actor?.id) fail("Персонаж взаимодействия изменился.");
         validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, session.actorTokenId, user, session.runId);
         const node = dialogue.nodes.find((entry) => entry.id === session.nodeId);
         if (!node) fail("Текущий шаг разговора не найден.");
@@ -189,7 +184,7 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
   return Object.freeze({
     ...createManualDialogueService(),
     getContext: context,
-    requestStart: (command) => send({ ...command, kind: "start", runId: context(command.sceneId, command.dialogueId, command.schemeId ?? "main").runtime?.runId }),
+    requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target).runtime?.runId }),
     requestInteraction: (command) => send({ ...command, kind: "interaction", runId: context(command.sceneId, null, command.schemeId ?? "main").runtime?.runId }),
     requestAnswer: (command) => {
       const known = knownSessions.get(command.sessionId);

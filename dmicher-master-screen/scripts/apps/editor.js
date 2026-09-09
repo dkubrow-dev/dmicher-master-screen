@@ -519,7 +519,7 @@ export class TokenEditorApplication extends ScreenFormApplication {
   static DEFAULT_OPTIONS = {
     classes: themedClasses("dmicher-screen-token-editor"),
     position: { width: 620, height: 720 },
-    window: { title: "Поведение токена", icon: "fa-solid fa-person-rays", resizable: true }
+    window: { title: "Поведение токена (техдолг)", icon: "fa-solid fa-person-rays", resizable: true }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/token-editor.hbs` } };
 
@@ -552,9 +552,6 @@ export class TokenEditorApplication extends ScreenFormApplication {
       hiddenUnset: this.draft.hidden == null, hiddenTrue: this.draft.hidden === true, hiddenFalse: this.draft.hidden === false,
       phrases: (this.draft.speech.phrases ?? []).join("\n"),
       points: formatPointRows(this.draft.patrol.points),
-      items: this.draft.shop.items.map((item) => ({ id: item.id, name: item.data?.name ?? "Предмет", img: item.data?.img, stock: item.stock })),
-      shopTiles: this.draft.shop.display === "tiles",
-      shopTriggerFields: buildTriggerFields(this.draft.shop.trigger, context.definition.episodes, { prefix: "shop-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
       interactionTriggerFields: buildTriggerFields(this.draft.interaction.trigger, context.definition.episodes, { prefix: "interaction-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
       episodes: context.definition.episodes.map((entry) => ({ ...entry, selected: entry.id === this.draft.interaction.targetEpisodeId })),
       saveStatus: this.dirty ? "Есть несохранённые изменения" : "Настройки принадлежат выбранному эпизоду"
@@ -563,13 +560,7 @@ export class TokenEditorApplication extends ScreenFormApplication {
 
   async _onRender(context, options) {
     await super._onRender(context, options);
-    const listeners = this.bindEvents();
-    this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-shop-drop]")) event.preventDefault(); }, listeners);
-    this.element.addEventListener("drop", (event) => {
-      if (!event.target.closest("[data-shop-drop]")) return;
-      event.preventDefault();
-      void this.dropItem(event).catch(errorMessage);
-    }, listeners);
+    this.bindEvents();
   }
 
   readBehavior() {
@@ -591,15 +582,9 @@ export class TokenEditorApplication extends ScreenFormApplication {
       speed: number(root, "patrolSpeed", "Скорость патруля", { min: 0.1 }),
       points: parsePointRows(value(root, "points"))
     };
-    behavior.shop.enabled = checked(root, "shopEnabled");
-    behavior.shop.range = number(root, "shopRange", "Дальность магазина");
-    behavior.shop.requireGMApproval = checked(root, "shopApproval");
-    behavior.shop.display = value(root, "shopDisplay") === "tiles" ? "tiles" : "list";
-    behavior.shop.trigger = readTriggerFields(root, "shop-trigger");
-    behavior.shop.items = behavior.shop.items.map((item, index) => ({ ...item,
-      stock: number(root, `stock-${index}`, "Остаток предмета", { min: 0, max: 99999 })
-    }));
-    behavior.interaction = { label: value(root, "interactionLabel").trim(), targetEpisodeId: value(root, "interactionTarget"), trigger: readTriggerFields(root, "interaction-trigger") };
+    // Catalog and object binding now own shops. Preserve old preparation while
+    // editing unrelated legacy token settings; this form must not erase it.
+    behavior.interaction = { ...behavior.interaction, label: value(root, "interactionLabel").trim(), targetEpisodeId: value(root, "interactionTarget"), trigger: readTriggerFields(root, "interaction-trigger") };
     return behavior;
   }
 
@@ -608,16 +593,6 @@ export class TokenEditorApplication extends ScreenFormApplication {
     await callback(this.draft);
     this.dirty = true;
     return this.render({ force: true });
-  }
-
-  async dropItem(event) {
-    const drop = foundry.applications.ux.TextEditor.implementation.getDragEventData(event);
-    if (drop.type !== "Item" || !drop.uuid) throw new Error("Перетащите предмет из списка предметов или листа персонажа.");
-    const document = await fromUuid(drop.uuid);
-    if (document?.documentName !== "Item") throw new Error("Предмет не найден.");
-    const data = document.toObject();
-    delete data._id;
-    return this.changeDraft((draft) => draft.shop.items.push({ id: randomId(), data, stock: 1 }));
   }
 
   async handleAction(action, button) {
@@ -641,7 +616,6 @@ export class TokenEditorApplication extends ScreenFormApplication {
       const point = this.controller.captureToken(this.tokenId);
       return this.changeDraft((draft) => draft.patrol.points.push({ x: point.x, y: point.y, macroUuid: "", onTrue: "" }));
     }
-    if (action === "removeItem") return this.changeDraft((draft) => { draft.shop.items.splice(Number(button.dataset.index), 1); });
     if (action === "close") return this.close();
   }
 }

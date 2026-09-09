@@ -23,7 +23,7 @@ class Application {
   async _prepareContext() { return {}; }
   async _onRender() {}
   async _onClose() {}
-  _insertElement(element) { document.body.append(element); }
+  _insertElement(element) { document.body.append(element); if (this.options.window?.frame !== false) Object.assign(element.style, { position:"absolute", width:`${this.position.width ?? 800}px`, height:`${this.position.height ?? 700}px`, left:"100px", top:"80px", zIndex:"40" }); }
   render() {
     this.renderPromise = (this.renderPromise ?? Promise.resolve()).then(async () => {
       const context = await this._prepareContext({});
@@ -36,7 +36,7 @@ class Application {
       const scroll = (this.constructor.PARTS.main.scrollable ?? []).map((selector) => [selector, this.element.querySelector(selector)?.scrollTop ?? 0]);
       this.element.querySelector(".window-content").innerHTML = html;
       for (const [selector, top] of scroll) { const target = this.element.querySelector(selector); if (target) target.scrollTop = top; }
-      this.rendered = true; this.context = context;
+      this.rendered = true; this.fixtureContext = context;
       await this._onRender(context, {}); Hooks.callAll("renderApplicationV2", this, this.element);
       return this;
     });
@@ -46,7 +46,7 @@ class Application {
   bringToFront() {}
 }
 globalThis.foundry = { applications: { instances, api: { ApplicationV2: Application, HandlebarsApplicationMixin: (base) => base, DialogV2: { confirm: async () => { globalThis.confirmations = (globalThis.confirmations ?? 0) + 1; return true; } } },
-  handlebars: { renderTemplate }, ux: { TextEditor: { implementation: { getDragEventData: (event) => JSON.parse(event.dataTransfer.getData("text/plain")) } } } },
+  handlebars: { renderTemplate }, apps: { FilePicker: { implementation: class { constructor(options) { globalThis.lastFilePicker = options; } render() { return this; } } } }, ux: { TextEditor: { implementation: { getDragEventData: (event) => JSON.parse(event.dataTransfer.getData("text/plain")) } } } },
   utils: { deepClone: (value) => structuredClone(value), randomID: () => crypto.randomUUID().replaceAll("-", "").slice(0, 16) }, documents: {} };
 const gm = { id: "gm", isGM: true, role: 4, active: true, name: "GM", getFlag: () => null, async setFlag() {} };
 globalThis.game = { user: gm, users: new Map([["gm", gm]]), scenes: new Map(), macros: new Map(), modules: new Map(), messages: new Map(), paused: false,
@@ -54,7 +54,9 @@ globalThis.game = { user: gm, users: new Map([["gm", gm]]), scenes: new Map(), m
 class MacroFixture { constructor(data) { Object.assign(this, data, { documentName: "Macro", uuid: `Macro.${data.id}` }); this.sheet = { render: () => { globalThis.editedMacro = this.uuid; } }; } }
 foundry.documents.Macro = { implementation: { async create(data) { const macro = new MacroFixture({ ...data, id: crypto.randomUUID() }); game.macros.set(macro.id, macro); return macro; } } };
 game.macros.set("demo", new MacroFixture({ id: "demo", name: "Example macro" }));
-globalThis.fromUuid = async (uuid) => game.macros.get(uuid?.split(".")[1]);
+game.items = new Map();
+for (const data of [{ id: "rope", name: "Rope", type: "equipment", img: "icons/svg/item-bag.svg", system: { quantity: 7 } }, { id: "apple", name: "Apple", type: "consumable", img: "icons/svg/item-bag.svg", system: { quantity: 2 } }]) game.items.set(data.id, { ...data, documentName: "Item", uuid: `Item.${data.id}`, toObject: () => structuredClone(data) });
+globalThis.fromUuid = async (uuid) => uuid?.startsWith("Item.") ? game.items.get(uuid.split(".")[1]) : game.macros.get(uuid?.split(".")[1]);
 const { defaultDefinition, defaultTokenBehavior, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
 const definition = defaultDefinition(); definition.schemeName = "Town square";
 definition.episodes[0].tokens.guard = defaultTokenBehavior();
@@ -71,8 +73,10 @@ const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: 
    target[parts.at(-1)] = structuredClone(value);
    for (const [id] of Object.entries(target[parts.at(-1)] ?? {})) if (id.startsWith("-=")) { delete target[parts.at(-1)][id.slice(2)]; delete target[parts.at(-1)][id]; }
  } };
-const token = { id: "guard", name: "Guard", x: 100, y: 100, texture: { src: "" }, getFlag() {}, actor: { testUserPermission: () => false } };
+const token = { id: "guard", name: "Guard", x: 100, y: 100, texture: { src: "" }, getFlag() {}, actor: { id: "guard-actor", name: "Guard actor", testUserPermission: () => false } };
 scene.tokens.set(token.id, token); game.scenes.set(scene.id, scene);
+scene.tiles.set("menu", { id: "menu", name: "Menu", x: 150, y: 150, hidden: false, width: 100, height: 100, texture: { src: "" } });
+scene.tokens.set("waiter", { ...token, id: "waiter", name: "Waiter", actor: { id: "waiter-actor", name: "Waiter actor", testUserPermission: () => false } });
 globalThis.emptyScene = { ...scene, id: "scene-empty", name: "Empty scene", flags: {}, tokens: new Map(), tiles: new Map() };
 game.scenes.set(emptyScene.id, emptyScene);
 const navigation = Handlebars.compile(await (await fetch("/scene-navigation.hbs")).text());

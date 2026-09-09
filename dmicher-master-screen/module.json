@@ -7,7 +7,7 @@
   "compatibility": { "minimum": "13", "verified": "14" },
   "relationships": { "requires": [{ "id": "dmicher-generics", "type": "module", "compatibility": { "minimum": "1.0.0", "verified": "1.0.0" }, "manifest": "https://github.com/dkubrow-dev/dmicher-generics/releases/download/1.0.0/module.json" }] },
   "esmodules": ["scripts/main.js"],
-  "styles": ["styles/master-screen.css"],
+  "styles": ["styles/master-screen.css", "styles/object-tools.css"],
   "url": "https://github.com/dkubrow-dev/dmicher-master-screen",
   "manifest": "https://github.com/dkubrow-dev/dmicher-master-screen/releases/download/0.0.1/module.json",
   "download": "https://github.com/dkubrow-dev/dmicher-master-screen/releases/download/0.0.1/dmicher-master-screen-0.0.1.zip",

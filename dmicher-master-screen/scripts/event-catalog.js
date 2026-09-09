@@ -189,12 +189,16 @@ export function mergeCatalogDependencies(scene, source = {}) {
 }
 
 function eventIsReferenced(scene, name) {
-  return getDefinitions(scene).some((definition) => definition.episodes.some((episode) => episode.events.includes(name)
+  return assetDialogues(scene).some((dialogue) => dialogue.pages.some((page) => page.responses.some((response) => response.eventName === name)))
+    || objectFeatures(scene).some((feature) => feature.eventName === name || feature.patrol?.points?.some((point) => point.eventName === name))
+    || getDefinitions(scene).some((definition) => definition.episodes.some((episode) => episode.events.includes(name)
     || episode.subscriptions.some((entry) => entry.event === name) || episode.interactions.some((entry) => entry.eventName === name)
     || episode.zones.some((entry) => entry.eventName === name)
     || Object.values(episode.tokens).some((entry) => entry.interaction.eventName === name || entry.patrol.points.some((point) => point.eventName === name))
     || episode.dialogues.some((dialogue) => dialogue.nodes.some((node) => node.responses.some((entry) => entry.eventName === name)))));
 }
+const assetDialogues = (scene) => scene?.getFlag(MODULE_ID, "interactionCatalog")?.dialogues ?? [];
+const objectFeatures = (scene) => Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {}).flatMap((binding) => binding?.features ?? []);
 export class EventCatalog {
   constructor(scene) { this.scene = scene; }
   list() { return getEventCatalog(this.scene); }
@@ -206,11 +210,16 @@ export class EventCatalog {
       const current = normalizeCatalog({ ...inherited, events: inherited.events.filter((entry) => !entry.builtin), triggers: inherited.triggers.filter((entry) => !entry.builtin) });
       const result = operation(current), next = normalizeCatalog(current);
       next.revision++;
-      if (current._definitions && this.scene.update) await this.scene.update({ [`flags.${MODULE_ID}.eventCatalog`]: next, [`flags.${MODULE_ID}.definitions`]: current._definitions });
-      else {
-        if (current._definitions) await this.scene.setFlag(MODULE_ID, "definitions", current._definitions);
-        await this.scene.setFlag(MODULE_ID, "eventCatalog", next);
+      const builtin = builtinCatalog(), typed = { triggers: [...builtin.triggers, ...next.triggers] }, events = [...builtin.events, ...next.events];
+      for (const feature of objectFeatures(this.scene)) if (feature.kind === "trigger") {
+        const trigger = typed.triggers.find((entry) => entry.id === feature.triggerId), event = events.find((entry) => entry.id === trigger?.eventId);
+        if (!event) throw new Error("Триггер используется особенностью объекта.");
+        validateTypedTrigger(typed, event, { ...feature.parameters, type: trigger.name });
       }
+      const fields = { eventCatalog: next, ...(current._definitions ? { definitions: current._definitions } : {}),
+        ...(current._interactionCatalog ? { interactionCatalog: current._interactionCatalog } : {}), ...(current._objectBindings ? { objectBindings: current._objectBindings } : {}) };
+      if (this.scene.update) await this.scene.update(Object.fromEntries(Object.entries(fields).map(([key, value]) => [`flags.${MODULE_ID}.${key}`, value])));
+      else for (const [key, value] of Object.entries(fields)) await this.scene.setFlag(MODULE_ID, key, value);
       return clone(result ?? next);
     });
   }
@@ -232,6 +241,17 @@ export class EventCatalog {
         definition.revision++;
       }
       catalog._definitions = Object.fromEntries(definitions.map((entry) => [entry.schemeId, entry]));
+      const assets = clone(this.scene.getFlag(MODULE_ID, "interactionCatalog")), bindings = clone(this.scene.getFlag(MODULE_ID, "objectBindings"));
+      if (assets) {
+        for (const dialogue of assets.dialogues ?? []) for (const page of dialogue.pages) page.responses.forEach((response) => replace(response, "eventName"));
+        assets.revision = (assets.revision ?? 0) + 1; catalog._interactionCatalog = assets;
+      }
+      if (bindings) {
+        for (const binding of Object.values(bindings.bindings)) for (const feature of binding.features ?? []) {
+          replace(feature, "eventName"); feature.patrol?.points?.forEach((point) => replace(point, "eventName"));
+        }
+        bindings.revision = (bindings.revision ?? 0) + 1; catalog._objectBindings = bindings;
+      }
     }
     const next = { ...clone(value), id: value.id || randomId(), builtin: false };
     if (previous) catalog.events[catalog.events.indexOf(previous)] = next; else catalog.events.push(next); return next;
@@ -249,14 +269,18 @@ export class EventCatalog {
   }, options); }
   deleteTrigger(id) { return this.change((catalog) => {
     if (!catalog.triggers.some((entry) => entry.id === id)) throw new Error("Встроенный или отсутствующий триггер нельзя удалить.");
-    if (catalog.events.some((event) => event.subscribers.some((entry) => entry.triggerId === id)) || catalog.macros.some((entry) => entry.triggerIds.includes(id))) throw new Error("Сначала удалите подписки на триггер.");
+    if (catalog.events.some((event) => event.subscribers.some((entry) => entry.triggerId === id)) || catalog.macros.some((entry) => entry.triggerIds.includes(id))
+      || objectFeatures(this.scene).some((feature) => feature.triggerId === id)) throw new Error("Сначала удалите подписки на триггер.");
     catalog.triggers = catalog.triggers.filter((entry) => entry.id !== id);
   }); }
   saveMacro(value, options = {}) { return this.change((catalog) => {
     const next = { uuid: value.uuid, triggerIds: [...(value.triggerIds ?? [])] }, index = catalog.macros.findIndex((entry) => entry.uuid === next.uuid);
     if (index < 0) catalog.macros.push(next); else catalog.macros[index] = next; return next;
   }, options); }
-  removeMacro(uuid) { return this.change((catalog) => { catalog.macros = catalog.macros.filter((entry) => entry.uuid !== uuid); }); }
+  removeMacro(uuid) { return this.change((catalog) => {
+    if (objectFeatures(this.scene).some((feature) => feature.macroUuid === uuid || feature.patrol?.points?.some((point) => point.macroUuid === uuid))) throw new Error("Макрос используется особенностью объекта.");
+    catalog.macros = catalog.macros.filter((entry) => entry.uuid !== uuid);
+  }); }
   exportTrigger(id) {
     requireGM(); const catalog = this.list(), trigger = catalog.triggers.find((entry) => entry.id === id);
     if (!trigger || trigger.builtin) throw new Error("Экспортируется пользовательский тип триггера.");

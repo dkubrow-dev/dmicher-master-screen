@@ -19,7 +19,7 @@ export function schemeBadges(definitions, runtimes) {
 }
 
 export function renderSchemeBadges(definitions, runtimes) {
-  return schemeBadges(definitions, runtimes).map((badge) => `<span class="ms-scheme-badge" data-scheme-badge="${esc(badge.id)}" data-status="${badge.status}" style="background:${badge.background};color:${badge.textColor}" data-tooltip="${esc(badge.title)}" title="${esc(badge.title)}" aria-label="${esc(badge.title)}">${esc(badge.symbol)}${badge.status === "halted" ? '<small aria-hidden="true">Ⅱ</small>' : ""}</span>`).join("");
+  return schemeBadges(definitions, runtimes).map((badge) => `<span class="ms-scheme-badge" data-scheme-badge="${esc(badge.id)}" data-status="${badge.status}" style="background:${badge.background};color:${badge.textColor}" data-tooltip="${esc(badge.title)}" aria-label="${esc(badge.title)}">${esc(badge.symbol)}${badge.status === "halted" ? '<small aria-hidden="true">Ⅱ</small>' : ""}</span>`).join("");
 }
 
 export function updateSceneNavigationBadges(controller, root = globalThis.document) {

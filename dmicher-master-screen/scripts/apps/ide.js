@@ -8,6 +8,9 @@ import { EventCatalog } from "../event-catalog.js";
 import { getDefinitions, getRuntimes } from "../store.js";
 import { randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
+import { SceneAssets, legacyAssetId } from "../scene-assets.js";
+import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
+import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
 
 const esc = generics.utilities.escapeHTML;
 const clone = (value) => structuredClone(value);
@@ -40,6 +43,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.foldedSchemes = new Set();
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
+    this.assetPageIds = new Map();
   }
 
   _insertElement(element) { super._insertElement(element); this.layout.attach(element); }
@@ -48,7 +52,8 @@ export class MasterScreenApplication extends EditorApplication {
     this.menuDialog?.close(); this.menuDialog?.remove(); this.menuObserver?.disconnect();
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.layout.dispose();
-    return super._onClose(options);
+    const result = await super._onClose(options);
+    this.controller.refreshConstructorFrame?.(); return result;
   }
 
   reservePopup() { return this.layout.reservePopup(); }
@@ -69,6 +74,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.layout.save();
     this.restoreTabState("scene"); this.menuBranch = null;
     await this.render({ force: true });
+    this.controller.refreshConstructorFrame?.();
     return true;
   }
 
@@ -152,6 +158,10 @@ export class MasterScreenApplication extends EditorApplication {
     if (parameterDirty) this.dirty = true;
     const { preferences } = this.layout;
     const catalog = current.scene ? new EventCatalog(current.scene).list() : { events: [], triggers: [], macros: [] };
+    const assets = current.scene ? new SceneAssets(current.scene).list() : { shops: [], dialogues: [], revision: 0 };
+    const objectState = current.scene ? new SceneObjects(current.scene).list() : { bindings: {}, revision: 0 };
+    const bindings = Object.values(objectState.bindings), objects = current.scene ? listNativeSceneObjects(current.scene) : [];
+    this.objectsRevision = objectState.revision;
     const definitions = current.scene ? getDefinitions(current.scene) : [];
     const runtimes = current.scene ? getRuntimes(current.scene) : [];
     const selectedDefinition = definitions.find((definition) => definition.schemeId === this.selection.schemeId);
@@ -161,9 +171,11 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.selection.kind === "event") selected = catalog.events.find((event) => event.id === this.selection.id);
     if (this.selection.kind === "trigger") selected = catalog.triggers.find((trigger) => trigger.id === this.selection.id);
     if (this.selection.kind === "macro") selected = catalog.macros.find((macro) => macro.uuid === this.selection.id);
+    if (this.selection.kind === "shop") selected = assets.shops.find((shop) => shop.id === this.selection.id);
+    if (this.selection.kind === "dialogue") selected = assets.dialogues.find((dialogue) => dialogue.id === this.selection.id);
     if (!this.dirty || !this.parameterDraft) {
       this.parameterDraft = selected ? clone(selected) : null;
-      this.parameterRevision = ["scheme", "episode"].includes(this.selection.kind) ? selectedDefinition?.revision : catalog.revision;
+      this.parameterRevision = ["scheme", "episode"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
     }
     const activeMain = preferences.mainTab, activeDetail = preferences.detailTab;
     this.toolRows = [];
@@ -183,23 +195,23 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
     if (["shops", "dialogues"].includes(activeMain)) {
-      this.toolRows = definitions.flatMap((definition) => definition.episodes.flatMap((episode) => activeMain === "dialogues"
-        ? [{ id: `${definition.schemeId}:${episode.id}`, name: `${definition.schemeName} · ${episode.name}`, schemeId: definition.schemeId, episodeId: episode.id, detail: `${episode.dialogues?.length ?? 0} диал.`, schemeName: definition.schemeName }]
-        : current.tokens.map((token) => ({ id: `${definition.schemeId}:${episode.id}:${token.id}`, name: `${token.name}${episode.tokens[token.id]?.shop?.enabled ? " · магазин" : ""}`, tokenId: token.id, schemeId: definition.schemeId, episodeId: episode.id, episodeName: episode.name, schemeName: definition.schemeName }))));
-      mainHTML = renderObjectList(this.toolRows, this.selection, activeMain);
-      nodeActions = actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
+      const kind = activeMain === "shops" ? "shop" : "dialogue";
+      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[kind]?.[`${kind}Id`] === entry.id || binding.legacyVariants?.some((link) => link.kind === kind && link.assetId === entry.id)).length} об.` }));
+      mainHTML = renderObjectList(rows, this.selection, kind);
+      nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? "+ Магазин" : "+ Диалог") + actionButton("deleteSelected", "Удалить") + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: "Импорт", exportLabel: "Экспорт" }) : "")
+        + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
     }
-    if (activeMain === "sources") { this.toolRows = eventSources(definitions, current.scene); mainHTML = renderObjectList(this.toolRows, this.selection, "sources"); }
+    if (activeMain === "sources") { this.toolRows = eventSources(definitions, current.scene, { assets, bindings }); mainHTML = renderObjectList(this.toolRows, this.selection, "sources"); }
     if (activeDetail === "reference") {
       const page = { scene: "constructor", events: "events", macros: "macros", shops: "shops", dialogues: "dialogues", sources: "events", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.</p>${actionButton("contextHelp", "Открыть справку", `data-page="${page}"`)}`;
-    } else if (["shops", "dialogues", "sources"].includes(activeMain)) {
+    } else if (["shops", "dialogues"].includes(activeMain)) {
+      detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.assetPageIds.get(`${current.scene?.id}:${this.selection.id}`), mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
+    } else if (activeMain === "sources") {
       const row = this.toolRows.find((entry) => this.selection.kind === activeMain && entry.id === this.selection.id);
       detailHTML = '<p class="ms-note">Выберите элемент в основной зоне.</p>';
       if (row) {
         detailHTML = `<h3>${esc(row.name)}</h3><p class="ms-note">${esc(row.schemeName)} · ${esc(row.episodeName ?? current.episode?.name ?? "")}</p>`;
-        if (activeMain === "shops") detailHTML += '<p class="ms-note">Каталог, правила подтверждения и доступность магазина настраиваются в поведении НИП для этого эпизода.</p>' + (this.mode === "constructor" ? actionButton("configureTool", "Настроить магазин") : "") + actionButton("shops", "Состояния и участие в торговле");
-        if (activeMain === "dialogues") detailHTML += this.mode === "constructor" ? await this.legacyBlock("dialogues", base) : actionButton("dialogues", "Читать и показывать диалоги игрокам");
         if (activeMain === "sources") detailHTML += `<p>Порождаемые события: ${esc(row.detail)}</p><p class="ms-note">Список отражает подготовленные источники; открытие списка ничего не запускает.</p>` + (this.mode === "constructor" ? actionButton("configureTool", "Открыть настройку источника") : "");
       }
       if (!definitions.length) detailHTML = '<p class="ms-note">Сначала создайте схему во вкладке «Сцена». Настройки инструментов принадлежат её эпизоду.</p>';
@@ -208,7 +220,10 @@ export class MasterScreenApplication extends EditorApplication {
       else {
         detailHTML = await this.legacyBlock(this.otherBlock, base);
       }
-    } else detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, mode: this.mode });
+    } else {
+      detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, runtimes, mode: this.mode });
+      if (this.selection.kind === "scheme" && selected) detailHTML += renderOwnedObjects(selected.schemeId, bindings, objects, this.mode !== "constructor");
+    }
     return { ...base, mainHTML, detailHTML, nodeActions,
       badgesHTML: renderSchemeBadges(definitions, runtimes),
       mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail),
@@ -220,6 +235,7 @@ export class MasterScreenApplication extends EditorApplication {
   async _onRender(context, options) {
     await super._onRender(context, options);
     this.layout.bind();
+    this.controller.refreshConstructorFrame?.();
     updateSceneNavigationBadges(this.controller);
     const queues = new Map();
     for (const item of this.pendingTabInputs ?? []) { if (!queues.has(item.name)) queues.set(item.name, []); queues.get(item.name).push(item); }
@@ -251,6 +267,15 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.bindJSON();
     const listeners = { signal: this.events.signal };
+    const symbol = this.element.querySelector('[name="schemeSymbol"]');
+    const constrainSymbol = (event) => {
+      if (event?.isComposing) return;
+      const segments = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(symbol.value)];
+      if (segments.length > 1) symbol.value = segments[0].segment;
+    };
+    if (symbol) { symbol.addEventListener("input", constrainSymbol, listeners); symbol.addEventListener("compositionend", constrainSymbol, listeners); }
+    this.element.querySelector("[data-shop-stock-drop]")?.addEventListener("dragover", (event) => event.preventDefault(), listeners);
+    this.element.querySelector("[data-shop-stock-drop]")?.addEventListener("drop", (event) => { event.preventDefault(); void this.dropShopItem(event).catch(notify); }, listeners);
     this.element.addEventListener("click", (event) => {
       const row = event.target.closest("[data-select-kind]");
       if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
@@ -265,9 +290,12 @@ export class MasterScreenApplication extends EditorApplication {
     if (Observer) { this.menuObserver = new Observer(updateOverflow); for (const strip of this.element.querySelectorAll("[data-menu-strip]")) this.menuObserver.observe(strip); }
     this.element.addEventListener("scroll", updateOverflow, { ...listeners, capture: true }); updateOverflow();
     this.element.addEventListener("change", (event) => {
-      if (event.target.matches("[data-tab-visibility]")) {
+      if (event.target.matches('[name="responseNextPage"], [name="responseEvent"]') && event.target.value) {
+        const row = event.target.closest("[data-asset-response]"), other = row?.querySelector(event.target.name === "responseNextPage" ? '[name="responseEvent"]' : '[name="responseNextPage"]');
+        if (other) other.value = "";
+      } else if (event.target.matches("[data-tab-visibility]")) {
         void this.setTabVisible(event.target.dataset.tabVisibility, event.target.value, event.target.checked).catch(notify);
-      } else if (event.target.matches('[name="parameterType"], [name="subscriberKind"], [name="subscriberAction"], [name="subscriberScheme"]')) {
+      } else if (event.target.matches('[name="parameterType"], [name="subscriberKind"], [name="subscriberAction"], [name="subscriberScheme"], [name="shopDisplay"]')) {
         try { this.captureParameterDraft(); this.dirty = true; void this.render({ force: true }); } catch (error) { notify(error); }
       }
     }, listeners);
@@ -289,6 +317,7 @@ export class MasterScreenApplication extends EditorApplication {
     const root = this.element?.querySelector("[data-ide-parameters]");
     const draft = clone(this.parameterDraft);
     if (!root || !draft || draft.builtin) return draft;
+    if (["shop", "dialogue"].includes(this.selection.kind)) return this.mode === "constructor" ? readAssetForm(root, draft, this.selection.kind) : draft;
     const description = (input, name, original) => { const text = fieldValue(input, name); return text === localizedDescription(original) ? clone(original ?? "") : text; };
     if (["scheme", "episode", "event", "trigger"].includes(this.selection.kind)) draft.description = description(root, "description", draft.description);
     if (["scheme", "episode"].includes(this.selection.kind)) {
@@ -296,6 +325,7 @@ export class MasterScreenApplication extends EditorApplication {
       draft[key] = fieldValue(root, key).trim();
       draft.background = fieldValue(root, "background"); draft.textColor = fieldValue(root, "textColor");
       if (this.selection.kind === "scheme") draft.symbol = fieldValue(root, "schemeSymbol");
+      if (this.selection.kind === "scheme") draft.entryEpisodeId = fieldValue(root, "entryEpisodeId");
       if (this.selection.kind === "episode") draft.stop = checkbox(root, "stop");
     }
     if (this.selection.kind === "event") {
@@ -336,12 +366,43 @@ export class MasterScreenApplication extends EditorApplication {
       if (kind === "episode") this.controller.selectEpisode(id, { render: false });
     }
     const tool = this.toolRows?.find((entry) => entry.id === id);
-    if (tool) { this.controller.selectScheme(tool.schemeId, { render: false }); this.controller.selectEpisode(tool.episodeId, { render: false }); }
+    if (tool?.schemeId) { this.controller.selectScheme(tool.schemeId, { render: false }); this.controller.selectEpisode(tool.episodeId, { render: false }); }
     this.selection = { kind, id, schemeId: schemeId || this.controller.getContext().schemeId, episodeId: tool?.episodeId };
     this.layout.preferences.detailTab = "parameters";
     this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter((tab) => tab !== "parameters");
     this.layout.save();
     return this.render({ force: true });
+  }
+
+  async openAsset(kind, id) {
+    if (!["shop", "dialogue"].includes(kind)) throw new Error("Неизвестный вид каталога.");
+    await this.switchMainTab(kind === "shop" ? "shops" : "dialogues");
+    return this.selectNode(kind, id);
+  }
+
+  async dropShopItem(event) {
+    if (this.mode !== "constructor" || this.selection.kind !== "shop") return;
+    let data; try { data = JSON.parse(event.dataTransfer.getData("text/plain")); } catch { throw new Error("Перетащите предмет Foundry."); }
+    const original = { scene: this.selectionSceneId, id: this.selection.id };
+    const item = data.type === "Item" && typeof data.uuid === "string" ? await fromUuid(data.uuid) : null;
+    if (item?.documentName !== "Item" || typeof item.toObject !== "function") throw new Error("Перетащите доступный предмет Foundry.");
+    if (original.scene !== this.selectionSceneId || original.id !== this.selection.id) throw new Error("Выбор изменился. Повторите перенос предмета.");
+    const source = item.toObject(); delete source._id;
+    return this.mutateParameters((draft) => draft.items.push({ id: randomId(), data: source, stock: 1 }));
+  }
+
+  async assignObject(descriptor, remove = false) {
+    const scene = this.assertScene(), service = new SceneObjects(scene), existing = service.get(descriptor);
+    if (this.mode !== "constructor" || this.selection.kind !== "scheme") throw new Error("Выберите схему в Конструкторе.");
+    let allowReassign = false;
+    if (remove && await this.inlineChoice("Отвязать объект от схемы? Его назначения магазинов, диалогов и поведения этой схемы будут сняты.", [{ value: "yes", label: "Отвязать" }, { value: "cancel", label: "Отмена" }]) !== "yes") return;
+    if (!remove && existing?.schemeId && existing.schemeId !== this.selection.id) {
+      allowReassign = await this.inlineChoice("Объект уже принадлежит другой схеме. Переназначить его выбранной схеме?", [{ value: "yes", label: "Переназначить" }, { value: "cancel", label: "Отмена" }]) === "yes";
+      if (!allowReassign) return;
+    }
+    this.captureParameterDraft();
+    await service.save(descriptor, { schemeId: remove ? null : this.selection.id }, { expectedRevision: this.objectsRevision, allowReassign: remove || allowReassign });
+    this.controller.changed(scene); return this.render({ force: true });
   }
 
   async setTabVisible(zone, id, visible) {
@@ -398,16 +459,59 @@ export class MasterScreenApplication extends EditorApplication {
       try { draft.background = generics.components.normalizeHexColor(draft.background); draft.textColor = generics.components.normalizeHexColor(draft.textColor); }
       catch { throw new Error("Цвет фона и текста указывается в формате #RRGGBB."); }
     }
-    if (this.selection.kind === "scheme") await schemes.updateScheme(this.selection.id, { schemeName: draft.schemeName, symbol: draft.symbol, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
+    if (this.selection.kind === "scheme") await schemes.updateScheme(this.selection.id, { schemeName: draft.schemeName, symbol: draft.symbol, entryEpisodeId: draft.entryEpisodeId, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
     if (this.selection.kind === "episode") await schemes.updateEpisode(this.selection.schemeId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor, events: draft.events, stop: draft.stop }, options);
     if (this.selection.kind === "event") await catalog.saveEvent(draft, options);
     if (this.selection.kind === "trigger") await catalog.saveTrigger(draft, options);
     if (this.selection.kind === "macro") await catalog.saveMacro(draft, options);
+    if (this.selection.kind === "shop") await new SceneAssets(scene).saveShop(draft, options);
+    if (this.selection.kind === "dialogue") await new SceneAssets(scene).saveDialogue(draft, options);
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);
     return this.render({ force: true });
   }
 
   async handleAction(action, button, event) {
+    if (action === "previewAsset") {
+      this.parameterDraft = this.readParameterDraft();
+      return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`) });
+    }
+    if (action === "assetFilePicker") {
+      const sceneId = this.selectionSceneId, assetId = this.selection.id, pageId = this.element.querySelector("[data-asset-page]")?.dataset.assetPage, name = button.dataset.field;
+      const Picker = foundry.applications.apps.FilePicker.implementation;
+      return new Picker({ type: "image", current: fieldValue(this.element, name), callback: (path) => {
+        if (this.selectionSceneId !== sceneId || this.selection.id !== assetId || (pageId && this.element.querySelector("[data-asset-page]")?.dataset.assetPage !== pageId)) { ui.notifications.warn("Выбор изменился. Откройте выбор изображения ещё раз."); return; }
+        const field = this.element.querySelector(`[name="${name}"]`); if (!field) return;
+        field.value = path; field.dispatchEvent(new field.ownerDocument.defaultView.Event("input", { bubbles: true }));
+      } }).render({ force: true });
+    }
+    if (action === "objectInfo") return this.controller.openObjectInfo({ type: button.dataset.objectType, id: button.dataset.objectId });
+    if (action === "assignObject") {
+      const [type, id] = fieldValue(this.element, "newOwnedObject").split(":");
+      if (!type || !id) throw new Error("Выберите объект сцены.");
+      return this.assignObject({ type, id });
+    }
+    if (action === "unassignObject") return this.assignObject({ type: button.dataset.objectType, id: button.dataset.objectId }, true);
+    if (action === "previewAssetDialogue") return this.controller.previewDialogueAsset(this.selection.id, this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`));
+    if (action === "selectAssetPage") {
+      this.parameterDraft = this.readParameterDraft(); this.pendingTabInputs = null;
+      this.assetPageIds.set(`${this.selectionSceneId}:${this.selection.id}`, button.dataset.id); return this.render({ force: true });
+    }
+    if (action === "removeShopItem") return this.mutateParameters((draft) => { draft.items = draft.items.filter((item) => item.id !== button.dataset.id); });
+    if (["addAssetPage", "deleteAssetPage", "addAssetResponse", "removeAssetResponse"].includes(action)) {
+      return this.mutateParameters((draft) => {
+        const key = `${this.selectionSceneId}:${draft.id}`, page = draft.pages.find((entry) => entry.id === this.assetPageIds.get(key)) ?? draft.pages[0];
+        if (action === "addAssetPage") { const entry = { id: randomId(), name: nextName(draft.pages, "Новый блок"), text: "", art: "", responses: [] }; draft.pages.push(entry); this.assetPageIds.set(key, entry.id); }
+        if (action === "deleteAssetPage") {
+          if (draft.pages.length === 1) throw new Error("В диалоге должен остаться хотя бы один блок.");
+          draft.pages = draft.pages.filter((entry) => entry.id !== page.id);
+          for (const entry of draft.pages) for (const response of entry.responses) if (response.nextPageId === page.id) response.nextPageId = "";
+          if (draft.startPageId === page.id) draft.startPageId = draft.pages[0].id;
+          this.assetPageIds.set(key, draft.pages[0].id);
+        }
+        if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: "Новый ответ", nextPageId: "", eventName: "" });
+        if (action === "removeAssetResponse") page.responses.splice(Number(button.dataset.index), 1);
+      });
+    }
     if (action === "togglePresentation") {
       const next = this.layout.presentation === "panel" ? "window" : "panel";
       if (next === "window") this.reservePopup();
@@ -425,8 +529,10 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "configureTool") {
       const row = this.toolRows.find((entry) => entry.id === this.selection.id); if (!row) return;
+      if (row.objectTarget) return this.controller.openObjectBehavior(row.objectTarget);
       if (row.tokenId) return this.controller.openToken(row.tokenId, { schemeId: row.schemeId, episodeId: row.episodeId });
-      if (["dialogue", "interaction"].includes(row.type)) { await this.switchMainTab("dialogues"); return this.selectNode("dialogues", `${row.schemeId}:${row.episodeId}`, row.schemeId); }
+      if (row.type === "dialogue") return this.openAsset("dialogue", row.assetId ?? legacyAssetId("dialogue", row.schemeId, row.episodeId, row.id.split(":").at(-1)));
+      if (row.type === "interaction") { await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "dialogues"; return this.render({ force: true }); }
       if (row.type === "episode") { await this.switchMainTab("scene"); return this.selectNode("episode", row.episodeId, row.schemeId); }
       await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });
     }
@@ -469,7 +575,7 @@ export class MasterScreenApplication extends EditorApplication {
       if (!macro || macro.documentName !== "Macro") throw new Error("Макрос недоступен. Проверьте каталог Foundry.");
       return macro.sheet.render(true);
     }
-    if (["addScheme", "addSceneEpisode", "addEvent", "addTypedTrigger", "createMacro", "deleteSelected"].includes(action)) return this.changeStructure(action);
+    if (["addScheme", "addSceneEpisode", "addEvent", "addTypedTrigger", "createMacro", "addShopAsset", "addDialogueAsset", "deleteSelected"].includes(action)) return this.changeStructure(action);
     return super.handleAction(action, button, event);
   }
 
@@ -478,6 +584,8 @@ export class MasterScreenApplication extends EditorApplication {
     if (!(await this.mayDiscard())) return;
     const scene = this.assertScene(), schemes = new SchemeEditor(scene), catalog = new EventCatalog(scene), definitions = schemes.list(), data = catalog.list();
     let selection;
+    if (action === "addShopAsset") { const assets = new SceneAssets(scene), entry = await assets.saveShop({ name: nextName(assets.list().shops, "Новый магазин"), items: [], display: "list", requireGMApproval: true, img: "" }); selection = ["shop", entry.id]; }
+    if (action === "addDialogueAsset") { const assets = new SceneAssets(scene), id = randomId(), entry = await assets.saveDialogue({ name: nextName(assets.list().dialogues, "Новый диалог"), startPageId: id, pages: [{ id, name: "Начало", text: "", art: "", responses: [] }] }); selection = ["dialogue", entry.id]; }
     if (action === "addScheme") { const entry = await schemes.createScheme({ name: nextName(definitions, "Новая схема", "schemeName") }); selection = ["scheme", entry.schemeId, entry.schemeId]; }
     if (action === "addSceneEpisode") { const definition = definitions.find((item) => item.schemeId === this.selection.schemeId) ?? definitions[0]; if (!definition) throw new Error("Сначала создайте схему."); const entry = await schemes.createEpisode(definition.schemeId, { name: nextName(definition.episodes, "Новый эпизод") }); selection = ["episode", entry.id, definition.schemeId]; }
     if (action === "addEvent") { const entry = await catalog.saveEvent({ name: nextName(data.events, "Новое событие"), subscribers: [] }); selection = ["event", entry.id]; }
@@ -501,6 +609,8 @@ export class MasterScreenApplication extends EditorApplication {
       else if (this.selection.kind === "event") await catalog.deleteEvent(this.selection.id);
       else if (this.selection.kind === "trigger") await catalog.deleteTrigger(this.selection.id);
       else if (this.selection.kind === "macro") await catalog.removeMacro(this.selection.id);
+      else if (this.selection.kind === "shop") await new SceneAssets(scene).deleteShop(this.selection.id);
+      else if (this.selection.kind === "dialogue") await new SceneAssets(scene).deleteDialogue(this.selection.id);
       else throw new Error("Выберите удаляемый элемент.");
     }
     this.resetDraft(); this.parameterDraft = null;
@@ -573,13 +683,13 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   bindJSON() {
-    for (const id of ["selection", "event-list", "scheme-list"]) {
+    for (const id of ["selection", "event-list", "scheme-list", "asset-selection", "shop-list", "dialogue-list"]) {
       if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
       const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);
       const assert = () => { const scene = this.assertScene(); if (scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error("Выбор изменился. Повторите импорт или экспорт."); return scene; };
       const transfer = generics.components.createJSONTransfer({
         filename: () => `master-screen-${originalSelection.kind}-${originalSelection.id}.json`,
-        validate: (value) => { const expected = id === "scheme-list" ? "scheme" : id === "event-list" ? "event" : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error("JSON не соответствует выбранному виду объекта Ширмы."); return value; },
+        validate: (value) => { const expected = id.endsWith("-list") ? id.slice(0, -5) : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error("JSON не соответствует выбранному виду объекта Ширмы."); return value; },
         exportValue: () => {
           const scene = assert();
           if (this.dirty) throw new Error("Сначала сохраните изменения, затем экспортируйте.");
@@ -588,6 +698,8 @@ export class MasterScreenApplication extends EditorApplication {
           if (originalSelection.kind === "episode") return new SchemeEditor(scene).exportEpisode(originalSelection.schemeId, originalSelection.id);
           if (originalSelection.kind === "event") return new EventCatalog(scene).exportEvent(originalSelection.id);
           if (originalSelection.kind === "trigger") return new EventCatalog(scene).exportTrigger(originalSelection.id);
+          if (originalSelection.kind === "shop") return new SceneAssets(scene).exportShop(originalSelection.id);
+          if (originalSelection.kind === "dialogue") return new SceneAssets(scene).exportDialogue(originalSelection.id);
           throw new Error("Выберите схему, эпизод, пользовательское событие или триггер.");
         },
         importValue: async (value) => {
@@ -598,6 +710,8 @@ export class MasterScreenApplication extends EditorApplication {
           if (value.kind === "episode") { const entry = await new SchemeEditor(scene).importEpisode(originalSelection.schemeId, value); selection = ["episode", entry.id, originalSelection.schemeId]; }
           if (value.kind === "event") { const entry = await new EventCatalog(scene).importEvent(value); selection = ["event", entry.id]; }
           if (value.kind === "trigger") { const entry = await new EventCatalog(scene).importTrigger(value); selection = ["trigger", entry.id]; }
+          if (value.kind === "shop") { const entry = await new SceneAssets(scene).importShop(value); selection = ["shop", entry.id]; }
+          if (value.kind === "dialogue") { const entry = await new SceneAssets(scene).importDialogue(value); selection = ["dialogue", entry.id]; }
           this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);
           if (selection) await this.selectNode(...selection);
         }, onError: notify

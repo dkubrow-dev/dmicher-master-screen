@@ -1,6 +1,7 @@
 import { MODULE_ID, normalizeDialogue } from "./model.js";
 import { getDefinition, requireGM } from "./store.js";
 import { generics } from "./generics.js";
+import { getInteractionCatalog } from "./scene-assets.js";
 
 /** Manual projection contains presentation and local navigation only, never executable actions. */
 export function manualDialogueData(source, { includeEventNames = false } = {}) {
@@ -23,10 +24,17 @@ const defaultOpen = async (data) => {
 export function createManualDialogueService({ openWindow = defaultOpen, definitionOf = getDefinition, messageService } = {}) {
   const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "manual-dialogues" });
   const shown = new Set();
-  const getManualContext = ({ sceneId, episodeId, dialogueId, schemeId = "main" }) => {
+  const getManualContext = ({ sceneId, episodeId, dialogueId, pageId, schemeId = "main" }) => {
     requireGM();
     const scene = game.scenes.get(sceneId);
     if (!scene) throw new Error("Сцена не найдена.");
+    const asset = getInteractionCatalog(scene).dialogues.find((entry) => entry.id === dialogueId);
+    if (asset) {
+      const source = { ...asset, startNodeId: pageId ?? asset.startPageId,
+        nodes: asset.pages.map((page) => ({ ...page, responses: page.responses.map((response) => ({ ...response, nextNodeId: response.nextPageId })) })) };
+      if (!source.nodes.some((node) => node.id === source.startNodeId)) throw new Error("Страница диалога не найдена.");
+      return { dialogue: manualDialogueData(source, { includeEventNames: true }), sourceName: asset.name, sceneId, schemeId, episodeId };
+    }
     const episode = definitionOf(scene, { schemeId }).episodes.find((entry) => entry.id === episodeId);
     const dialogue = episode?.dialogues?.find((entry) => entry.id === dialogueId);
     if (!dialogue) throw new Error("Диалог не найден в выбранном эпизоде.");

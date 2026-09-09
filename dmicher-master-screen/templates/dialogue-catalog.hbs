@@ -2,11 +2,9 @@
   {{#if missing}}<p class="ms-note">{{#if missingScheme}}Создайте схему во вкладке «Сцена» и подготовьте диалоги в её эпизоде.{{else}}Откройте сцену под учётной записью мастера.{{/if}}</p>{{else}}
   <header class="ms-toolbar"><h2>Диалоги и действия</h2><span class="ms-note">{{sceneName}}</span></header>
   <p class="ms-status">Ручной показ: ответы не выполняют события и не запускают автоматизацию. Каталог доступен даже после полной остановки сцены.</p>
-  <label class="ms-field">Схема<select name="catalogScheme">{{selectOptions schemes selected=schemeId valueAttr="schemeId" labelAttr="schemeName"}}</select></label>
-  <label class="ms-field">Подготовленный эпизод<select name="catalogEpisode">{{selectOptions episodes selected=episodeId valueAttr="id" labelAttr="name"}}</select></label>
-  <div class="ms-episode-tabs">{{#each dialogues}}<button type="button" data-catalog-action="select" data-dialogue-id="{{id}}" class="{{#if selected}}is-selected{{/if}}">{{name}}</button>{{else}}<p class="ms-note">В этом эпизоде нет диалогов.</p>{{/each}}</div>
+  <div class="ms-episode-tabs">{{#each dialogues}}<button type="button" data-catalog-action="select" data-dialogue-id="{{id}}" class="{{#if selected}}is-selected{{/if}}">{{name}}</button>{{else}}<p class="ms-note">Создайте диалог в «Инструменты → Диалоги».</p>{{/each}}</div>
   {{#if dialogue}}
-  <section class="ms-section"><h3>{{dialogue.name}}</h3><p class="ms-note">Объект: {{targetName}}. {{#unless dialogue.enabled}}Автоматический диалог выключен; ручной показ доступен.{{/unless}}</p>
+  <section class="ms-section"><h3>{{dialogue.name}}</h3>
     <label class="ms-field">Страница для просмотра<select name="catalogNode">{{selectOptions nodes selected=node.id valueAttr="id" labelAttr="label"}}</select></label>
     {{#if node.art}}<img src="{{node.art}}" alt="" class="ms-dialogue-art">{{/if}}<p class="ms-dialogue-text">{{node.text}}</p>
     <div class="ms-list">{{#each node.responses}}<div class="ms-status"><strong>{{label}}</strong><p class="ms-note">{{#if nextNodeId}}Продолжение: {{nextNodeId}}{{else}}Завершение разговора{{/if}}{{#if eventName}} · Событие {{eventName}} только как справка; при ручном показе не выполняется{{/if}}</p></div>{{/each}}</div>

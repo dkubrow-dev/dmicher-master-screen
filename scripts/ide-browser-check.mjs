@@ -25,6 +25,7 @@ const server = http.createServer((request, response) => {
   else if (pathname === "/scene-navigation.hbs") file = path.join(appRoot(currentVersion), "templates/ui/scene-navigation.hbs");
   else if (pathname === "/handlebars.js") file = path.join(appRoot(currentVersion), "node_modules/handlebars/dist/handlebars.js");
   else if (pathname.startsWith("/foundry/")) file = path.join(appRoot(currentVersion), "public", pathname.slice(9));
+  else if (pathname.startsWith("/icons/")) file = path.join(appRoot(currentVersion), "public", pathname.slice(1));
   else {
     const match = /^\/modules\/(dmicher-[a-z-]+)\/(.+)$/.exec(pathname);
     if (match) file = path.resolve(workspace, match[1], match[1], match[2]);
@@ -48,8 +49,15 @@ try {
     assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-scheme-badge]').count(), 1);
     assert.equal(await page.locator('#scene-navigation [data-scene-id="scene-empty"] [data-scheme-badge]').count(), 0);
     assert.equal(await page.locator('#scene-navigation [data-action="viewLevel"] [data-scheme-badge]').count(), 0);
+    assert.equal(await page.locator('[data-scheme-badge][title]').count(), 0);
+    assert.equal(await page.locator('[data-scheme-badge]:not([data-tooltip])').count(), 0);
+    assert.equal(await page.locator('.ms-constructor-indicator').count(), 1);
     await app.locator('[data-select-kind="scheme"] td:last-child').first().click();
     await app.locator('[data-ide-parameters] [name="schemeName"]').waitFor();
+    assert.ok(await app.locator('.dmicher-setting-help').count() > 0);
+    assert.equal(await app.locator('.dmicher-setting-help:not([tabindex="-1"])').count(), 0);
+    await app.locator('[name="schemeName"]').focus();
+    for (let tab = 0; tab < 8; tab++) { await page.keyboard.press("Tab"); assert.equal(await page.evaluate(() => document.activeElement.classList.contains("dmicher-setting-help")), false); }
     assert.equal(await page.evaluate(() => controller.editor.layout.presentation), "panel");
     const geometry = await page.evaluate(() => ({ panel: controller.editor.element.getBoundingClientRect().left, table: document.getElementById("board").getBoundingClientRect().right }));
     assert.ok(Math.abs(geometry.panel - geometry.table) <= 1);
@@ -57,6 +65,29 @@ try {
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.schemeName === "Market square");
     const clickAction = (action) => app.locator(`[data-screen-action="${action}"]`).click();
     const saveParameters = () => app.locator('[data-ide-parameters] button[type="submit"]').click();
+    const closeObjectForms = () => page.evaluate(async () => { for (const item of foundry.applications.instances.values()) if (["ObjectInfoApplication", "ObjectBehaviorApplication"].includes(item.constructor.name)) await item.close(); });
+    const objectMenu = async (target, index) => {
+      await page.evaluate((target) => controller.openObjectMenu(target, { x: 200, y: 200 }), target);
+      assert.equal(await page.locator('.ms-object-menu [role="menuitem"]').count(), target.type === "Token" ? 3 : 2);
+      await page.locator('.ms-object-menu [role="menuitem"]').nth(index).click();
+    };
+    const attachAsset = async (target, kind, assetId, assign = false) => {
+      if (assign) {
+        await objectMenu(target, 0); const info = page.locator('.ms-object-info'); await info.locator('[name="object-scheme"]').selectOption("main");
+        await info.locator('[name="object-notes"]').fill("Object form browser check"); await info.locator('[data-screen-action="save"]').click();
+        await page.waitForFunction((key) => scene.flags["dmicher-master-screen"].objectBindings?.bindings[key]?.notes === "Object form browser check", `${target.type}:${target.id}`);
+        await closeObjectForms();
+      }
+      await objectMenu(target, 1); const behavior = page.locator('.ms-object-behavior');
+      await behavior.locator('[data-screen-action="tab"][data-tab="features"]').click();
+      await behavior.locator(`[name="${kind}-asset"]`).selectOption(assetId);
+      await behavior.locator(`[data-trigger-fields="${kind}-gate"] summary`).click();
+      await behavior.locator(`[name="${kind}-gate-episode"][value="calm"]`).check();
+      await behavior.locator('[data-screen-action="save"]').click();
+      await page.waitForFunction(({key,kind,id}) => scene.flags["dmicher-master-screen"].objectBindings.bindings[key]?.[kind]?.[`${kind}Id`] === id, {key:`${target.type}:${target.id}`,kind,id:assetId});
+      await page.screenshot({ path: path.join(output, `${version}-${kind}-object-binding.png`) });
+      await closeObjectForms();
+    };
     // Categories only navigate. Each leaf owns its selection and incomplete form values.
     await app.locator('[name="schemeName"]').fill("Retained scheme draft");
     await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
@@ -107,7 +138,7 @@ try {
     // Real tree editing, cross-scheme copy/move and the prompt are exercised through DOM events.
     await clickAction("addScheme"); await app.locator('[name="schemeName"]').fill("Back alley"); await saveParameters();
     const alley = await page.evaluate(() => Object.values(scene.flags["dmicher-master-screen"].definitions).find((entry) => entry.schemeName === "Back alley").schemeId);
-    await app.locator('[data-ide-kind="episode"][data-ide-id="calm"][data-scheme-id="main"]').dragTo(app.locator(`[data-ide-kind="scheme"][data-ide-id="${alley}"]`));
+    await app.locator('[data-ide-kind="episode"][data-ide-id="stop"][data-scheme-id="main"]').dragTo(app.locator(`[data-ide-kind="scheme"][data-ide-id="${alley}"]`));
     await app.locator('[data-choice="copy"]').click();
     await page.waitForFunction((id) => scene.flags["dmicher-master-screen"].definitions[id].episodes.length === 2, alley);
     await app.locator('[data-ide-kind="episode"][data-ide-id="tension"][data-scheme-id="main"]').dragTo(app.locator(`[data-ide-kind="scheme"][data-ide-id="${alley}"]`));
@@ -178,15 +209,59 @@ try {
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].sound === "audio/bell.ogg");
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].workspace.gm.length), 1);
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].dialogues.length), 1);
-    // Dedicated tools retain the existing episode editor and manual catalog access.
+    // Independent catalogs are authored through real forms, with two shops and a reusable dialogue.
     await app.locator('[data-screen-action="menuCategory"][data-id="tools"]').click();
-    await app.locator('[data-screen-action="ideTab"][data-id="dialogues"]').click();
-    await app.locator('[data-select-kind="dialogues"] td:last-child').first().click();
-    assert.equal(await app.locator('[data-legacy-block="dialogues"]').count(), 2);
-    assert.equal(await app.locator('[data-screen-action="addDialogue"]').count(), 1);
     await app.locator('[data-screen-action="ideTab"][data-id="shops"]').click();
-    await app.locator('[data-select-kind="shops"] td:last-child').first().click();
-    assert.equal(await app.locator('[data-screen-action="configureTool"]').count(), 1);
+    const dropItem = async (uuid) => app.locator('[data-shop-stock-drop]').evaluate((element, value) => { const dataTransfer = new DataTransfer(); dataTransfer.setData("text/plain", JSON.stringify({ type: "Item", uuid: value })); element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer })); }, uuid);
+    await clickAction("addShopAsset"); await app.locator('[name="assetName"]').fill("General goods"); await dropItem("Item.rope");
+    await app.locator('[name="shopStock"]').fill("3"); await app.locator('[name="shopDisplay"]').selectOption("tiles"); await saveParameters();
+    const shopA = await page.evaluate(() => controller.editor.selection.id);
+    assert.equal(await page.evaluate((id) => scene.flags["dmicher-master-screen"].interactionCatalog.shops.find((entry) => entry.id === id).items[0].data.system.quantity, shopA), 7);
+    await clickAction("addShopAsset"); await app.locator('[name="assetName"]').fill("Fruit stall"); await dropItem("Item.apple");
+    await app.locator('[name="shopStock"]').fill("8"); await app.locator('[name="shopApproval"]').uncheck(); await saveParameters();
+    const shopB = await page.evaluate(() => controller.editor.selection.id);
+    assert.notEqual(shopA, shopB);
+    for (const target of [{ type: "Token", id: "waiter" }, { type: "Tile", id: "menu" }]) await attachAsset(target, "shop", shopA, true);
+    await app.locator(`[data-select-kind="shop"][data-select-id="${shopA}"] td:last-child`).click();
+    assert.equal(await app.locator('.ms-asset-bindings [data-screen-action="objectInfo"]').count(), 2);
+    await page.screenshot({ path: path.join(output, `${version}-shop-catalog.png`) });
+    await clickAction("previewAsset"); const preview = page.locator('.ms-interaction-preview'); await preview.waitFor();
+    const flagsBefore = await page.evaluate(() => JSON.stringify(scene.flags));
+    await preview.locator('[data-screen-action="previewTake"]').first().click(); await preview.locator('[data-screen-action="previewTrade"]').click();
+    assert.match(await preview.locator('[data-preview-feedback]').textContent(), /\S/);
+    assert.equal(await page.evaluate(() => JSON.stringify(scene.flags)), flagsBefore);
+    await preview.locator('[name="distance"]').fill("999"); await preview.locator('[name="showBlocked"]').uncheck(); await preview.locator('[data-screen-action="applyPreview"]').click();
+    assert.equal(await preview.locator('[data-preview-allowed]').getAttribute("data-preview-allowed"), "false");
+    await page.evaluate(async () => { for (const app of foundry.applications.instances.values()) if (app.constructor.name === "InteractionPreviewApplication") await app.close(); });
+    await app.locator('[data-screen-action="ideTab"][data-id="dialogues"]').click(); await clickAction("addDialogueAsset");
+    await app.locator('[name="assetName"]').fill("Tavern welcome"); await app.locator('[name="dialoguePageName"]').fill("Greeting"); await app.locator('[name="dialoguePageText"]').fill("Welcome, traveller.");
+    const firstPage = await app.locator('[data-asset-page]').getAttribute("data-asset-page");
+    await clickAction("addAssetPage"); await app.locator('[name="dialoguePageName"]').fill("Farewell"); await app.locator('[name="dialoguePageText"]').fill("Safe travels.");
+    const secondPage = await app.locator('[data-asset-page]').getAttribute("data-asset-page");
+    await clickAction("addAssetResponse"); await app.locator('[name="responseLabel"]').fill("Ring the bell"); await app.locator('[name="responseEvent"]').selectOption("bell.rang");
+    await app.locator('[data-screen-action="assetFilePicker"]').click();
+    assert.equal(await page.evaluate(() => globalThis.lastFilePicker.type), "image");
+    await page.evaluate(() => globalThis.lastFilePicker.callback("icons/svg/item-bag.svg"));
+    assert.equal(await app.locator('[name="dialoguePageArt"]').inputValue(), "icons/svg/item-bag.svg");
+    await app.locator(`[data-screen-action="selectAssetPage"][data-id="${firstPage}"]`).click(); await clickAction("addAssetResponse");
+    await app.locator('[name="responseLabel"]').fill("Continue"); await app.locator('[name="responseNextPage"]').selectOption(secondPage); await saveParameters();
+    const dialogueId = await page.evaluate(() => controller.editor.selection.id);
+    for (const target of [{ type: "Token", id: "waiter" }, { type: "Tile", id: "menu" }]) await attachAsset(target, "dialogue", dialogueId);
+    await page.evaluate(async () => controller.editor.refresh());
+    assert.equal(await app.locator('.ms-asset-bindings [data-screen-action="objectInfo"]').count(), 2);
+    await page.screenshot({ path: path.join(output, `${version}-dialogue-catalog.png`) });
+    await clickAction("previewAsset"); await preview.waitFor();
+    const dialogueFlags = await page.evaluate(() => JSON.stringify(scene.flags));
+    await preview.locator('[data-screen-action="previewAnswer"]').click(); await preview.locator('[data-screen-action="previewAnswer"]').click();
+    assert.ok((await preview.locator('[data-preview-feedback]').textContent()).includes("bell.rang"));
+    assert.equal(await page.evaluate(() => JSON.stringify(scene.flags)), dialogueFlags);
+    await page.screenshot({ path: path.join(output, `${version}-preview.png`) });
+    await page.evaluate(async () => { for (const app of foundry.applications.instances.values()) if (app.constructor.name === "InteractionPreviewApplication") await app.close(); });
+    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    await app.locator('[data-select-kind="scheme"][data-select-id="main"] td:last-child').click();
+    assert.equal(await app.locator('.ms-owned-objects [data-screen-action="objectInfo"]').count() >= 2, true);
+    await app.locator('[name="entryEpisodeId"]').selectOption("alarm"); await saveParameters();
+    assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.entryEpisodeId), "alarm");
     await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
     await app.locator('[data-screen-action="ideTab"][data-id="sources"]').click();
     await app.locator('[data-select-kind="sources"] td:last-child').first().click();
@@ -213,9 +288,11 @@ try {
     await app.locator('[data-screen-action="director"]').click();
     assert.equal(await page.locator("#dmicher-master-screen-editor").count(), 1);
     assert.equal(await app.locator('[data-screen-action="haltScene"]').count(), 1);
+    assert.equal(await page.locator('.ms-constructor-indicator').count(), 0);
     await page.screenshot({ path: path.join(output, `${version}-bottom-director.png`) });
     await app.locator('[data-screen-action="constructor"]').click();
     await app.locator('[data-screen-action="ideSide"][data-side="right"]').click();
+    await app.locator('[data-select-kind="episode"][data-select-id="calm"][data-scheme-id="main"] td:last-child').click();
     await page.screenshot({ path: path.join(output, `${version}-right-constructor.png`) });
     // Transfer the same element into a real popup using a user click. It must not open a second world.
     const popupPromise = context.waitForEvent("page"); await app.locator('[data-screen-action="togglePresentation"]').click(); const popup = await popupPromise;
@@ -223,6 +300,8 @@ try {
     assert.equal(await page.locator("#dmicher-master-screen-editor").count(), 0);
     assert.equal(await page.evaluate(() => document.getElementById("board").getBoundingClientRect().width), 1440);
     assert.equal(await popup.evaluate(() => window.opener.controller.editor.element.ownerDocument === document), true);
+    assert.equal(await page.locator('.ms-constructor-indicator').count(), 1);
+    assert.equal(await popup.locator('.ms-constructor-indicator').count(), 0);
     await popup.locator('[name="name"]').fill("Quiet market"); await popup.locator('[data-ide-parameters] button[type="submit"]').click();
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].name === "Quiet market");
     await popup.screenshot({ path: path.join(output, `${version}-popup.png`) });
@@ -234,6 +313,7 @@ try {
     assert.equal(await app.locator('[name="name"]').inputValue(), "Retained popup draft");
     await app.locator('[data-screen-action="discardParameters"]').click();
     await app.locator('[data-screen-action="close"]').click(); await app.waitFor({ state: "detached" });
+    assert.equal(await page.locator('.ms-constructor-indicator').count(), 0);
     assert.equal(await page.evaluate(() => document.getElementById("board").getBoundingClientRect().width), 1440);
     await page.locator("#open-panel").click(); await app.waitFor();
     assert.equal(await page.evaluate(() => controller.editor.layout.preferences.horizontal), ratio);
@@ -242,7 +322,7 @@ try {
     assert.equal(await page.evaluate(() => controller.editor.layout.preferences.horizontal), ratio);
     assert.equal(await page.evaluate(() => controller.editor.dock.preferences.bottom), bottomSize);
     assert.deepEqual(errors, []); assert.deepEqual(await page.evaluate(() => globalThis.errors), []);
-    reports.push({ version, layout: "right/bottom/split/outer-resize/popup/return/native-popup-close/reopen/reload/menu-overflow-scroll", drafts: "independent leaf/mode drafts; invalid JSON retained through reference and tab switches; stale save rejected; incomplete color and popup draft preserved", editing: "whole-row selection; category-only navigation; checkbox tree aggregate; descriptions retain optional fields; dedicated tools; source list; empty scene explicit create-one and delete-last", badges: "native 13/14 scene navigation templates; levels excluded; dirty draft survives live badge refresh", errors });
+    reports.push({ version, layout: "right/bottom/split/outer-resize/popup/return/native-popup-close/reopen/reload/menu-overflow-scroll", drafts: "independent leaf/mode drafts; invalid JSON retained through reference and tab switches; stale save rejected; incomplete color and popup draft preserved", editing: "whole-row selection; category-only navigation; checkbox tree aggregate; descriptions retain optional fields; dedicated tools; source list; empty scene explicit create-one and delete-last", catalogs: "two shops, opaque Item drop and stock, multi-page dialogue graph and FilePicker; context menu -> Info assignment -> Behavior shop/dialogue attachments on Token and Tile; reverse references; local trade/dialogue preview leaves world flags unchanged", badges: "native 13/14 scene navigation templates; levels excluded; dirty draft survives live badge refresh; one tooltip; help questions skipped by Tab; constructor outline follows mode and popup lifecycle", errors });
     await context.close();
   }
   fs.writeFileSync(path.join(output, "result.json"), JSON.stringify(reports, null, 2));

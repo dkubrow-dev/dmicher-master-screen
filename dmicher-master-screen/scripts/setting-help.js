@@ -9,7 +9,7 @@ export function installScreenSettingHelp(open, hooks = globalThis.Hooks) {
     clear(app);
     const root = generics.windows.getRenderedElement(app) ?? generics.windows.getRenderedElement(html);
     if (!root?.classList?.contains("dmicher-master-screen")) return;
-    bindings.set(app, generics.help.bindSettingHelp(root, { open, entries: getScreenSettingHelp() }));
+    bindings.set(app, generics.help.bindSettingHelp(root, { open, entries: getScreenSettingHelp(), tabIndex: -1 }));
   });
   const closed = hooks.on("closeApplicationV2", clear);
   return () => {

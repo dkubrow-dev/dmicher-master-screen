@@ -3,12 +3,23 @@ import { asArray, getRuntime, getRuntimes, getRuntimeForRun, getDefinitions, isA
 import { speechRecipients } from "./effects.js";
 import { isExecutionHalted, onExecutionChange } from "./execution.js";
 import { EVENT_NAME, getEventCatalog, validateTypedTrigger } from "./event-catalog.js";
+import { getObjectBindings, getSceneObject } from "./scene-objects.js";
+import { objectKey } from "./interaction-access.js";
 
 const copy = (value) => structuredClone(value);
 const MAX_DEPTH = 32;
 const MAX_LOG = 100;
 const MAX_CLAIMS = 300;
 const escapeHTML = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function objectFeatureCurrent(scene, { featureId, objectTarget, schemeId }) {
+  if (!featureId) return true;
+  const state = getRuntime(scene, { schemeId }), binding = getObjectBindings(scene).bindings[objectKey(objectTarget)];
+  return Boolean(getSceneObject(scene, objectTarget) && binding?.schemeId === schemeId
+    && !(objectTarget.type === "Token" && (state.disabledTokens.includes(objectTarget.id) || state.episode?.tokens?.[objectTarget.id]?.enabled === false))
+    && binding.features.some((feature) => feature.id === featureId && feature.enabled
+      && (!feature.episodeIds.length || feature.episodeIds.includes(state.episodeId))));
+}
 
 export function eventChatAudience(scene, event, audience = {}) {
   const users = asArray(game.users), ids = new Set();
@@ -40,11 +51,18 @@ export class SceneEvents {
     this.messages = chat?.createMessageService({ ownerId: MODULE_ID, channel: "events" });
     this.executeMacro = executeMacro ?? (async (uuid, event, scene) => {
       const macro = await fromUuid(uuid);
-      if (!this.current(scene, event.runId)) return;
+      if (!this.current(scene, event.runId) || !objectFeatureCurrent(scene, event)) return;
       if (macro?.documentName !== "Macro" || macro.type !== "script" || !macro.canExecute) throw new Error("Подписка требует доступный скриптовый макрос Foundry.");
       const context = { chainId: event.chainId, depth: event.depth + 1, originSceneId: scene.id, originRunId: event.runId, originSchemeId: event.schemeId };
       return macro.execute({ trigger: copy(event.trigger), scene, event: copy(event), screen: runtime,
-        InvokeDmicherMasterScreenEvent: (name, trigger) => this.invoke(scene, name, trigger, { context }) });
+        // The subscriber's object is distinct from the object that originated the event.
+        // Keep trigger untouched so one compatible macro can serve several scene objects.
+        ...(event.featureId && event.objectTarget ? { objectTarget: copy(event.objectTarget),
+          sceneObject: getSceneObject(scene, event.objectTarget), featureId: event.featureId } : {}),
+        InvokeDmicherMasterScreenEvent: (name, trigger) => {
+          if (!objectFeatureCurrent(scene, event)) throw new Error("Особенность объекта выключена или назначена другой схеме.");
+          return this.invoke(scene, name, trigger, { context });
+        } });
     });
     this.queue = [];
     this.draining = null;
@@ -217,10 +235,15 @@ export class SceneEvents {
     const results = [];
     for (const subscription of subscriptions) {
       if (!this.current(scene, subscription._runId)) continue;
+      const featureCurrent = () => {
+        return objectFeatureCurrent(scene, { featureId: subscription.featureId, objectTarget: subscription.target, schemeId: subscription._schemeId });
+      };
+      if (!featureCurrent()) continue;
       const result = { subscriptionId: subscription.id, status: "pending" };
       results.push(result);
       await this.update(scene, event, { results });
       if (!this.current(scene, subscription._runId)) continue;
+      if (!featureCurrent()) continue;
       this.context = { chainId: event.chainId, depth: event.depth + 1, originSceneId: scene.id, originRunId: subscription._runId, originSchemeId: subscription._schemeId };
       try {
         if (subscription.kind === "transition") {
@@ -230,7 +253,8 @@ export class SceneEvents {
           const accepted = catalog.triggers.find((entry) => entry.name === event.trigger?.type && entry.eventId === descriptor?.id);
           if (subscription._catalog && (!registered || !accepted || !registered.triggerIds.includes(accepted.id))) throw new Error("Макрос не зарегистрирован как принимающий этот триггер.");
           const outcome = await this.awaitCurrentRun(scene, subscription._runId,
-            () => this.executeMacro(subscription.macroUuid, { ...event, runId: subscription._runId, schemeId: subscription._schemeId }, scene));
+            () => this.executeMacro(subscription.macroUuid, { ...event, runId: subscription._runId, schemeId: subscription._schemeId,
+              ...(subscription.featureId ? { objectTarget: copy(subscription.target), featureId: subscription.featureId } : {}) }, scene));
           if (outcome.stale) {
             result.status = "stale";
             await this.update(scene, event, { status: "stale", results });

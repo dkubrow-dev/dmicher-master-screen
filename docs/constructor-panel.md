@@ -16,6 +16,10 @@
 
 Выберите строку для изменения названия, описания и цветов. Для схемы обязателен один символ Unicode, включая составной эмоджи. Значки схем рядом с названием сцены и над штатными кнопками сцен Foundry показывают цвета текущего запущенного эпизода. Подсказка на значке содержит схему и эпизод. Пунктирный значок означает, что схема ещё не запускалась; знак паузы — что она остановлена. Выбор эпизода для редактирования не меняет эти значки, а несохранённый ввод не мешает обновлению состояния.
 
+Выберите для схемы **Входной эпизод**: он будет предложен при первом запуске. Открытие карты и выбор схемы ничего не исполняют — нажмите **Запустить** в Режиссёре. Таблица **Управляемые объекты** открывает информацию объекта и позволяет привязать объект со сцены или отвязать его. Один объект принадлежит одной схеме; переназначение требует подтверждения и остановки затронутых схем.
+
+Красная рамка стола показывает, что включён Конструктор. В Режиссёре и после закрытия Ширмы её нет; при переносе Конструктора в отдельное окно рамка остаётся у карты. Вопросы возле полей открывают справку мышью, но не перехватывают последовательный переход Tab между полями.
+
 Кнопки под деревом добавляют, редактируют и удаляют узлы. Перетаскивание меняет порядок; перенос эпизода на другую схему предлагает копирование или перемещение. Названия уникальны среди соседних узлов. Импорт JSON добавляет объект; существующий объект не заменяется. Если имя уже занято, сначала переименуйте источник или имеющийся узел.
 
 В параметрах эпизода добавляйте события, которые автоматически переводят схему в него. Одно событие внутри одной схемы ведёт только в один эпизод. Мастер в Режиссёре может войти в любой эпизод независимо от этих условий. Выбрав схему, её можно отдельно остановить или возобновить с выбранного эпизода.
@@ -24,7 +28,11 @@
 
 **Макросы** принимает перетаскивание из каталога Foundry. Новый макрос и кнопка **Править** используют штатный редактор. В дополнительной зоне отметьте принимаемые им типы триггеров. Макрос можно перетащить прямо на строку подписанта события.
 
-**Магазины** показывает НИП по схемам и эпизодам, открывает настройку каталога и предоставляет доступ к состояниям торговых сессий. **Диалоги** показывает эпизоды с их диалогами и прямыми взаимодействиями: выберите эпизод, затем настройте его содержимое в дополнительной зоне. Просмотр и ручной показ доступны отдельной кнопкой, в том числе после остановки автоматизации.
+**Магазины** содержит самостоятельные каталоги сцены. Создайте магазин, задайте название, изображение, отображение по категориям или плитками и подтверждение мастера. Перетаскивайте Item из каталога Foundry или листа персонажа; копия товара и остаток сохраняются в магазине, инвентарь источника не меняется. Состояния торговых сессий доступны отдельной кнопкой. Назначьте магазин нескольким объектам через **Поведение → Особенности**; их условия и эпизоды задаются на каждом объекте. Общий магазин имеет один общий остаток и обслуживает одного участника одновременно.
+
+**Диалоги** содержит самостоятельные диалоги сцены с уникальными названиями. Создайте первый блок, текст, необязательный арт через штатный выбор файла и ответы. Ответ либо продолжает разговор с выбранного блока, либо завершает его и может вызвать событие. **Уйти** всегда завершает без события. Раздел переходов показывает простой граф связей блоков. Один диалог можно назначить нескольким объектам. Внизу параметров видны обратные связи: объекты, схемы, эпизоды, белые и чёрные теги, а также подходящие по тегам токены с персонажами. Дальность и текущее состояние проверяются отдельно при взаимодействии. Просмотр и ручной показ игрокам доступны даже после остановки автоматизации.
+
+**Предпросмотр с условиями** открывает отдельную репетицию текущего черновика магазина или диалога. Выберите схему, эпизод, объект и персонажа; измените имитируемые теги, расстояние, видимость и счётчик. Панель объяснит допуск или отказ. Галка **Показать содержимое при отказе** позволяет проверить само содержимое ещё не привязанного инструмента. Пробный обмен меняет только копии в окне, ответ показывает предполагаемое событие: документы, остатки мира и автоматизация не затрагиваются. **Применить условия и начать заново** сбрасывает репетицию. JSON импорт/экспорт доступен для каждого магазина и диалога.
 
 **Источники** перечисляет существующие входы в эпизод, зоны, взаимодействия НИП, патрули, диалоги и прямые действия с их событиями. Выбор строки показывает контекст и открывает соответствующую настройку. Просмотр списка ничего не запускает и не добавляет источники.
 
@@ -50,11 +58,19 @@ Select a row to edit its name, description and colours. Schemes require one Unic
 
 An episode's event list determines automated entry. Within a scheme, an event may target only one episode. Director allows the GM to enter any episode manually. Select a scheme to stop it independently or resume it from a chosen episode.
 
+Choose a scheme's **Entry episode** as its proposed starting state. Opening a map never starts it; explicitly press **Start** in Director. **Controlled objects** links to each object's Information and allows attaching or detaching native scene objects. An object belongs to one scheme; reassigning requires stopping affected schemes and confirmation. The red tabletop outline appears only in Constructor, remains on the main map when using a popup, and disappears in Director or after closing. Help question buttons do not interrupt Tab navigation between fields.
+
 **Events** lists scene events and their named trigger types. Order subscribers with up/down buttons: a built-in action, macro or another trigger. Configure trigger fields and limits for text, integers, decimals and booleans. Built-in definitions can be inspected and invoked. JSON controls transfer the selected custom event or trigger.
 
 **Macros** accepts drops from the Foundry directory. Create and edit with Foundry's native editor; select accepted trigger types in the details area. A macro can also be dropped onto an event's subscriber row.
 
-**Shops** lists NPCs by scheme and episode, opens their shop setup and gives access to trading sessions. **Dialogues** lists episode scopes; select one to edit its dialogues and direct interactions. The manual catalog remains available after automation stops. **Sources** lists existing episode entries, zones, NPC interactions, patrols, dialogues and direct actions, their events and links to setup. Opening the list starts nothing.
+**Shops** contains independent scene catalogs. Set a name, image, category/tile layout and GM approval; drop Foundry Items into stock without changing the source inventory. Attach one shop to multiple objects in **Behavior → Features**, where each object controls episodes, tags and range. Stock and the exclusive trading session are shared across attachments.
+
+**Dialogues** contains independent, uniquely named conversations. Add blocks, text, optional art with Foundry's file picker and responses. A response either continues to a block or ends the conversation, optionally emitting an event. **Leave** always ends without an event. The simple graph lists block connections. Reverse references show attached objects, schemes, episodes, allow/deny tags and matching Actor tokens; distance and live state are checked during interaction. Manual viewing and invitations remain available after automation stops.
+
+**Preview with conditions** rehearses the current shop/dialogue draft in a separate window. Select a scheme, episode, target and Actor token; simulate tags, distance, visibility and usage count. The result explains admission or refusal. **Show content when blocked** also lets you inspect an unattached draft. Trades change only local copies; dialogue responses describe the event they would emit. World documents, stock and automation remain unchanged. Applying conditions resets the rehearsal. Each catalog item supports JSON import/export.
+
+**Sources** lists existing episode entries, zones, NPC interactions, patrols, dialogues and direct actions, their events and links to setup. Opening the list starts nothing.
 
 **Other** temporarily groups the remaining tools. Select a block in the main zone to show only its settings in the details zone: NPC behavior, tags, zones, pause, sound, reinforcements, workspaces and full-scene transfer. Director provides NPC controls, counters and history. Saving a block preserves the other blocks.
 

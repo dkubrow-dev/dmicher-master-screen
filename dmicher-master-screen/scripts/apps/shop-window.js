@@ -1,7 +1,7 @@
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { asArray } from "../store.js";
-import { shopEntries, validateTradeContext } from "../shop.js";
+import { shopEntries, validateTradeContext, shopKey } from "../shop.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const clone = (value) => structuredClone(value);
@@ -17,22 +17,23 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       newOffer: ShopApplication.newOffer, sheet: ShopApplication.sheet }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/shop.hbs` } };
-  constructor(controller, { sceneId, tokenId, actorTokenId, schemeId = "main", sessionId = null, join = false }, options = {}) {
-    const runId = controller.shop.getContext(sceneId, tokenId, schemeId).runtime?.runId ?? "inactive";
-    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${schemeId}-${runId}-${tokenId}-${actorTokenId}-${sessionId ?? "own"}` });
-    Object.assign(this, { controller, sceneId, tokenId, actorTokenId, schemeId, sessionId, join });
+  constructor(controller, { sceneId, tokenId, target, actorTokenId, schemeId = "main", sessionId = null, join = false }, options = {}) {
+    const source = target ?? { type: "Token", id: tokenId };
+    const current = controller.shop.getContext(sceneId, source, schemeId), runId = current.runtime?.runId ?? "inactive";
+    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${schemeId}-${runId}-${source.type}-${source.id}-${actorTokenId}-${sessionId ?? "own"}` });
+    Object.assign(this, { controller, sceneId, tokenId: source.id, target: source, shopId: shopKey(current) ?? source.id, actorTokenId, schemeId, sessionId, join });
     this.runId = runId;
     this.requestId = newId(); this.draft = { giveItemIds: [], take: [] };
     this.feedback = ""; this.busy = false; this.pending = false; this.finished = false;
   }
   intent(extra = {}) {
-    return { sceneId: this.sceneId, tokenId: this.tokenId, actorTokenId: this.actorTokenId, schemeId: this.schemeId,
+    return { sceneId: this.sceneId, tokenId: this.tokenId, target: this.target, shopId: this.shopId, actorTokenId: this.actorTokenId, schemeId: this.schemeId,
       sessionId: this.sessionId, runId: this.runId, requestId: this.requestId, ...extra };
   }
   async ensureSession() {
     if (this.session || this.sessionError || this.finished) return;
     if (this.join) {
-      const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId).runtime?.shopSessions?.[this.tokenId];
+      const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).runtime?.shopSessions?.[this.shopId];
       if (!current || current.sessionId !== this.sessionId) throw new Error("Сессия участника уже завершилась.");
       this.session = current; this.readOnly = current.userId !== game.user.id;
     } else {
@@ -48,7 +49,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     const base = await super._prepareContext(options);
     let unavailable = "", actor;
     try { await this.ensureSession(); } catch (error) { this.sessionError = error.message; }
-    const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId);
+    const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId);
     const receipt = Object.values(current.runtime?.tradeRequests ?? {}).find((record) => record.intent?.sessionId === this.sessionId
       && (record.intent.requestId === this.requestId || record.status === "pending"));
     if (receipt) {
@@ -66,7 +67,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
         this.pending = false; this.finished = true; this.feedback = "Предложение отклонено. Причина указана в чате.";
       }
     }
-    const live = current.runtime?.shopSessions?.[this.tokenId];
+    const live = current.runtime?.shopSessions?.[this.shopId];
     if (this.readOnly && live?.sessionId === this.sessionId) this.draft = clone(live.draft);
     try { actor = validateTradeContext(current, this.intent(), game.user); }
     catch (error) { unavailable = error.message; }
@@ -84,8 +85,8 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     }
     this.view ??= current.behavior?.shop?.display ?? "list";
     return { ...base, unavailable, feedback: this.feedback, locked, finished: this.finished && !this.readOnly,
-      readOnly: this.readOnly, npcName: unavailable ? "Взаимодействие недоступно" : current.token?.name,
-      npcImg: unavailable ? null : current.token?.texture?.src || current.token?.actor?.img,
+      readOnly: this.readOnly, npcName: unavailable ? "Взаимодействие недоступно" : current.asset?.name || current.token?.name,
+      npcImg: unavailable ? null : current.asset?.img || current.token?.texture?.src || current.token?.actor?.img,
       actorName: actor?.name, ownerName: game.users.get(this.session?.userId)?.name,
       needsApproval: current.behavior?.shop?.requireGMApproval !== false,
       groups: [...groups].map(([name, items]) => ({ name, items })), tiles: this.view === "tiles",
@@ -129,7 +130,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       }
       if (side !== "player" || data.type !== "Item" || typeof data.uuid !== "string") throw new Error("Перенесите предмет в соответствующую колонку предложения.");
       const item = await fromUuid(data.uuid);
-      const current = this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId);
+      const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId);
       const actor = validateTradeContext(current, this.intent(), game.user);
       if (item?.documentName !== "Item" || item.parent?.uuid !== actor.uuid) throw new Error("Предмет не принадлежит выбранному персонажу.");
       return this.edit((draft) => { if (!draft.giveItemIds.includes(item.id)) draft.giveItemIds.push(item.id); });
@@ -172,7 +173,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.requestId = newId(); this.sessionError = null; this.feedback = "";
     return this.render({ force: true });
   }
-  static sheet() { return this.controller.shop.getContext(this.sceneId, this.tokenId, this.schemeId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
+  static sheet() { return this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
   async close(options = {}) {
     this.listeners?.abort(); clearInterval(this.heartbeat); clearInterval(this.statusTimer);
     this.heartbeat = null; this.statusTimer = null;

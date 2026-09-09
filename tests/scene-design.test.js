@@ -7,6 +7,7 @@ import { SceneEvents } from "../dmicher-master-screen/scripts/events.js";
 import { createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
 import { MODULE_ID, defaultDefinition, defaultTokenBehavior, normalizeDefinition, normalizeSchemeSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
 import { getDefinitions, getRuntime, getRuntimes, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
+import { SceneObjects, resolveObjectShop } from "../dmicher-master-screen/scripts/scene-objects.js";
 
 const copy = (value) => structuredClone(value);
 function fixture() {
@@ -149,16 +150,25 @@ test("cyclic typed subscriber dispatch stops visibly at a bounded chain", { time
   f.runtime.dispose(); f.bus.dispose();
 });
 
-test("activating a scheme refuses to seize a token already automated by another", async () => {
+test("ambiguous legacy ownership requires an explicit stopped reassignment", async () => {
   const f = fixture(), second = await f.editor.createScheme({ name: "North" });
   const token = { id: "npc", parent: f.scene, async update() {} }; f.scene.tokens.set(token.id, token);
   const config = defaultTokenBehavior();
   await f.editor.updateEpisode("main", "calm", { tokens: { npc: config } });
-  const episode = await f.editor.createEpisode(second.schemeId, { name: "Watch", tokens: { npc: config } });
-  await f.runtime.enter(f.scene, "calm"); await assert.rejects(f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId }));
-  await f.runtime.setAutomation(f.scene, token.id, false); await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
-  await assert.rejects(f.runtime.setAutomation(f.scene, token.id, true));
-  assert.equal(getRuntime(f.scene).disabledTokens.includes(token.id), true);
+  const episode = await f.editor.createEpisode(second.schemeId, { name: "Watch" });
+  await assert.rejects(f.editor.updateEpisode(second.schemeId, episode.id, { tokens: { npc: config } }));
+  // Simulate genuinely saved old data, before exclusive ownership was introduced.
+  f.scene.flags[MODULE_ID].definitions[second.schemeId].episodes.find((entry) => entry.id === episode.id).tokens.npc = config;
+  await assert.rejects(f.runtime.enter(f.scene, "calm"));
+  const objects = new SceneObjects(f.scene);
+  await assert.rejects(objects.save({ type: "Token", id: token.id }, { schemeId: "main" }));
+  await objects.save({ type: "Token", id: token.id }, { schemeId: "main" }, { allowReassign: true });
+  await f.runtime.enter(f.scene, "calm");
+  await assert.rejects(objects.save({ type: "Token", id: token.id }, { schemeId: second.schemeId }, { allowReassign: true }));
+  await f.runtime.halt(f.scene);
+  await objects.save({ type: "Token", id: token.id }, { schemeId: second.schemeId }, { allowReassign: true });
+  await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
+  assert.ok(getRuntime(f.scene, { schemeId: second.schemeId }).episode.tokens.npc);
   f.runtime.dispose(); f.bus.dispose();
 });
 
@@ -197,14 +207,20 @@ test("changing schemes does not replenish a shared NPC shop's previous inventory
   config.shop.enabled = true; config.shop.items = [{ id: "lot", stock: 10, data: { name: "Sword", type: "weapon" } }];
   f.scene.tokens.set("npc", { id: "npc", parent: f.scene });
   await f.editor.updateEpisode("main", "calm", { tokens: { npc: config } });
-  const episode = await f.editor.createEpisode(second.schemeId, { name: "Trading", tokens: { npc: config } });
+  const episode = await f.editor.createEpisode(second.schemeId, { name: "Trading" });
   await f.runtime.enter(f.scene, "calm");
-  f.scene.flags[MODULE_ID].runtimes.main.shops.npc.items[0].stock = 2;
-  await f.runtime.halt(f.scene); await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
-  assert.equal(getRuntime(f.scene, { schemeId: second.schemeId }).shops.npc.items[0].stock, 2);
+  const descriptor = { type: "Token", id: "npc" }, objects = new SceneObjects(f.scene);
+  const shopId = resolveObjectShop(f.scene, descriptor, { schemeId: "main", episodeId: "calm" }).asset.id;
+  f.scene.flags[MODULE_ID].runtimes.main.shops[shopId].items[0].stock = 2;
+  await f.runtime.halt(f.scene);
+  await objects.save(descriptor, { schemeId: second.schemeId, shop: { shopId, episodeIds: [episode.id], trigger: { repeat: "always" } } }, { allowReassign: true });
+  await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
+  assert.equal(getRuntime(f.scene, { schemeId: second.schemeId }).shops[shopId].items[0].stock, 2);
   await f.scene.setFlag(MODULE_ID, "shopInventories.npc", { items: [{ id: "lot", stock: 1, data: { name: "Sword", type: "weapon" } }] });
-  await f.runtime.halt(f.scene, { schemeId: second.schemeId }); await f.runtime.enter(f.scene, "calm", { force: true });
-  assert.equal(getRuntime(f.scene).shops.npc.items[0].stock, 1);
+  await f.runtime.halt(f.scene, { schemeId: second.schemeId });
+  await objects.save(descriptor, { schemeId: "main", shop: { shopId, episodeIds: ["calm"], trigger: { repeat: "always" } } }, { allowReassign: true });
+  await f.runtime.enter(f.scene, "calm", { force: true });
+  assert.equal(getRuntime(f.scene).shops[shopId].items[0].stock, 1);
   f.runtime.dispose(); f.bus.dispose();
 });
 

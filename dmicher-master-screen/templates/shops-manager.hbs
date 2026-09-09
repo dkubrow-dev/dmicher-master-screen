@@ -11,13 +11,13 @@
       </div>
       {{#if session}}
       <div class="ms-session-info"><span>Игрок: <strong>{{session.userName}}</strong></span><span>Персонаж: <strong>{{session.actorName}}</strong></span>{{#if expiresText}}<span class="ms-note">Сессия до {{expiresText}}</span>{{/if}}</div>
-      <div class="ms-actions"><button type="button" data-shop-manager-action="join" data-token-id="{{tokenId}}" data-scheme-id="{{schemeId}}" data-session-id="{{session.id}}" {{#if expired}}disabled{{/if}}><i class="fa-solid fa-eye"></i> Присоединиться</button><button type="button" data-shop-manager-action="release" data-token-id="{{tokenId}}" data-scheme-id="{{schemeId}}" data-session-id="{{session.id}}">Освободить магазин</button></div>
+      <div class="ms-actions"><button type="button" data-shop-manager-action="join" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-scheme-id="{{schemeId}}" data-session-id="{{session.id}}" {{#if expired}}disabled{{/if}}><i class="fa-solid fa-eye"></i> Присоединиться</button><button type="button" data-shop-manager-action="release" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-scheme-id="{{schemeId}}" data-session-id="{{session.id}}">Освободить магазин</button></div>
       {{/if}}
       {{#each pending}}
       <div class="ms-pending-exchange">
         <strong>Предложение обмена</strong>
         <p><span class="ms-note">Игрок отдаёт:</span> {{#if summary.give}}{{summary.give}}{{else}}ничего{{/if}}<br><span class="ms-note">Игрок получает:</span> {{#if summary.take}}{{summary.take}}{{else}}ничего{{/if}}</p>
-        {{#if actionable}}<div class="ms-actions"><button type="button" data-shop-manager-action="approve" data-token-id="{{../tokenId}}" data-scheme-id="{{../schemeId}}" data-message-id="{{messageId}}" class="ms-primary">Подтвердить обмен</button><button type="button" data-shop-manager-action="reject" data-token-id="{{../tokenId}}" data-scheme-id="{{../schemeId}}" data-message-id="{{messageId}}" class="ms-danger">Отклонить</button></div>{{else}}<p class="ms-note">Статус: {{status}}</p>{{/if}}
+        {{#if actionable}}<div class="ms-actions"><button type="button" data-shop-manager-action="approve" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-scheme-id="{{../schemeId}}" data-message-id="{{messageId}}" class="ms-primary">Подтвердить обмен</button><button type="button" data-shop-manager-action="reject" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-scheme-id="{{../schemeId}}" data-message-id="{{messageId}}" class="ms-danger">Отклонить</button></div>{{else}}<p class="ms-note">Статус: {{status}}</p>{{/if}}
       </div>
       {{/each}}
       {{#each issues}}<div class="ms-pending-exchange ms-error" role="status"><strong>{{statusLabel}}</strong><p>Игрок отдаёт: {{summary.give}}<br>Игрок получает: {{summary.take}}</p>{{#if error}}<p>{{error}}</p>{{/if}}</div>{{/each}}

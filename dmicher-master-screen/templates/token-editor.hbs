@@ -36,20 +36,7 @@
       <div class="ms-actions"><button type="button" data-screen-action="addPatrolPoint">Добавить точку кликом на карте</button><button type="button" data-screen-action="capturePatrolPoint">Добавить текущую позицию токена</button></div>
     </details>
 
-    <details class="ms-details">
-      <summary>Магазин без денежной системы</summary>
-      <label class="ms-check"><input type="checkbox" name="shopEnabled" {{checked behavior.shop.enabled}}> Предложить игроку обмен предметами</label>
-      <label class="ms-field">Дальность взаимодействия, единицы сцены<input type="number" name="shopRange" value="{{behavior.shop.range}}" min="0" step="any" required></label>
-      <label class="ms-check"><input type="checkbox" name="shopApproval" {{checked behavior.shop.requireGMApproval}}> Обмен требует подтверждения мастера</label>
-      <label class="ms-field">Вид ассортимента<select name="shopDisplay"><option value="list" {{#unless shopTiles}}selected{{/unless}}>Список</option><option value="tiles" {{#if shopTiles}}selected{{/if}}>Плитки</option></select></label>
-      {{{shopTriggerFields}}}
-      <p class="ms-note">Перетащите продаваемые предметы из боковой панели или листа персонажа. Игрок собирает два предложения: что отдаёт и что получает, затем подтверждает обмен. Передаётся целый документ предмета с заданным системой количеством; запас считает такие документы. Цены и валюты пока не применяются. Потраченный запас не пополняется при смене эпизода.</p>
-      <div data-shop-drop class="ms-drop-zone" aria-label="Ассортимент магазина">
-        {{#each items}}
-        <div class="ms-stock-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="">{{/if}}{{name}}</span><label class="ms-field">Запас<input type="number" name="stock-{{@index}}" value="{{stock}}" min="0" max="99999" step="1" required></label><button type="button" data-screen-action="removeItem" data-index="{{@index}}" class="ms-danger" title="Убрать из ассортимента"><i class="fa-solid fa-trash"></i></button></div>
-        {{else}}<p class="ms-note">Перетащите предметы сюда.</p>{{/each}}
-      </div>
-    </details>
+    <p class="ms-note">Магазины редактируются в «Инструменты → Магазины» и назначаются объекту через «Поведение → Особенности». Эта прежняя форма сохраняет ранее подготовленные данные магазина.</p>
 
     <details class="ms-details">
       <summary>Взаимодействие для перехода</summary>

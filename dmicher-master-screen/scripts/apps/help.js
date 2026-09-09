@@ -43,8 +43,9 @@ export class InteractionApplication extends HandlebarsApplicationMixin(Applicati
           throw new Error("Сцена или эпизод изменились. Откройте взаимодействие заново.");
         }
         const actorTokenId = this.element.querySelector("select").value;
-        if (button.dataset.interaction === "shop") return this.controller.openShop(this.tokenId, { actorTokenId, schemeId: this.schemeId });
-        if (button.dataset.interaction === "dialogue") return this.controller.openDialogue(button.dataset.dialogueId, actorTokenId, { schemeId: this.schemeId });
+        const target = { type: this.targetType, id: this.tokenId };
+        if (button.dataset.interaction === "shop") return this.controller.openShop(target, { actorTokenId, schemeId: this.schemeId });
+        if (button.dataset.interaction === "dialogue") return this.controller.openDialogue(button.dataset.dialogueId, actorTokenId, { schemeId: this.schemeId, target });
         if (button.dataset.interaction === "event") return this.controller.requestNamedInteraction(button.dataset.interactionId, actorTokenId, { schemeId: this.schemeId });
         return this.controller.triggerInteraction(this.tokenId, actorTokenId, { schemeId: this.schemeId });
       }).then(() => this.close()).catch(notifyError).finally(() => { if (button.isConnected) button.disabled = false; });

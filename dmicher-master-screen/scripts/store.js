@@ -37,18 +37,17 @@ export const getRuntimeForRun = (scene, runId) => getRuntimes(scene).find((state
 
 export function getObjectTags(scene, descriptor) {
   const tags = normalizeObjectTags(scene?.getFlag(MODULE_ID, "objectTags"));
+  for (const binding of Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {})) {
+    if (!binding?.type || !binding?.id) continue;
+    tags[binding.type] ??= {}; tags[binding.type][binding.id] = normalizeTags(binding.tags);
+  }
   return descriptor ? [...(tags[descriptor.type]?.[descriptor.id] ?? [])] : tags;
 }
 
 export function saveObjectTags(scene, { type, id }, tags) {
-  return withSceneLock(scene, async () => {
-    requireGM();
-    const collection = type === "Token" ? scene.tokens : type === "Tile" ? scene.tiles : null;
-    if (!collection?.has(id)) throw new Error("Объект сцены больше не существует");
-    const normalized = normalizeTags(tags);
-    // Write only this object's path, preserving edits to other objects from another GM.
-    await scene.setFlag(MODULE_ID, `objectTags.${type}.${id}`, normalized);
-    return normalized;
+  return import("./scene-objects.js").then(async ({ SceneObjects }) => {
+    const result = await new SceneObjects(scene).save({ type, id }, { tags });
+    return result.tags;
   });
 }
 
@@ -65,7 +64,16 @@ export function saveDefinition(scene, definition, { expectedRevision } = {}) {
     if (expectedRevision !== undefined && (current?.revision ?? 0) !== expectedRevision) throw new Error("Настройки изменены другим окном. Обновите их перед сохранением.");
     const next = normalizeDefinition(definition);
     next.revision = (current?.revision ?? 0) + 1;
-    await scene.setFlag(MODULE_ID, `definitions.${scheme(next.schemeId)}`, next);
+    const { validateDefinitionObjectOwnership, reconcileDefinitionBindings } = await import("./scene-objects.js");
+    const definitions = getDefinitions(scene), changed = [...definitions.filter((entry) => entry.schemeId !== next.schemeId), next];
+    validateDefinitionObjectOwnership(scene, changed);
+    const bindings = reconcileDefinitionBindings(scene, definitions, changed);
+    const fields = { [`definitions.${scheme(next.schemeId)}`]: next, ...(bindings ? { objectBindings: bindings } : {}) };
+    if (current?.episodes.some((episode) => !next.episodes.some((entry) => entry.id === episode.id))) {
+      const { getInteractionCatalog } = await import("./scene-assets.js"); fields.interactionCatalog = getInteractionCatalog(scene);
+    }
+    if (scene.update) await scene.update(Object.fromEntries(Object.entries(fields).map(([key, value]) => [`flags.${MODULE_ID}.${key}`, value])));
+    else for (const [key, value] of Object.entries(fields)) await scene.setFlag(MODULE_ID, key, value);
     return next;
   });
 }

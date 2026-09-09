@@ -1,6 +1,8 @@
 import { MODULE_ID, normalizeDefinition, normalizeObjectTags } from "./model.js";
 import { asArray, getDefinitions, requireGM } from "./store.js";
 import { getEventCatalog, normalizeCatalog } from "./event-catalog.js";
+import { getInteractionCatalog, normalizeInteractionCatalog } from "./scene-assets.js";
+import { normalizeObjectBindings, validateObjectBinding } from "./scene-objects.js";
 
 const copy = (data) => structuredClone(data);
 function portable(document) {
@@ -26,6 +28,7 @@ export async function exportBundle(scene) {
   if (!scene) throw new Error("Сначала откройте сцену");
   const definitions = getDefinitions(scene), definition = definitions[0] ?? null, actors = [], macros = [], journals = [];
   const allEvents = getEventCatalog(scene);
+  const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
   const eventCatalog = normalizeCatalog({ ...allEvents, events: allEvents.events.filter((entry) => !entry.builtin), triggers: allEvents.triggers.filter((entry) => !entry.builtin) });
   const seen = new Set();
   async function include(uuid) {
@@ -48,6 +51,10 @@ export async function exportBundle(scene) {
   }
   for (const event of eventCatalog.events) for (const subscriber of event.subscribers) if (subscriber.kind === "macro") await include(subscriber.macroUuid);
   for (const macro of eventCatalog.macros) await include(macro.uuid);
+  for (const binding of Object.values(objectBindings.bindings)) for (const feature of binding.features) {
+    if (feature.kind === "macro") await include(feature.macroUuid);
+    if (feature.kind === "patrol") for (const point of feature.patrol.points) await include(point.macroUuid);
+  }
   const data = portable(scene);
   const objectTags = normalizeObjectTags(data.flags?.[MODULE_ID]?.objectTags);
   if (data.flags) delete data.flags[MODULE_ID];
@@ -57,7 +64,7 @@ export async function exportBundle(scene) {
   }
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,
-    definition, definitions, eventCatalog, actors, macros, journals, exportedAt: new Date().toISOString() };
+    definition, definitions, eventCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
 }
 export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
@@ -92,6 +99,20 @@ export function validateBundle(value) {
     if (!object(token) || !name(token._id) || tokenIds.has(token._id)) throw new Error("Повреждён или повторён ID токена сцены");
     tokenIds.add(token._id);
   }
+  const definitions = (value.definitions ?? [value.definition]).map((entry) => normalizeDefinition(entry));
+  const objectBindings = normalizeObjectBindings(value.objectBindings ?? {});
+  const flags = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, entry])), eventCatalog: value.eventCatalog,
+    ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings };
+  const scene = { id: "import-validation", getFlag: (_scope, key) => flags[key] };
+  for (const key of ["tokens", "tiles", "drawings", "lights", "sounds", "notes", "templates", "walls", "regions"]) {
+    if (value.scene[key] !== undefined && !Array.isArray(value.scene[key])) throw new Error("Объекты сцены должны быть списками.");
+    scene[key] = new Map((value.scene[key] ?? []).map((entry) => [entry._id, entry]));
+  }
+  const events = getEventCatalog(scene).events;
+  for (const dialogue of getInteractionCatalog(scene).dialogues) for (const page of dialogue.pages) for (const response of page.responses) {
+    if (response.eventName && !events.some((event) => event.name === response.eventName)) throw new Error("Диалог ссылается на отсутствующее событие.");
+  }
+  for (const binding of Object.values(objectBindings.bindings)) validateObjectBinding(scene, binding, definitions);
   return value;
 }
 export async function importBundle(value) {
@@ -120,7 +141,9 @@ export async function importBundle(value) {
     data.flags ??= {};
     const objectTags = normalizeObjectTags(data.flags[MODULE_ID]?.objectTags);
     data.flags[MODULE_ID] = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, { ...entry, revision: 1 }])),
-      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)), objectTags };
+      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)), objectTags,
+      ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog, mapping)) } : {}),
+      ...(value.objectBindings ? { objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings, mapping)) } : {}) };
     const Scene = CONFIG.Scene?.documentClass ?? getDocumentClass("Scene");
     const scene = await Scene.create(data, { keepEmbeddedIds: true });
     if (!scene) throw new Error("Не удалось создать сцену");

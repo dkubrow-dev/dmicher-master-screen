@@ -4,6 +4,7 @@ import { normalizeIDEPreferences, clampRatio } from "../dmicher-master-screen/sc
 import { renderSceneTree, renderEventTree, renderParameters, eventSources } from "../dmicher-master-screen/scripts/apps/ide-view.js";
 import { MAIN_MENU, menuRows, menuPath, menuParent, toggleMenuNode } from "../dmicher-master-screen/scripts/apps/navigation-tree.js";
 import { schemeBadges } from "../dmicher-master-screen/scripts/apps/scheme-badges.js";
+import { matchingActorTokens, readAssetForm, renderAssetBindings, renderDialogueGraph } from "../dmicher-master-screen/scripts/apps/asset-forms.js";
 
 test("menu categories aggregate descendants and remain navigation-only across three levels", () => {
   const nodes = [{ id: "root", children: [{ id: "nested", children: [{ id: "a" }, { id: "b" }] }, { id: "c" }] }, { id: "other" }];
@@ -35,6 +36,38 @@ test("source inventory names built-in and configured events without creating def
   assert.equal(sources.find((row) => row.type === "npc").detail, "npc.interacted, guard.asked");
   assert.equal(sources.find((row) => row.type === "patrol").detail, "patrol.arrived, guard.arrived");
   assert.deepEqual(definitions, before);
+});
+
+test("catalog dialogue and object patrol sources link to their owning editor without duplicating IDs", () => {
+  const definitions = [{ schemeId: "s", schemeName: "S", episodes: [{ id: "a", name: "A" }, { id: "b", name: "B" }] }];
+  const assets = { dialogues: [{ id: "talk", name: "Talk", pages: [{ responses: [{ eventName: "bell" }] }] }] };
+  const bindings = [{ type: "Tile", id: "menu", schemeId: "s", dialogue: { dialogueId: "talk", episodeIds: ["a"] } },
+    { type: "Token", id: "guard", schemeId: "s", features: [{ id: "walk", kind: "patrol", episodeIds: [], patrol: { points: [{ eventName: "arrived" }] } }] }];
+  const sources = eventSources(definitions, { tokens: new Map(), tiles: new Map() }, { assets, bindings });
+  assert.equal(sources.filter((row) => row.assetId === "talk").length, 1);
+  assert.equal(sources.find((row) => row.assetId === "talk").detail, "dialogue.finished, bell");
+  assert.equal(sources.filter((row) => row.objectTarget?.id === "guard").length, 2);
+  assert.equal(new Set(sources.map((row) => row.id)).size, sources.length);
+});
+
+test("asset reverse references show only Actor tokens passing allow and deny lists", () => {
+  const scene = { tokens: new Map([...["hero", "enemy", "object"].map((id) => [id, { id, name: id, actor: id === "object" ? null : { id, name: id } }])]) };
+  const bindings = [{ type: "Token", id: "hero", tags: ["hero"] }, { type: "Token", id: "enemy", tags: ["hero", "hostile"] }, { type: "Token", id: "object", tags: ["hero"] }];
+  assert.deepEqual(matchingActorTokens(scene, bindings, { allowTags: ["hero"], denyTags: ["hostile"] }).map((entry) => entry.id), ["hero"]);
+  const refs = [...bindings, { type: "Tile", id: "menu", schemeId: "s", dialogue: { dialogueId: "talk", episodeIds: ["a"], trigger: { allowTags: ["hero"], denyTags: ["hostile"] } } }];
+  const html = renderAssetBindings("dialogue", "talk", refs, [{ type: "Tile", id: "menu", name: "<bad>" }], [{ schemeId: "s", schemeName: "S", episodes: [{ id: "a", name: "A" }] }], scene);
+  assert.ok(html.includes("&lt;bad&gt;")); assert.ok(!html.includes("<bad>"));
+  assert.equal((html.match(/data-screen-action="objectInfo"/g) ?? []).length, 1);
+});
+
+test("editing shop stock preserves opaque Item data and rejects incomplete or fractional quantities", () => {
+  const draft = { id: "shop", name: "Shop", description: { ru: "", en: "" }, display: "tiles", items: [{ id: "item", stock: 2, data: { name: "A", system: { quantity: 9, custom: [1, 2] } } }] };
+  const fields = { assetName: { value: "Shop" }, assetDescription: { value: "" }, shopImg: { value: "" }, shopDisplay: { value: "tiles" }, shopApproval: { checked: true } };
+  const stock = { value: "3", dataset: { entryId: "item" }, checkValidity() { return Number.isInteger(Number(this.value)); } };
+  const root = { querySelector: (selector) => fields[/name="([^"]+)"/.exec(selector)?.[1]], querySelectorAll: () => [stock] };
+  const next = readAssetForm(root, draft, "shop"); assert.equal(next.items[0].stock, 3); assert.deepEqual(next.items[0].data, draft.items[0].data); assert.deepEqual(next.description, draft.description); assert.equal(draft.items[0].stock, 2);
+  stock.value = "1.5"; assert.throws(() => readAssetForm(root, draft, "shop")); stock.value = ""; assert.throws(() => readAssetForm(root, draft, "shop"));
+  assert.ok(!renderDialogueGraph([{ id: "p", name: "<page>", responses: [{ label: "<reply>", eventName: "<event>" }] }], "p").includes("<event>"));
 });
 
 test("IDE preferences retain usable areas and at least one recoverable tab per zone", () => {

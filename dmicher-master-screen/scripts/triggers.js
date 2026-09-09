@@ -44,7 +44,7 @@ export function resetEpisodeTriggerCounts(state, episode = state.episode) {
     if (policy?.resetOnEntry !== false) delete state.triggerCounts[getTriggerKey(state, type, id)];
   };
   for (const zone of episode?.zones ?? []) reset("zone", zone.id, zone.trigger);
-  for (const dialogue of episode?.dialogues ?? []) reset("dialogue", dialogue.id, dialogue.trigger);
+  for (const dialogue of episode?.dialogues ?? []) reset("dialogue", dialogue.triggerId ?? (dialogue.dialogueId ? `${dialogue.target.type}:${dialogue.target.id}` : dialogue.id), dialogue.trigger);
   for (const interaction of episode?.interactions ?? []) reset("interaction", interaction.id, interaction.trigger);
   for (const [id, behavior] of Object.entries(episode?.tokens ?? {})) {
     reset("shop", id, behavior.shop?.trigger);

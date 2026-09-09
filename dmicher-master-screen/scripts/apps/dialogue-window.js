@@ -11,10 +11,10 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     actions: { answer: DialogueApplication.answer, leave: DialogueApplication.leave }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/dialogue.hbs` } };
-  constructor(service, { sceneId, dialogueId, actorTokenId, schemeId = "main" }, options = {}) {
-    const runId = service.getContext(sceneId, dialogueId, schemeId).runtime?.runId ?? "inactive";
-    super({ ...options, id: `dmicher-master-screen-dialogue-${sceneId}-${schemeId}-${runId}-${dialogueId}-${actorTokenId}` });
-    Object.assign(this, { service, sceneId, dialogueId, actorTokenId, schemeId });
+  constructor(service, { sceneId, dialogueId, target, actorTokenId, schemeId = "main" }, options = {}) {
+    const runId = service.getContext(sceneId, dialogueId, schemeId, target).runtime?.runId ?? "inactive";
+    super({ ...options, id: `dmicher-master-screen-dialogue-${sceneId}-${schemeId}-${runId}-${dialogueId}-${target?.type ?? ""}-${target?.id ?? ""}-${actorTokenId}` });
+    Object.assign(this, { service, sceneId, dialogueId, target, actorTokenId, schemeId });
     this.runId = runId;
     this.busy = false; this.error = ""; this.closing = false;
   }
@@ -22,12 +22,12 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     const base = await super._prepareContext(options);
     if (!this.view && !this.error && !this.closing) {
       try {
-        this.startPromise ??= this.service.requestStart({ sceneId: this.sceneId, dialogueId: this.dialogueId, actorTokenId: this.actorTokenId, schemeId: this.schemeId });
+        this.startPromise ??= this.service.requestStart({ sceneId: this.sceneId, dialogueId: this.dialogueId, target: this.target, actorTokenId: this.actorTokenId, schemeId: this.schemeId, runId: this.runId });
         this.view = await this.startPromise;
         this.error = this.view.error ?? "";
       } catch (error) { this.error = error.message; }
     }
-    const current = this.service.getContext(this.sceneId, this.dialogueId, this.schemeId);
+    const current = this.service.getContext(this.sceneId, this.dialogueId, this.schemeId, this.target);
     let unavailable = "";
     try {
       validateDialogueAccess({ ...current, descriptor: current.dialogue }, this.actorTokenId, game.user, this.runId);
@@ -39,7 +39,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   static async answer(_event, button) {
     if (this.busy || this.closing || this.view?.status !== "active") return;
     this.busy = true;
-    const request = { sceneId: this.sceneId, schemeId: this.schemeId, sessionId: this.view.sessionId, responseId: button.dataset.responseId,
+    const request = { sceneId: this.sceneId, schemeId: this.schemeId, target: this.target, sessionId: this.view.sessionId, responseId: button.dataset.responseId,
       nodeId: this.view.nodeId, step: this.view.step };
     this.render({ force: true });
     try { this.view = await this.service.requestAnswer(request); this.error = this.view.error ?? ""; }

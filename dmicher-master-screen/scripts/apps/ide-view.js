@@ -8,6 +8,7 @@ export const OTHER_BLOCKS = Object.freeze([
   { id: "tokens", name: "НИП и поведение", mode: "constructor" },
   { id: "tags", name: "Теги объектов", mode: "constructor" },
   { id: "subscriptions", name: "Прежние реакции эпизода", mode: "constructor" },
+  { id: "dialogues", name: "Прежние прямые взаимодействия", mode: "constructor" },
   { id: "entry", name: "Пауза, звук и подкрепление", mode: "constructor" },
   { id: "zones", name: "Зоны перехода", mode: "constructor" },
   { id: "workspaceGM", name: "Рабочий стол мастера", mode: "constructor" },
@@ -70,7 +71,7 @@ function colorFields(entry) {
   return `<div class="ms-ide-colors">${generics.components.renderColorField({ name: "background", value: displayColor(entry.background, "#26303C"), label: "Цвет фона" })}${generics.components.renderColorField({ name: "textColor", value: displayColor(entry.textColor, "#FFFFFF"), label: "Цвет текста" })}</div>`;
 }
 
-export function renderParameters({ selection, draft, catalog, definitions, mode }) {
+export function renderParameters({ selection, draft, catalog, definitions, runtimes = [], mode }) {
   if (!draft) return '<p class="ms-note">Выберите элемент в основной зоне.</p>';
   const readOnly = draft.builtin || (mode === "director" && !["scheme", "episode", "trigger"].includes(selection.kind));
   const kind = selection.kind;
@@ -80,12 +81,15 @@ export function renderParameters({ selection, draft, catalog, definitions, mode 
     if (mode === "director") {
       const definition = definitions.find((entry) => entry.schemeId === selection.schemeId);
       html = `<h3 style="${colorStyle(draft)}" class="ms-node-heading">${esc(isScheme ? draft.schemeName : draft.name)}</h3><p class="ms-note">Мастер может выбрать любой эпизод. Автоматические переходы используют список событий.</p>`;
-      if (isScheme) html += select("resumeEpisode", "Возобновить с эпизода", definition?.episodes ?? [], "", "Выберите эпизод") + button("resumeSelectedScheme", "Возобновить") + button("haltSelectedScheme", "Остановить схему");
+      if (isScheme) {
+        const runtime = runtimes.find((entry) => entry.schemeId === selection.schemeId), started = Boolean(runtime?.episodeId);
+        html += select("resumeEpisode", started ? "Возобновить с эпизода" : "Эпизод запуска", definition?.episodes ?? [], definition?.entryEpisodeId, "Выберите эпизод") + button("resumeSelectedScheme", started ? "Возобновить" : "Запустить") + button("haltSelectedScheme", "Остановить схему");
+      }
       else html += button("enterSelectedEpisode", "Перейти в этот эпизод") + button("haltSelectedScheme", "Остановить схему");
       return html + `<p class="ms-note">${esc(localizedDescription(draft.description))}</p>`;
     }
     html += input(isScheme ? "schemeName" : "name", "Название", isScheme ? draft.schemeName : draft.name, 'required maxlength="120"');
-    if (isScheme) html += input("schemeSymbol", "Символ схемы", draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"') + '<p id="ms-symbol-hint" class="ms-note">Один символ, в том числе составной эмоджи.</p>';
+    if (isScheme) html += `<div class="ms-scheme-symbol">${input("schemeSymbol", "Символ схемы", draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"')}<span id="ms-symbol-hint" class="ms-note">Одна видимая графема, включая составной эмоджи.</span></div>${select("entryEpisodeId", "Эпизод входа", draft.episodes ?? [], draft.entryEpisodeId)}`;
     html += descriptionField(draft.description);
     html += colorFields(draft);
     if (!isScheme) {
@@ -159,7 +163,7 @@ export function renderMenuSettings(zone, hidden) {
 }
 
 /** Existing sources are described, never synthesized or enabled by opening this list. */
-export function eventSources(definitions, scene) {
+export function eventSources(definitions, scene, { assets = { dialogues: [] }, bindings = [] } = {}) {
   const rows = [];
   const names = (...values) => [...new Set(values.flat().filter(Boolean))].join(", ");
   const add = (definition, episode, type, id, name, detail, tokenId) => rows.push({ id: `${definition.schemeId}:${episode.id}:${type}:${id}`, name, type, detail, tokenId, schemeId: definition.schemeId, episodeId: episode.id, schemeName: definition.schemeName, episodeName: episode.name });
@@ -173,6 +177,19 @@ export function eventSources(definitions, scene) {
     }
     for (const dialogue of episode.dialogues ?? []) add(definition, episode, "dialogue", dialogue.id, dialogue.name, [...new Set(["dialogue.finished", ...dialogue.nodes.flatMap((node) => node.responses.map((response) => response.eventName).filter(Boolean))])].join(", "));
     for (const action of episode.interactions ?? []) add(definition, episode, "interaction", action.id, action.name, action.eventName || "Событие не выбрано");
+  }
+  for (const binding of bindings) {
+    const definition = definitions.find((entry) => entry.schemeId === binding.schemeId); if (!definition) continue;
+    const objectName = (binding.type === "Token" ? scene.tokens : scene.tiles)?.get(binding.id)?.name ?? binding.id;
+    const dialogue = assets.dialogues.find((entry) => entry.id === binding.dialogue?.dialogueId);
+    if (dialogue) for (const episode of definition.episodes.filter((entry) => !binding.dialogue.episodeIds.length || binding.dialogue.episodeIds.includes(entry.id))) {
+      add(definition, episode, "dialogue", `${binding.type}:${binding.id}:${dialogue.id}`, `${objectName} · ${dialogue.name}`, names("dialogue.finished", dialogue.pages.flatMap((page) => page.responses.map((response) => response.eventName))));
+      rows.at(-1).assetId = dialogue.id;
+    }
+    for (const feature of binding.features ?? []) if (feature.kind === "patrol") for (const episode of definition.episodes.filter((entry) => !feature.episodeIds.length || feature.episodeIds.includes(entry.id))) {
+      add(definition, episode, "patrol", `${binding.id}:${feature.id}`, `${objectName} · патруль`, names("patrol.arrived", feature.patrol?.points?.map((point) => point.eventName)));
+      rows.at(-1).objectTarget = { type: binding.type, id: binding.id };
+    }
   }
   return rows;
 }

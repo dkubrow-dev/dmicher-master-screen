@@ -112,15 +112,16 @@ test("new episode name input is not mistaken for unsaved episode configuration",
   assert.equal(app.episodeDirty, false);
 });
 
-test("token form serializes independent shop choices and preserves dropped Item data", async () => {
+test("legacy token form preserves the complete shop while editing unrelated behavior", async () => {
   const f = fixture();
   const app = new TokenEditorApplication(f.controller, "guard", { episodeId: "calm" });
   await app._prepareContext({});
   app.draft.shop.items.push({ id: "stock", data: { name: "Rope", system: { quantity: 3 } }, stock: 2 });
+  Object.assign(app.draft.shop, { range: 7, requireGMApproval: true, display: "tiles" });
+  const originalShop = structuredClone(app.draft.shop);
   const values = {
     enabled: true, emoji: "!", positionEnabled: false, hidden: "keep", speechInterval: "40", phrases: "First\nSecond",
     speechRange: "25", visibleOnly: true, entrySpeech: "Welcome", patrolEnabled: true, patrolSpeed: "4", points: "10, 20",
-    shopEnabled: true, shopRange: "7", shopApproval: true, shopDisplay: "tiles", "stock-0": "2",
     interactionLabel: "Ask", interactionTarget: "tension"
   };
   app.element = { querySelector(selector) {
@@ -128,6 +129,7 @@ test("token form serializes independent shop choices and preserves dropped Item 
     return key in values ? { value: String(values[key]), checked: values[key] === true } : null;
   } };
   const data = app.readBehavior();
+  assert.deepEqual(data.shop, originalShop);
   assert.equal(data.shop.range, 7);
   assert.equal(data.shop.requireGMApproval, true);
   assert.equal(data.shop.display, "tiles");
@@ -307,12 +309,12 @@ test("manual dialogue catalog reads preparation while halted and calls only manu
   f.controller.dialogues = { invitePlayers: async (args) => calls.push(args) };
   const app = new DialogueCatalogApplication(f.controller);
   const view = await app._prepareContext({});
-  assert.equal(view.dialogue.id, "talk");
+  assert.match(view.dialogue.id, /^legacy-dialogue-/);
   assert.equal(view.node.text, "Hello");
   globalThis.ui = { notifications: { info() {} } };
   app.recipients.add("player");
   await app.handleAction("players");
-  assert.deepEqual(calls, [{ sceneId: "scene", schemeId: "main", episodeId: "calm", dialogueId: "talk", userIds: ["player"] }]);
+  assert.deepEqual(calls, [{ sceneId: "scene", dialogueId: view.dialogue.id, pageId: "start", userIds: ["player"] }]);
   assert.equal(f.context.runtime.halted, true);
 });
 
@@ -337,7 +339,7 @@ for (const version of ["13.351", "14.366"]) {
     const view = await token._prepareContext({});
     const tokenTemplate = hbs.compile(readFileSync(new URL("../dmicher-master-screen/templates/token-editor.hbs", import.meta.url), "utf8"));
     assert.ok(tokenTemplate(view).includes("speechInterval"));
-    assert.ok(tokenTemplate(view).includes("shopApproval"));
+    assert.ok(!tokenTemplate(view).includes("shopApproval"));
     const shops = shopsFixture();
     shops.shops[0].npcName = "<script>bad</script>";
     const manager = new ShopsManagerApplication(shops.controller);

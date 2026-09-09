@@ -6,6 +6,7 @@ import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
 import { installScreenSettingHelp } from "./setting-help.js";
 import { updateSceneNavigationBadges } from "./apps/scheme-badges.js";
+import { findCanvasObject, canvasPointerPosition } from "./apps/canvas-object.js";
 
 let controller, removeControls, unregister, removeSettingHelp;
 const hooks = [];
@@ -19,20 +20,11 @@ function attachCanvas() {
   if (!stage) return;
   tap = (event) => {
     if (controller.cancelPick || event.button > 0 || event.shiftKey || event.ctrlKey || event.altKey) return;
-    const point = event.getLocalPosition(stage);
-    const token = [...(canvas.tokens?.placeables ?? [])].reverse().find((entry) => entry.isVisible !== false
-      && point.x >= entry.x && point.y >= entry.y && point.x <= entry.x + entry.w && point.y <= entry.y + entry.h);
-    if (controller.mode === "constructor" && game.user.isGM) { if (token) controller.openToken(token.id); return; }
-    if (game.user.isGM && !["director", "actor"].includes(controller.mode)) return;
-    const hasInteraction = (type, id) => {
-      const options = controller.getInteractions(type, id);
-      return options.behavior?.shop.enabled || options.behavior?.interaction.targetEpisodeId || options.dialogues.length || options.actions.length;
-    };
-    if (token && hasInteraction("Token", token.id)) { void controller.interact(token.id).catch(notifyError); return; }
-    const tile = [...(canvas.tiles?.placeables ?? [])].reverse().find((entry) => entry.visible !== false && entry.document?.hidden !== true
-      && hasInteraction("Tile", entry.id) && (entry.bounds?.contains?.(point.x, point.y)
-        ?? (point.x >= entry.x && point.y >= entry.y && point.x <= entry.x + entry.document.width && point.y <= entry.y + entry.document.height)));
-    if (tile) void controller.interact(tile.id, undefined, { targetType: "Tile" }).catch(notifyError);
+    const constructorMode = controller.mode === "constructor" && game.user.isGM;
+    if (game.user.isGM && !constructorMode && !["director", "actor"].includes(controller.mode)) return;
+    const target = findCanvasObject(canvas, event, { constructorMode });
+    if (target) { try { controller.openObjectMenu(target, canvasPointerPosition(canvas, event)); } catch (error) { notifyError(error); } }
+    else controller.objectMenu.close();
   };
   stage.on("pointertap", tap);
   controller.changed(canvas.scene);
@@ -73,7 +65,7 @@ Hooks.once("ready", () => {
   on("canvasReady", attachCanvas);
   on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
   on("updateScene", () => updateSceneNavigationBadges(controller));
-  on("canvasTearDown", () => { controller.cancelPick?.(); if (stage && tap) stage.off("pointertap", tap); });
+  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); if (stage && tap) stage.off("pointertap", tap); });
   on("createChatMessage", (message, _options, userId) => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
@@ -90,6 +82,7 @@ Hooks.once("ready", () => {
 
 globalThis.addEventListener?.("pagehide", () => {
   controller?.editor?.layout?.dispose();
+  controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
   controller?.runtime.dispose(); controller?.events.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   if (stage && tap) stage.off("pointertap", tap);
   for (const [name, id] of hooks) Hooks.off(name, id);

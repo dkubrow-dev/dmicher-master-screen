@@ -3,6 +3,8 @@ import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRu
 import { createFoundryEffects, tokenCenter, sceneDistance, crossesRectangle, setTokenEmoji, clearTokenEmojis } from "./effects.js";
 import { getTriggerKey, getTriggerGate, consumeTrigger, resetEpisodeTriggerCounts } from "./triggers.js";
 import { executionGeneration, requestHalt, finishHalt, isExecutionHalted, notifyExecutionChange } from "./execution.js";
+import { materializeEpisode, getSceneObject, getObjectBindings } from "./scene-objects.js";
+import { objectKey, interactionTriggerId, validateObjectAccess } from "./interaction-access.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -89,7 +91,7 @@ export class EpisodeRuntime {
   }
 
   isTokenEnabled(state, id) {
-    return !state.halted && !state.episode?.stop && state.episode?.tokens?.[id]?.enabled !== false && !state.disabledTokens.includes(id);
+    return Boolean(state?.episode?.tokens?.[id]) && !state.halted && !state.episode.stop && state.episode.tokens[id].enabled !== false && !state.disabledTokens.includes(id);
   }
 
   async refresh(scene) {
@@ -120,8 +122,10 @@ export class EpisodeRuntime {
       if (expectedRunId && previous.runId !== expectedRunId) return null;
       if (previous.episodeId === episodeId && !force) return previous;
       const definition = getDefinition(scene, { schemeId });
-      const episode = getEpisode(definition, episodeId);
-      if (!episode) throw new Error("Эпизод не найден.");
+      episodeId ??= definition.entryEpisodeId ?? definition.episodes[0]?.id;
+      const prepared = getEpisode(definition, episodeId);
+      if (!prepared) throw new Error("Эпизод не найден.");
+      const episode = materializeEpisode(scene, definition, prepared);
       if (expectedRunId && (!eventName || !episode.events.includes(eventName))) throw new Error("Автоматический переход не разрешён таблицей событий эпизода.");
       const managed = new Set(Object.entries(episode.tokens).filter(([id, config]) => config.enabled !== false && !previous.disabledTokens.includes(id) && !episode.stop).map(([id]) => id));
       const conflict = getRuntimes(scene).find((entry) => entry.schemeId !== schemeId && !isExecutionHalted(scene, entry) && !entry.episode?.stop
@@ -130,7 +134,9 @@ export class EpisodeRuntime {
       const state = {
         ...emptyRuntime(), schemeId: definition.schemeId, episodeId, runId: randomId(), enteredAt: this.now(),
         definitionRevision: definition.revision, disabledTokens: [...previous.disabledTokens], episode: clone(episode),
-        shops: clone(previous.shops), tradeRequests: clone(previous.tradeRequests ?? {}), shopSessions: {},
+        shops: clone(previous.shops), tradeRequests: clone(previous.tradeRequests ?? {}),
+        shopSessions: Object.fromEntries(Object.entries(previous.shopSessions ?? {}).filter(([, session]) => session.status === "pending")),
+        objectEntries: clone(previous.objectEntries ?? {}),
         eventLog: clone(previous.eventLog ?? []), eventClaims: clone(previous.eventClaims ?? {}),
         dialogueSessions: {}, dialogueCommands: clone(previous.dialogueCommands ?? {}), triggerCounts: clone(previous.triggerCounts ?? {}),
         triggerEnabledOverrides: clone(previous.triggerEnabledOverrides ?? {})
@@ -139,9 +145,16 @@ export class EpisodeRuntime {
       for (const [id, config] of Object.entries(episode.tokens)) {
         state.speech[id] = { nextAt: this.now() + Number(config.speech?.interval ?? 30) * 1000, sequence: 0 };
         state.patrol[id] = { index: 0 };
-        const sharedInventory = scene.getFlag(MODULE_ID, "shopInventories")?.[id]
-          ?? getRuntimes(scene).filter((entry) => entry.shops?.[id]).sort((a, b) => b.enteredAt - a.enteredAt)[0]?.shops[id];
-        state.shops[id] = sharedInventory ? clone(sharedInventory) : state.shops[id] ?? { items: clone(config.shop?.items ?? []) };
+        if (!config.shop?.shopId) state.shops[id] ??= { items: clone(config.shop?.items ?? []) };
+      }
+      for (const config of episode.shops ?? []) {
+        const shopId = config.shopId;
+        const sharedInventory = (config.legacyInventoryKey ? scene.getFlag(MODULE_ID, "shopInventories")?.[config.legacyInventoryKey] : undefined)
+          ?? scene.getFlag(MODULE_ID, "shopInventories")?.[shopId]
+          ?? getRuntimes(scene).filter((entry) => entry.shops?.[shopId] || config.legacyInventoryKey && entry.shops?.[config.legacyInventoryKey])
+            .sort((a, b) => b.enteredAt - a.enteredAt).map((entry) => entry.shops[shopId] ?? entry.shops[config.legacyInventoryKey])[0];
+        state.shops[shopId] = sharedInventory ? clone(sharedInventory) : state.shops[shopId] ?? { items: clone(config.items ?? []) };
+        if (config.trigger?.resetOnEntry !== false) delete state.triggerCounts[getTriggerKey(state, "shop", interactionTriggerId(config))];
       }
       // Persist the new generation before touching the world. Reconnect only resumes this snapshot.
       await saveRuntime(scene, state);
@@ -152,6 +165,21 @@ export class EpisodeRuntime {
       await this.refresh(scene);
       await this.once(scene, state.runId, "workspace", () => this.onWorkspace(scene, clone(episode.workspace), { runId: state.runId, schemeId }));
       if (!episode.stop) {
+        for (const config of episode.objects ?? []) {
+          const key = objectKey(config.target), target = getSceneObject(scene, config.target);
+          if (!target || (config.target.type === "Token" && state.disabledTokens.includes(config.target.id))) continue;
+          // Entry preparation is claimed in persistent state before any document change.
+          // A reconnect and later explicit episode transitions never repeat this first placement.
+          if (!state.objectEntries[key]) {
+            state.objectEntries[key] = true;
+            const current = getRuntimeForRun(scene, state.runId);
+            if (!current || !this.owns(scene, state.runId)) break;
+            current.objectEntries = clone(state.objectEntries);
+            await saveRuntime(scene, current);
+            await this.once(scene, state.runId, `object-entry:${key}`, () => this.applyObjectState(target, config.entry));
+          }
+          await this.once(scene, state.runId, `object-transition:${key}`, () => this.applyObjectState(target, config.transition));
+        }
         for (const [id, config] of Object.entries(episode.tokens)) {
           if (!this.currentToken(scene, state.runId, id)) continue;
           const token = scene.tokens.get(id);
@@ -195,9 +223,19 @@ export class EpisodeRuntime {
 
   haltAll(scene) { return this.halt(scene, { schemeId: "main", all: true }); }
 
+  applyObjectState(target, placement) {
+    if (!placement) return;
+    const changes = {};
+    if (placement.position) Object.assign(changes, { x: placement.position.x, y: placement.position.y });
+    if (typeof placement.hidden === "boolean") changes.hidden = placement.hidden;
+    if (Object.keys(changes).length) return target.update(changes, { animate: false });
+  }
+
   currentToken(scene, runId, tokenId) {
     if (!this.owns(scene, runId)) return false;
-    return Boolean(scene.tokens.get(tokenId)) && this.isTokenEnabled(getRuntimeForRun(scene, runId), tokenId);
+    const state = getRuntimeForRun(scene, runId), binding = getObjectBindings(scene).bindings[`Token:${tokenId}`];
+    if (binding && (binding.schemeId !== state.schemeId || binding.conflictingSchemeIds?.length)) return false;
+    return Boolean(scene.tokens.get(tokenId)) && this.isTokenEnabled(state, tokenId);
   }
 
   async once(scene, runId, key, operation) {
@@ -447,6 +485,9 @@ export class EpisodeRuntime {
       const state = getRuntime(scene, { schemeId }), npc = scene.tokens.get(tokenId), config = state.episode?.tokens?.[tokenId];
       if (!currentUser || !npc || !config || !this.currentToken(scene, state.runId, tokenId)) throw new Error("Взаимодействие сейчас недоступно.");
       const source = scene.tokens.get(sourceTokenId);
+      if (source || !currentUser.isGM) validateObjectAccess({ scene, runtime: state,
+        descriptor: { ...config.interaction, enabled: config.enabled !== false, id: tokenId, target: { type: "Token", id: tokenId }, range: Number(scene.grid?.distance || 1) * 2 },
+        target: npc, triggerType: "npc-interaction" }, sourceTokenId, currentUser, state.runId);
       if (!currentUser.isGM) {
         if (npc.hidden || !source?.actor?.testUserPermission?.(currentUser, "OWNER")) throw new Error("Нет права взаимодействовать этим персонажем.");
         if (sceneDistance(scene, tokenCenter(source, scene), tokenCenter(npc, scene)) > Number(scene.grid?.distance || 1) * 2) throw new Error("Для взаимодействия подойдите к НИП на две клетки.");

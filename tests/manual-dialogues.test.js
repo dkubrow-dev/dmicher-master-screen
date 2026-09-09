@@ -15,7 +15,7 @@ function fixture() {
     ] };
   const definition = { episodes: [{ id: "stopped", dialogues: [dialogue] }] };
   const runtime = { halted: true, runId: "", triggerCounts: { "main:stopped:dialogue:talk": 50 }, dialogueSessions: {} };
-  const scene = { id: "scene", tokens: new Map([["npc", { id: "npc", name: "Merchant", hidden: true, texture: { src: "npc.webp" } }]]), tiles: new Map() };
+  const scene = { id: "scene", getFlag: () => undefined, tokens: new Map([["npc", { id: "npc", name: "Merchant", hidden: true, texture: { src: "npc.webp" } }]]), tiles: new Map() };
   const sent = [], opened = [];
   globalThis.game = { user: gm, users: new Map([[gm.id, gm], [player.id, player], [other.id, other]]), scenes: new Map([[scene.id, scene]]) };
   globalThis.foundry ??= {}; foundry.utils = { ...(foundry.utils ?? {}), randomID: () => `id-${++serial}` };

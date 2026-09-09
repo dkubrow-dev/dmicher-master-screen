@@ -243,7 +243,7 @@ test("an empty scene stays empty through constructor, director and tool windows"
     assert.equal(controller.openToken("guard"), undefined);
     await controller.setMode("director");
     await controller.openDialogues().render();
-    assert.equal(controller.dialogueCatalog.context.missing, true);
+    assert.deepEqual(controller.dialogueCatalog.context.dialogues, [], "the independent catalog can open before any scheme exists");
     assert.deepEqual(f.scene.flags, {});
     canvas.scene = f.other; await controller.editor.refresh();
     assert.equal(controller.getContext().definition.episodes.length, 4);
@@ -275,4 +275,39 @@ test("controller wires a validated Tile interaction through the event bus to an 
     assert.ok(controller.getContext().runtime.eventLog.some((entry) => entry.name === "lever.used"));
     assert.deepEqual(f.errors, []);
   } finally { controller?.events.dispose(); controller?.runtime.dispose(); await f.dispose(); }
+});
+
+test("constructor context menu opens only the chosen object action and writes no scene data", async () => {
+  const f = fixture(14);
+  try {
+    const controller = new ScreenController(); controller.mode = "constructor";
+    const opened = []; let entries;
+    controller.objectMenu.open = (items) => { entries = items; };
+    controller.openObjectInfo = (target) => opened.push(["info", target]);
+    controller.openObjectBehavior = (target) => opened.push(["behavior", target]);
+    controller.openToken = (id) => opened.push(["legacy", id]);
+    assert.equal(controller.openObjectMenu({ type: "Token", id: "guard" }), true);
+    assert.equal(entries.length, 3); assert.equal(opened.length, 0);
+    await entries[1].action(); assert.deepEqual(opened, [["behavior", { type: "Token", id: "guard" }]]);
+    assert.deepEqual(f.scene.updates, []);
+    f.scene.tiles = new Map([["console", { id: "console" }]]);
+    controller.openObjectMenu({ type: "Tile", id: "console" }); assert.equal(entries.length, 2);
+  } finally { await f.dispose(); }
+});
+
+test("entry episode is selected without executing and an ambiguous player selection stays unresolved", async () => {
+  const f = fixture(14);
+  try {
+    f.scene.flags[MODULE_ID].definition.entryEpisodeId = "alarm";
+    const controller = new ScreenController();
+    assert.equal(controller.getContext().selectedEpisodeId, "alarm");
+    assert.deepEqual(f.scene.updates, []);
+    const pc = (id) => ({ id, actor: { testUserPermission: () => true }, hidden: false });
+    f.scene.tokens.set("pc1", pc("pc1")); f.scene.tokens.set("pc2", pc("pc2"));
+    game.user = game.users.get("player");
+    assert.equal(controller.getActingTokenId(undefined, "guard"), undefined);
+    canvas.tokens.controlled = [{ document: f.scene.tokens.get("pc2") }];
+    assert.equal(controller.getActingTokenId(undefined, "guard"), "pc2");
+    assert.equal(controller.getActingTokenId("guard"), undefined);
+  } finally { await f.dispose(); }
 });

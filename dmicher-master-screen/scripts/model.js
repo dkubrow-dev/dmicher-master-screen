@@ -128,7 +128,7 @@ export function defaultDefinition() {
     defaultEpisode("Тревога", "alarm"), { ...defaultEpisode("Остановка", "stop"), stop: true }];
   for (const episode of episodes) episode.description = clone(DEFAULT_DESCRIPTIONS[episode.id]);
   return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: "Основная схема", symbol: DEFAULT_SCHEME_SYMBOL,
-    description: clone(DEFAULT_DESCRIPTIONS.scheme), background: "#36404A", textColor: "#FFFFFF", order: 0, revision: 0, episodes };
+    description: clone(DEFAULT_DESCRIPTIONS.scheme), background: "#36404A", textColor: "#FFFFFF", order: 0, revision: 0, entryEpisodeId: episodes[0].id, episodes };
 }
 
 export function normalizeTokenBehavior(value = {}) {
@@ -226,7 +226,10 @@ export function normalizeDefinition(value, { allowEmptyLegacy = false } = {}) {
       ...Object.values(episode.tokens).flatMap((token) => [token.interaction.targetEpisodeId, ...token.patrol.points.map((point) => point.onTrue)])];
     if (references.some((id) => id && !ids.has(id))) throw new Error("Переход ссылается на отсутствующий эпизод");
   }
-  return { schemaVersion: 1, schemeId: value.schemeId || DEFAULT_SCHEME_ID, schemeName: text(value.schemeName, 100).trim() || "Основная схема",
+  // Entry selects the default of an explicit GM start. It never activates a scene.
+  const entryEpisodeId = !value.episodes.length || value.entryEpisodeId === undefined ? episodes[0].id : value.entryEpisodeId;
+  if (typeof entryEpisodeId !== "string" || !ids.has(entryEpisodeId)) throw new Error("Эпизод входа должен существовать в этой схеме.");
+  return { schemaVersion: 1, entryEpisodeId, schemeId: value.schemeId || DEFAULT_SCHEME_ID, schemeName: text(value.schemeName, 100).trim() || "Основная схема",
     symbol: normalizeSchemeSymbol(value.symbol), description: normalizeDescription(value.description === undefined ? DEFAULT_DESCRIPTIONS.scheme : value.description),
     background: normalizeColor(value.background), textColor: normalizeColor(value.textColor, "#FFFFFF"), order: number(value.order, 0, 0, 10000),
     revision: Math.floor(number(value.revision, 0, 0, Number.MAX_SAFE_INTEGER)), episodes };
