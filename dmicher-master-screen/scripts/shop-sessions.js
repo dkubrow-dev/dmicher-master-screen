@@ -1,22 +1,24 @@
 import { MODULE_ID } from "./model.js";
-import { asArray, getRuntimes } from "./store.js";
+import { getRuntimes } from "./store.js";
 import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
 import { objectKey, interactionTriggerId } from "./interaction-access.js";
 import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
+import { requestGMReply } from "./gm-request.js";
 
 const clone = (value) => structuredClone(value);
 const leaseMs = 120_000;
 const fail = (message) => { throw new Error(message); };
 export const sessionIsLive = (session, now = Date.now()) => Boolean(session && (session.status === "pending" || session.expiresAt > now));
-const keyOf = (current) => current.shopId ?? current.behavior?.shop?.shopId ?? current.token?.id;
+export const shopKey = (current) => current.shopId;
+const keyOf = shopKey;
 
 export function requireShopSession(current, intent, user) {
   const session = current.runtime.shopSessions?.[keyOf(current)];
   if (!sessionIsLive(session) || session.sessionId !== intent.sessionId || session.userId !== user?.id
     || session.actorTokenId !== intent.actorTokenId || session.runId !== intent.runId
-    || (session.actorId && session.actorId !== current.scene.tokens?.get(session.actorTokenId)?.actor?.id)
-    || (session.target && objectKey(session.target) !== objectKey(intent.target ?? intent.tokenId))
-    || (session.shopId && session.shopId !== keyOf(current))
+    || session.actorId !== current.scene.tokens?.get(session.actorTokenId)?.actor?.id
+    || objectKey(session.target) !== objectKey(intent.target ?? intent.tokenId)
+    || session.shopId !== keyOf(current)
     || session.schemeId !== intent.schemeId || session.runId !== current.runtime.runId) fail("Сессия магазина завершилась или принадлежит другому участнику.");
   return session;
 }
@@ -28,7 +30,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail("Неизвестная команда магазина.");
     const initial = context(command.sceneId, command.target ?? command.tokenId, command.schemeId ?? "main");
     if (!initial.scene) fail("Сцена магазина не найдена.");
-    const target = initial.target ?? { type: "Token", id: command.tokenId };
+    const target = initial.target;
     const releasePause = command.kind === "open" ? beginInteractionPause(initial.scene, target) : () => {};
     return lock(initial.scene, async () => {
       if (!authority()) fail("Исполняющий мастер изменился.");
@@ -42,13 +44,10 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       if (command.kind === "open") {
         const actor = validate(current, command, user);
         const allStates = current.scene.getFlag ? getRuntimes(current.scene) : [];
-        const legacyKey = current.behavior.shop.legacyInventoryKey;
-        if (legacyKey && allStates.some((state) => Object.entries(state.shopSessions ?? {}).some(([key, session]) => key !== shopId
-          && sessionIsLive(session) && (key === legacyKey || objectKey(session.target) === `Token:${legacyKey}`)))) fail("Предыдущая сессия этого магазина ещё не завершена мастером.");
         if (allStates.some((state) => state.schemeId !== runtime.schemeId && sessionIsLive(state.shopSessions?.[shopId]))) fail("Этот магазин уже обслуживается в другой схеме. Завершите ту сессию.");
         if (allStates.some((state) => Object.values(state.tradeRequests ?? {}).some((receipt) => ["processing", "uncertain"].includes(receipt.status) && receipt.intent?.shopId === shopId))) fail("Обмен этого магазина требует сверки мастером. Новый обмен пока недоступен.");
         if (sessionIsLive(existing) && (existing.userId !== user.id || existing.actorTokenId !== command.actorTokenId
-          || (existing.actorId && existing.actorId !== actor.id) || (existing.target && objectKey(existing.target) !== objectKey(command.target ?? command.tokenId)))) fail("Этот магазин уже занят другим участником или взаимодействием через другой объект.");
+          || existing.actorId !== actor.id || existing.shopId !== shopId || objectKey(existing.target) !== objectKey(command.target ?? command.tokenId))) fail("Этот магазин уже занят другим участником или взаимодействием через другой объект.");
         if (existing?.status === "pending" && existing.runId !== runtime.runId) fail("Предыдущее предложение магазина ещё не завершено мастером.");
         const reusing = sessionIsLive(existing) && existing.runId === runtime.runId;
         const triggerKey = getTriggerKey(runtime, "shop", interactionTriggerId({ ...current.behavior.shop, id: current.token.id }));
@@ -57,8 +56,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         if (!gate.allowed) fail(gate.reason);
         session = reusing ? existing : {
           sessionId: foundry.utils.randomID(), userId: user.id, actorTokenId: command.actorTokenId,
-          target: clone(target),
-          ...(current.shopId ? { shopId, actorId: actor.id, target: clone(current.target) } : {}),
+          shopId, actorId: actor.id, target: clone(current.target),
           runId: runtime.runId, schemeId: runtime.schemeId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
         };
         if (!reusing) consumeTrigger(runtime, triggerKey, policy);
@@ -66,7 +64,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;
         if (existing.userId !== user.id && !user.isGM) fail("Нельзя завершить чужую сессию магазина.");
-        if (existing.target && objectKey(existing.target) !== objectKey(command.target ?? command.tokenId)) fail("Сессия относится к другому объекту магазина.");
+        if (objectKey(existing.target) !== objectKey(command.target ?? command.tokenId)) fail("Сессия относится к другому объекту магазина.");
         delete runtime.shopSessions[shopId];
         for (const receipt of Object.values(runtime.tradeRequests ?? {})) {
           if (receipt.status === "pending" && receipt.intent?.sessionId === existing.sessionId) receipt.status = "rejected";
@@ -98,25 +96,11 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     const key = JSON.stringify(command);
     if (pending.has(key)) return pending.get(key);
     const task = (async () => {
-      const gms = asArray(game.users).filter((user) => user.active && Number(user.role) === 4).map((user) => user.id);
-      if (!gms.length) fail("Нужен подключённый мастер.");
-      let messageId, timer, hookId;
-      const result = new Promise((resolve, reject) => {
-        const check = (message) => {
-          if (!messageId || message.id !== messageId) return;
-          const response = message.getFlag(MODULE_ID, "shopCommandResult");
-          if (!response) return;
-          clearTimeout(timer); Hooks.off("updateChatMessage", hookId);
-          if (response.error) reject(new Error(response.error)); else resolve(response.session ?? null);
-        };
-        hookId = Hooks.on("updateChatMessage", check);
-        timer = setTimeout(() => { Hooks.off("updateChatMessage", hookId); reject(new Error("Мастер не ответил на запрос магазина. Повторно откройте окно.")); }, 20_000);
-        chat.create({ author: game.user.id, content: "<p>Ширма: обновление сессии магазина.</p>", flags: { [MODULE_ID]: { shopCommand: command } } },
-          { audience: { type: "users", userIds: [...gms, game.user.id] }, technical: true, kind: "shop-session" })
-          .then((messages) => { if (!messages[0]) throw new Error("Запрос магазина не отправлен."); messageId = messages[0].id; check(game.messages.get(messageId) ?? messages[0]); })
-          .catch((error) => { clearTimeout(timer); Hooks.off("updateChatMessage", hookId); reject(error); });
-      });
-      return result;
+      const response = await requestGMReply(chat, { command, commandFlag: "shopCommand", responseFlag: "shopCommandResult",
+        content: "<p>Ширма: обновление сессии магазина.</p>", kind: "shop-session",
+        timeoutMessage: "Мастер не ответил на запрос магазина. Повторно откройте окно." });
+      if (response.error) throw new Error(response.error);
+      return response.session ?? null;
     })();
     pending.set(key, task);
     try { return await task; } finally { pending.delete(key); }

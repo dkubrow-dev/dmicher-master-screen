@@ -1,5 +1,5 @@
 import { MODULE_ID, randomId, normalizeDescription } from "./model.js";
-import { getDefinitions, requireGM, withSceneLock } from "./store.js";
+import { requireGM, withSceneLock } from "./store.js";
 import { builtinCatalog, getEventCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./event-catalog.js";
 
 const clone = (value) => structuredClone(value);
@@ -56,39 +56,9 @@ export function normalizeInteractionCatalog(raw = {}) {
   return { schemaVersion: 1, revision: Number.isSafeInteger(raw.revision) ? raw.revision : 0, shops, dialogues };
 }
 
-// Deterministic IDs keep old episode-local preparation readable until explicitly
-// assigned to the new catalog. Reads never materialize documents or scene flags.
-export function legacyAssetId(kind, schemeId, episodeId, localId) {
-  let hash = 2166136261;
-  for (const char of `${schemeId}:${episodeId}:${localId}`) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
-  return `legacy-${kind}-${(hash >>> 0).toString(16)}`;
-}
-export function legacyInteractions(scene, definitions = getDefinitions(scene)) {
-  const shops = [], dialogues = [], links = [];
-  const label = (rows, candidate) => { let result = candidate.slice(0, 85), count = 2; while (rows.some((row) => row.name.toLocaleLowerCase() === result.toLocaleLowerCase())) result = `${candidate.slice(0, 85)} (${count++})`; return result; };
-  for (const definition of definitions) for (const episode of definition.episodes) {
-    for (const [tokenId, behavior] of Object.entries(episode.tokens)) {
-      const shop = behavior.shop;
-      if (!shop?.enabled && !shop?.items?.length) continue;
-      const asset = normalizeShopAsset({ ...shop, id: legacyAssetId("shop", definition.schemeId, episode.id, tokenId),
-        name: label(shops, `${scene?.tokens?.get(tokenId)?.name ?? tokenId} · ${episode.name}`) });
-      shops.push(asset); links.push({ kind: "shop", type: "Token", id: tokenId, schemeId: definition.schemeId, episodeId: episode.id,
-        assetId: asset.id, enabled: shop.enabled, range: shop.range, trigger: clone(shop.trigger) });
-    }
-    for (const dialogue of episode.dialogues) {
-      if (!dialogue.nodes.length) continue;
-      const asset = normalizeDialogueAsset({ ...dialogue, id: legacyAssetId("dialogue", definition.schemeId, episode.id, dialogue.id),
-        name: label(dialogues, `${dialogue.name} · ${episode.name}`), startPageId: dialogue.startNodeId,
-        pages: dialogue.nodes.map((node, index) => ({ ...node, name: `Страница ${index + 1}`, responses: node.responses.map((response) => ({ ...response, nextPageId: response.nextNodeId })) })) });
-      dialogues.push(asset); links.push({ kind: "dialogue", ...dialogue.target, schemeId: definition.schemeId, episodeId: episode.id,
-        localId: dialogue.id, assetId: asset.id, enabled: dialogue.enabled, range: dialogue.range, trigger: clone(dialogue.trigger) });
-    }
-  }
-  return { shops, dialogues, links };
-}
 export function getInteractionCatalog(scene) {
   const raw = scene?.getFlag(MODULE_ID, "interactionCatalog");
-  return normalizeInteractionCatalog(raw ?? legacyInteractions(scene));
+  return normalizeInteractionCatalog(raw ?? {});
 }
 
 export function mergeInteractionAssets(scene, source = {}) {
@@ -144,7 +114,7 @@ export class SceneAssets {
     requireGM(); const data = kind === "shop" ? this.getShop(id) : this.getDialogue(id); if (!data) fail("Инструмент не найден.");
     const events = kind === "dialogue" ? data.pages.flatMap((page) => page.responses.map((response) => response.eventName).filter(Boolean)) : [];
     return { format: MODULE_ID, kind, version: 1, data,
-      ...(events.length ? { catalog: exportCatalogDependencies(this.scene, [{ events, subscriptions: [], interactions: [], dialogues: [] }]) } : {}) };
+      ...(events.length ? { catalog: exportCatalogDependencies(this.scene, [{ events }]) } : {}) };
   }
   importShop(envelope, options) { return this.import("shop", envelope, options); }
   importDialogue(envelope, options) { return this.import("dialogue", envelope, options); }

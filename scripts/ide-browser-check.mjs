@@ -110,7 +110,7 @@ try {
     const closeObjectForms = () => page.evaluate(async () => { for (const item of foundry.applications.instances.values()) if (["ObjectInfoApplication", "ObjectBehaviorApplication"].includes(item.constructor.name)) await item.close(); });
     const objectMenu = async (target, index) => {
       await page.evaluate((target) => controller.openObjectMenu(target, { x: 200, y: 200 }), target);
-      assert.equal(await page.locator('.ms-object-menu [role="menuitem"]').count(), target.type === "Token" ? 3 : 2);
+      assert.equal(await page.locator('.ms-object-menu [role="menuitem"]').count(), 2);
       await page.locator('.ms-object-menu [role="menuitem"]').nth(index).click();
     };
     const attachAsset = async (target, kind, assetId, assign = false) => {
@@ -244,16 +244,16 @@ try {
     await app.locator(`[data-screen-action="selectNode"][data-id="${triggerId}"]`).click();
     await app.locator('[name="triggerName"]').waitFor();
     await clickTab("scene");
-    // Select an episode, then a single legacy block. Saving it must preserve all hidden blocks.
+    // Select an episode, then a single episode tool. Saving it must preserve all hidden blocks.
     await app.locator('[data-screen-action="selectNode"][data-id="calm"][data-scheme-id="main"]').click();
     await clickTab("other");
     await app.locator('[data-screen-action="selectOther"][data-id="entry"]').click();
     await app.locator('[name="sound"]').fill("audio/bell.ogg");
-    assert.equal(await app.locator('[data-episode-fields] [data-legacy-block]').count(), 1);
+    assert.equal(await app.locator('[data-episode-fields] [data-episode-tool]').count(), 1);
     await app.locator('[data-episode-fields] button[type="submit"]').click();
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].sound === "audio/bell.ogg");
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].workspace.gm.length), 1);
-    assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].dialogues.length), 1);
+    assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].spawns.length), 1);
     // Independent catalogs are authored through real forms, with two shops and a reusable dialogue.
     await app.locator('[data-screen-action="menuCategory"][data-id="tools"]').click();
     await clickTab("shops");
@@ -323,9 +323,21 @@ try {
     assert.deepEqual(JSON.parse(await behavior.locator('[name="routine-0-step-1-parameters"]').inputValue()), { emoji: "" });
     await behavior.locator('[name="routine-0-step-1-parameters"]').fill('{"emoji":"!"}');
     await behavior.locator('[name="routine-0-step-1-next"]').fill("3, 999");
+    // Visual reordering preserves IDs, edges and unparsed text. Native HTML drag events
+    // operate on the actual rendered rows; keyboard reordering shares the same command.
+    await behavior.locator('[name="routine-0-step-1-parameters"]').fill('{ incomplete');
+    await behavior.locator('.ms-object-scroll').evaluate((element) => { element.scrollTop = 0; });
+    await behavior.locator('[data-step-id="2"] [data-routine-drag]').dragTo(behavior.locator('[data-step-id="1"]'), { targetPosition: { x: 15, y: 2 } });
+    assert.deepEqual(await behavior.locator('[data-routine-step]').evaluateAll((rows) => rows.map((row) => Number(row.dataset.stepId))), [2, 1, 3, 4, 5, 6]);
+    assert.equal(await behavior.locator('[name="routine-0-step-0-parameters"]').inputValue(), '{ incomplete');
+    assert.equal(await behavior.locator('[name="routine-0-step-0-next"]').inputValue(), '3, 999');
+    await behavior.locator('[name="routine-0-step-0-parameters"]').fill('{"emoji":"!"}');
+    await behavior.locator('[data-step-id="3"] [data-routine-drag]').focus();
+    await page.keyboard.press('Alt+ArrowUp');
+    assert.deepEqual(await behavior.locator('[data-routine-step]').evaluateAll((rows) => rows.map((row) => Number(row.dataset.stepId))), [2, 3, 1, 4, 5, 6]);
     await behavior.locator('[data-screen-action="save"]').click();
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:waiter"].routines?.[0]?.steps.length === 6);
-    assert.deepEqual(await page.evaluate(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:waiter"].routines[0].steps[1].next), [3]);
+    assert.deepEqual(await page.evaluate(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:waiter"].routines[0].steps.map((step) => ({ id: step.id, next: step.next }))), [{ id: 2, next: [3] }, { id: 3, next: [4] }, { id: 1, next: [2] }, { id: 4, next: [5] }, { id: 5, next: [6] }, { id: 6, next: [] }]);
     const bounds = await behavior.evaluate((element) => { const scroll = element.querySelector('.ms-object-scroll'), footer = element.querySelector('.ms-object-form > footer'); return { overflow: scroll.scrollHeight > scroll.clientHeight, footerBottom: footer.getBoundingClientRect().bottom, windowBottom: element.getBoundingClientRect().bottom }; });
     assert.equal(bounds.overflow, true); assert.ok(bounds.footerBottom <= bounds.windowBottom + 1);
     await page.screenshot({ path: path.join(output, `${version}-routine-scroll.png`) });

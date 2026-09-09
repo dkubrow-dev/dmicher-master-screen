@@ -43,7 +43,7 @@ export function listAvailableInteractions(scene, rawTarget, actorToken, user = g
       if (!resolved) continue;
       const config = resolved.config;
       const sessions = kind === "shop" ? Object.values(runtime.shopSessions ?? {}) : Object.values(runtime.dialogueSessions ?? {});
-      const resuming = sessions.some((session) => session.userId === user?.id && session.actorTokenId === (actorToken?.document?.id ?? actorToken?.id)
+      const resuming = sessions.some((session) => session && session.userId === user?.id && session.actorTokenId === (actorToken?.document?.id ?? actorToken?.id)
         && session.runId === runtime.runId && objectKey(session.target) === objectKey(target)
         && (kind === "shop" ? session.status === "pending" || session.expiresAt > Date.now() : ["active", "finished"].includes(session.status)));
       try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: kind }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: resuming }); }
@@ -55,13 +55,6 @@ export function listAvailableInteractions(scene, rawTarget, actorToken, user = g
       try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: "interaction" }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: false }); }
       catch { continue; }
       result.push({ kind: "interaction", id: config.id, name: config.name, target: { ...target }, schemeId: runtime.schemeId, runId: runtime.runId });
-    }
-    const behavior = target?.type === "Token" ? runtime.episode?.tokens?.[target.id] : null;
-    if (behavior?.interaction?.targetEpisodeId || behavior?.interaction?.eventName) {
-      const config = { ...behavior.interaction, id: target.id, target, enabled: behavior.enabled !== false, range: Number(scene.grid?.distance || 1) * 2 };
-      try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: "npc-interaction" }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: false }); }
-      catch { continue; }
-      result.push({ kind: "transition", id: target.id, name: config.label || "Взаимодействовать", target: { ...target }, schemeId: runtime.schemeId, runId: runtime.runId });
     }
   }
   return result;
@@ -76,7 +69,7 @@ export function evaluateInteractionPreview({ config, kind, schemeId, episodeId, 
   if (!visible) return deny("Объект должен находиться в прямой видимости персонажа.");
   const actor = { id: "preview-character" };
   const scene = { id: "preview-scene", tokens: new Map([[actor.id, actor]]),
-    getFlag: (_module, name) => name === "objectTags" ? { Token: { [actor.id]: tags } } : undefined };
+    getFlag: (_module, name) => name === "objectBindings" ? { bindings: { [`Token:${actor.id}`]: { type: "Token", id: actor.id, tags } } } : undefined };
   const state = { runId: "preview", schemeId, episodeId, episode: { stop: false }, halted, triggerCounts: {} };
   const triggerKey = getTriggerKey(state, kind, interactionTriggerId(config));
   state.triggerCounts[triggerKey] = used;

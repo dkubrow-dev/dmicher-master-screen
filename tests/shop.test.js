@@ -25,14 +25,15 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
   const npc = { id: "npc", x: 100, y: 0, width: 1, height: 1, hidden: false };
   const tags = {};
   const scene = { id: "scene", grid: { distance: 5, size: 100 }, tokens: new Map([["pc", pc], ["npc", npc]]),
-    getFlag: (_module, name) => name === "objectTags" ? { Token: tags } : undefined };
+    getFlag: (_module, name) => name === "objectBindings" ? { bindings: Object.fromEntries(Object.entries(tags).map(([id, values]) => [`Token:${id}`, { type: "Token", id, tags: values }])) } : undefined };
   let runtime = { runId: "run", schemeId: "main", episodeId: "calm", disabledTokens: [], shops: {}, tradeRequests: {},
     shopSessions: { npc: { sessionId: "lease", userId: "gm", actorTokenId: "pc", runId: "run", schemeId: "main",
+      shopId: "npc", actorId: "actor", target: { type: "Token", id: "npc" },
       expiresAt: Date.now() + 120000, status: "editing", revision: 0, draft: { giveItemIds: [], take: [] } } },
     episode: { tokens: { npc: { enabled: true, shop: { enabled: true, requireGMApproval, range: 5, items: [
       { id: "entry", data: { name: "Sword", type: "gear", system: { quantity: 5 } }, stock }
     ] } } } } };
-  const context = () => ({ scene, runtime: structuredClone(runtime), token: npc, behavior: structuredClone(runtime.episode.tokens.npc) });
+  const context = () => ({ scene, runtime: structuredClone(runtime), token: npc, target: { type: "Token", id: "npc" }, shopId: "npc", behavior: structuredClone(runtime.episode.tokens.npc) });
   let queue = Promise.resolve();
   const lock = (_scene, task) => { const result = queue.then(task); queue = result.catch(() => {}); return result; };
   const save = async (_scene, next) => { if (++saves === failSaveAt) throw new Error("write failed"); runtime = structuredClone(next); await onSave(runtime, saves); };
@@ -46,7 +47,7 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
     messages.set(message.id, message); return message;
   } } } };
   const service = createShopService({ context, save, lock, authority: () => authority });
-  const intent = { sceneId: "scene", tokenId: "npc", actorTokenId: "pc", schemeId: "main", runId: "run",
+  const intent = { sceneId: "scene", tokenId: "npc", target: { type: "Token", id: "npc" }, shopId: "npc", actorTokenId: "pc", schemeId: "main", runId: "run",
     sessionId: "lease", requestId: "request", kind: "exchange", giveItemIds: [], take: [{ entryId: "entry", count: 1 }] };
   const message = (requestId, overrides = {}, author = player) => {
     if (runtime.shopSessions.npc) runtime.shopSessions.npc.userId = author.id;
@@ -360,6 +361,19 @@ test("a session from a closed run is not live authority even if its pending leas
   const f = fixture();
   const next = f.runtime(); next.runId = "new-run"; next.shopSessions.npc.status = "pending"; f.setRuntime(next);
   assert.throws(() => requireShopSession(f.context(), f.intent, f.gm));
+});
+
+test("a shop lease must contain its exact actor, source target and shop identity", async () => {
+  for (const field of ["actorId", "target", "shopId"]) {
+    const f = fixture(), state = f.runtime(); delete state.shopSessions.npc[field]; f.setRuntime(state);
+    assert.throws(() => requireShopSession(f.context(), f.intent, f.gm), field);
+    await assert.rejects(f.service.requestSession(f.intent), undefined, field);
+    assert.equal(f.counts().creates, 0);
+  }
+  const f = fixture(); f.runtime().shopSessions = {};
+  const session = await f.service.requestSession(f.intent);
+  assert.equal(session.actorId, f.actor.id); assert.equal(session.shopId, "npc");
+  assert.deepEqual(session.target, { type: "Token", id: "npc" });
 });
 
 test("rejecting an old proposal does not release another participant's new session", async () => {

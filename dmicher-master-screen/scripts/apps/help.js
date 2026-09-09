@@ -1,5 +1,6 @@
 import { MODULE_ID } from "../model.js";
 import { getRuntime } from "../store.js";
+import { listAvailableInteractions } from "../interaction-access.js";
 import { themedClasses, notifyError } from "../ui.js";
 import { generics } from "../generics.js";
 import { getScreenHelpContent } from "../help-content.js";
@@ -15,39 +16,36 @@ export class InteractionApplication extends HandlebarsApplicationMixin(Applicati
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-interaction"), position: { width: 420, height: "auto" },
     window: { title: "Взаимодействие", icon: "fa-solid fa-comments" } };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/interaction.hbs` } };
-  constructor(controller, { sceneId, tokenId, sourceTokenId, targetType = "Token", schemeId = "main" }) {
+  constructor(controller, { sceneId, tokenId, sourceTokenId, targetType = "Token", schemeId }) {
     super({ id: `dmicher-master-screen-interaction-${sceneId}-${schemeId}-${targetType}-${tokenId}` });
     Object.assign(this, { controller, sceneId, tokenId, sourceTokenId, targetType, schemeId });
   }
   async _prepareContext(options) {
     const context = await super._prepareContext(options), scene = game.scenes.get(this.sceneId);
-    const state = getRuntime(scene, { schemeId: this.schemeId }), token = this.targetType === "Token" ? scene?.tokens.get(this.tokenId) : scene?.tiles?.get(this.tokenId);
-    const choices = this.controller.getInteractions(this.targetType, this.tokenId, { schemeId: this.schemeId }), config = choices.behavior;
-    const available = scene?.id === globalThis.canvas?.scene?.id && Boolean(token) && !state.episode?.stop
-      && Boolean(config?.shop.enabled || config?.interaction.targetEpisodeId || choices.dialogues.length || choices.actions.length);
-    return { ...context, name: token?.name, missing: !available, runId: state.runId,
-      shop: available && config?.shop.enabled, label: config?.interaction.label || "Взаимодействовать",
-      transition: available && Boolean(config?.interaction.targetEpisodeId),
-      dialogues: available ? choices.dialogues : [], actions: available ? choices.actions : [],
+    const token = this.targetType === "Token" ? scene?.tokens.get(this.tokenId) : scene?.tiles?.get(this.tokenId);
+    const choices = scene?.id === globalThis.canvas?.scene?.id ? listAvailableInteractions(scene, { type: this.targetType, id: this.tokenId }, scene.tokens.get(this.sourceTokenId), game.user).filter((entry) => !this.schemeId || entry.schemeId === this.schemeId) : [];
+    return { ...context, name: token?.name, missing: !token,
+      choices,
       characters: this.controller.getPlayerTokens().filter((entry) => game.user.isGM || entry.actor.testUserPermission(game.user, "OWNER"))
         .map((entry) => ({ id: entry.id, name: entry.name, selected: entry.id === this.sourceTokenId })) };
   }
   async _onRender(context, options) {
     await super._onRender(context, options);
+    this.element.querySelector("select")?.addEventListener("change", (event) => { this.sourceTokenId = event.target.value; void this.render({ force: true }); });
     this.element.querySelectorAll("[data-interaction]").forEach((button) => button.addEventListener("click", () => {
       if (button.disabled) return;
       button.disabled = true;
       void Promise.resolve().then(() => {
         const scene = game.scenes.get(this.sceneId);
-        if (globalThis.canvas?.scene?.id !== this.sceneId || getRuntime(scene, { schemeId: this.schemeId }).runId !== context.runId) {
+        const choice = context.choices[Number(button.dataset.interaction)];
+        if (!choice || globalThis.canvas?.scene?.id !== this.sceneId || getRuntime(scene, { schemeId: choice.schemeId }).runId !== choice.runId) {
           throw new Error("Сцена или эпизод изменились. Откройте взаимодействие заново.");
         }
         const actorTokenId = this.element.querySelector("select").value;
         const target = { type: this.targetType, id: this.tokenId };
-        if (button.dataset.interaction === "shop") return this.controller.openShop(target, { actorTokenId, schemeId: this.schemeId });
-        if (button.dataset.interaction === "dialogue") return this.controller.openDialogue(button.dataset.dialogueId, actorTokenId, { schemeId: this.schemeId, target });
-        if (button.dataset.interaction === "event") return this.controller.requestNamedInteraction(button.dataset.interactionId, actorTokenId, { schemeId: this.schemeId });
-        return this.controller.triggerInteraction(this.tokenId, actorTokenId, { schemeId: this.schemeId });
+        if (choice.kind === "shop") return this.controller.openShop(target, { actorTokenId, schemeId: choice.schemeId });
+        if (choice.kind === "dialogue") return this.controller.openDialogue(choice.id, actorTokenId, { schemeId: choice.schemeId, target });
+        return this.controller.requestNamedInteraction(choice.id, actorTokenId, { schemeId: choice.schemeId });
       }).then(() => this.close()).catch(notifyError).finally(() => { if (button.isConnected) button.disabled = false; });
     }));
   }

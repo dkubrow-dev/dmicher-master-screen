@@ -1,16 +1,19 @@
-import { MODULE_ID, normalizeDialogue } from "./model.js";
-import { getDefinition, requireGM } from "./store.js";
+import { MODULE_ID } from "./model.js";
+import { requireGM } from "./store.js";
 import { generics } from "./generics.js";
-import { getInteractionCatalog } from "./scene-assets.js";
+import { getInteractionCatalog, normalizeDialogueAsset } from "./scene-assets.js";
 
 /** Manual projection contains presentation and local navigation only, never executable actions. */
 export function manualDialogueData(source, { includeEventNames = false } = {}) {
-  const dialogue = normalizeDialogue(source);
-  if (!dialogue.nodes.length) throw new Error("У диалога пока нет страниц.");
-  return { id: dialogue.id, name: dialogue.name, startNodeId: dialogue.startNodeId,
-    nodes: dialogue.nodes.map((node) => ({ id: node.id, text: node.text, art: node.art,
+  // This is the active presentation DTO used by invitations, not stored scene preparation.
+  // Reuse catalog validation for its page links before exposing it to another participant.
+  if (!Array.isArray(source?.nodes)) throw new Error("У диалога пока нет страниц.");
+  const dialogue = normalizeDialogueAsset({ id: source.id, name: source.name, startPageId: source.startNodeId,
+    pages: source.nodes.map((node) => ({ ...node, responses: (node.responses ?? []).map((response) => ({ ...response, nextPageId: response.nextNodeId })) })) });
+  return { id: dialogue.id, name: dialogue.name, startNodeId: dialogue.startPageId,
+    nodes: dialogue.pages.map((node) => ({ id: node.id, text: node.text, art: node.art,
       responses: node.responses.map((response) => ({ id: response.id, label: response.label,
-        nextNodeId: response.nextNodeId, eventName: includeEventNames ? response.eventName : "" })) })) };
+        nextNodeId: response.nextPageId, eventName: includeEventNames ? response.eventName : "" })) })) };
 }
 
 const defaultOpen = async (data) => {
@@ -21,7 +24,7 @@ const defaultOpen = async (data) => {
 };
 
 /** Sending is a deliberate GM action, independent of the current automation state. */
-export function createManualDialogueService({ openWindow = defaultOpen, definitionOf = getDefinition, messageService } = {}) {
+export function createManualDialogueService({ openWindow = defaultOpen, messageService } = {}) {
   const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "manual-dialogues" });
   const shown = new Set();
   const getManualContext = ({ sceneId, episodeId, dialogueId, pageId, schemeId = "main" }) => {
@@ -35,14 +38,7 @@ export function createManualDialogueService({ openWindow = defaultOpen, definiti
       if (!source.nodes.some((node) => node.id === source.startNodeId)) throw new Error("Страница диалога не найдена.");
       return { dialogue: manualDialogueData(source, { includeEventNames: true }), sourceName: asset.name, sceneId, schemeId, episodeId };
     }
-    const episode = definitionOf(scene, { schemeId }).episodes.find((entry) => entry.id === episodeId);
-    const dialogue = episode?.dialogues?.find((entry) => entry.id === dialogueId);
-    if (!dialogue) throw new Error("Диалог не найден в выбранном эпизоде.");
-    const target = dialogue.target.type === "Tile" ? scene.tiles.get(dialogue.target.id) : scene.tokens.get(dialogue.target.id);
-    const projection = manualDialogueData(dialogue, { includeEventNames: true });
-    const fallbackArt = target?.texture?.src || target?.actor?.img || "";
-    for (const node of projection.nodes) node.art ||= fallbackArt;
-    return { dialogue: projection, sourceName: target?.name || dialogue.name, sceneId, episodeId, schemeId };
+    throw new Error("Диалог не найден в каталоге сцены.");
   };
   const invitePlayers = async ({ userIds, ...selection }) => {
     const source = getManualContext(selection);
@@ -62,8 +58,6 @@ export function createManualDialogueService({ openWindow = defaultOpen, definiti
     getManualContext,
     openManualDialogue: (selection) => openWindow({ ...getManualContext(selection), invitationId: foundry.utils.randomID(), gmPreview: true }),
     invitePlayers,
-    manualInvite: invitePlayers,
-    showManualDialogueToPlayers: invitePlayers,
     async processManualInvitation(message, initiatingUserId) {
       const raw = message.getFlag?.(MODULE_ID, "manualDialogue");
       if (!raw || raw.version !== 1 || raw.manual !== true || !message.id) return false;

@@ -1,0 +1,136 @@
+{{#if blocks.tokens}}
+<section class="ms-details" data-episode-tool="tokens" open>
+      <h3>Токены сцены</h3>
+      <p class="ms-note">Настройте выбранный токен кнопкой или левым кликом по токену на карте в режиме конструктора.</p>
+      <div class="ms-list">
+        {{#each tokens}}
+        <div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}} <span aria-label="Эмоджи">{{emoji}}</span><small class="ms-note">{{#if configured}}Поведение задано{{else}}Ещё не настроен{{/if}}</small></span></span><button type="button" data-screen-action="token" data-token-id="{{id}}">Настроить</button></div>
+        {{else}}<p class="ms-note">Добавьте НИП на карту обычными средствами Foundry.</p>{{/each}}
+      </div>
+    </section>
+{{/if}}
+{{#if blocks.tags}}
+<section class="ms-details" data-episode-tool="tags"><h3>Теги объектов сцены</h3><p class="ms-note">Теги принадлежат токенам и тайлам этой сцены. Укажите их через запятую. Они используются в условиях запуска; регистр при сравнении не учитывается.</p>
+    <div class="ms-list">{{#each taggedObjects}}<div class="ms-object-tags" data-object-tags data-object-type="{{type}}" data-object-id="{{id}}" data-scene-id="{{sceneId}}"><label class="ms-field">{{name}} · {{type}}<input name="objectTags" value="{{tagsText}}" placeholder="hero, trusted"></label><button type="button" data-screen-action="saveObjectTags">Сохранить теги</button><span class="ms-note" data-tag-status>{{#if unsaved}}Не сохранено{{/if}}</span></div>{{else}}<p class="ms-note">Добавьте НИП или тайлы на карту.</p>{{/each}}</div>
+  </section>
+{{/if}}
+{{#if blocks.dialogues}}
+<form data-screen-form="saveEpisode" data-episode-fields data-episode-tool="dialogues" class="ms-episode-form"><section class="ms-details" data-episode-tool="dialogues">
+      <h3>Прямые взаимодействия</h3>
+      <p class="ms-note">Взаимодействие сообщает событие, например нажатие на тайл рычага. Назначьте объекту эту схему через «Информация»; реакции задаются во вкладке «События».</p>
+      {{#each interactions}}
+      <fieldset class="ms-config-row" data-interaction-row="{{id}}"><div class="ms-grid-two"><label class="ms-field">Название действия<input name="actionName" value="{{name}}" required></label><label class="ms-check"><input type="checkbox" name="actionEnabled" {{checked enabled}}> Доступно</label></div>
+        <label class="ms-field">Объект<select name="actionTarget">{{selectOptions @root.interactionTargets selected=targetValue valueAttr="value" labelAttr="name" blank="Выберите НИП или тайл"}}</select></label>
+        <div class="ms-grid-two"><label class="ms-field">Дальность, единицы сцены<input type="number" name="actionRange" value="{{range}}" min="0" step="any" required></label><label class="ms-field">Событие<input name="actionEvent" value="{{eventName}}" placeholder="lever.used" pattern="[a-z][a-z0-9_.-]{0,99}" required></label></div>
+        {{{triggerFields}}}
+        <button type="button" data-screen-action="deleteInteraction" data-index="{{@index}}" class="ms-danger">Убрать действие</button>
+      </fieldset>{{/each}}
+      <button type="button" data-screen-action="addInteraction">Добавить прямое действие</button>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+{{/if}}
+{{#if blocks.entry}}
+<form data-screen-form="saveEpisode" data-episode-fields data-episode-tool="entry" class="ms-episode-form"><section class="ms-details" data-episode-tool="entry">
+      <h3>При входе: пауза, звук и подкрепление</h3>
+      <p class="ms-note">Выполняется один раз при переходе. Переподключение не повторяет действия. Созданные токены сохраняются после выхода из эпизода.</p>
+      <label class="ms-check"><input type="checkbox" name="pause" {{checked episode.pause}}> Поставить Foundry на паузу</label>
+      <label class="ms-field">Звук при входе<input type="text" name="sound" value="{{episode.sound}}" placeholder="Путь к звуковому файлу"></label>
+      <div data-spawn-drop class="ms-drop-zone">
+        <p class="ms-note">Перетащите персонажа из боковой панели сюда для добавления подкрепления.</p>
+        {{#each episode.spawns}}
+        <fieldset data-spawn-row="{{id}}" class="ms-config-row">
+          <legend>Подкрепление {{@index}}</legend>
+          <label class="ms-field">UUID персонажа<input name="spawnActor" value="{{actorUuid}}" placeholder="Actor.…" required></label>
+          <div class="ms-grid-four">
+            <label class="ms-field">X, пикс.<input type="number" name="spawnX" value="{{x}}" min="0" step="any" required></label>
+            <label class="ms-field">Y, пикс.<input type="number" name="spawnY" value="{{y}}" min="0" step="any" required></label>
+            <label class="ms-field">Количество<input type="number" name="spawnCount" value="{{count}}" min="1" max="50" step="1" required></label>
+            <label class="ms-field">Шаг, пикс.<input type="number" name="spawnSpacing" value="{{spacing}}" min="0" step="any" required></label>
+          </div>
+          <div class="ms-actions"><button type="button" data-screen-action="pickSpawn" data-index="{{@index}}">Указать на карте</button><button type="button" data-screen-action="deleteSpawn" data-index="{{@index}}" class="ms-danger">Убрать</button></div>
+        </fieldset>
+        {{/each}}
+        <button type="button" data-screen-action="addSpawn">Добавить подкрепление</button>
+      </div>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+{{/if}}
+{{#if blocks.zones}}
+<form data-screen-form="saveEpisode" data-episode-fields data-episode-tool="zones" class="ms-episode-form"><section class="ms-details" data-episode-tool="zones">
+      <h3>Зоны событий</h3>
+      <p class="ms-note">Прямоугольные зоны в координатах карты. Вход персонажа сообщает выбранное событие. Зоны действуют только в этом эпизоде; переходы и другие реакции настраиваются через событие.</p>
+      {{#each episode.zones}}
+      <fieldset class="ms-config-row" data-zone-row="{{id}}">
+        <legend>Зона {{@index}}</legend>
+        <label class="ms-field">Название<input name="zoneLabel" value="{{label}}"></label>
+        <div class="ms-grid-four">
+          <label class="ms-field">X, пикс.<input type="number" name="zoneX" value="{{x}}" min="0" step="any" required></label>
+          <label class="ms-field">Y, пикс.<input type="number" name="zoneY" value="{{y}}" min="0" step="any" required></label>
+          <label class="ms-field">Ширина<input type="number" name="zoneWidth" value="{{width}}" min="1" step="any" required></label>
+          <label class="ms-field">Высота<input type="number" name="zoneHeight" value="{{height}}" min="1" step="any" required></label>
+        </div>
+        <label class="ms-field">Событие<input name="zoneEvent" value="{{eventName}}" pattern="[a-z][a-z0-9_.-]{0,99}" placeholder="zone.entered"></label>
+        {{{triggerFields}}}
+        <div class="ms-actions"><button type="button" data-screen-action="pickZone" data-index="{{@index}}">Указать левый верхний угол на карте</button><button type="button" data-screen-action="deleteZone" data-index="{{@index}}" class="ms-danger">Убрать</button></div>
+      </fieldset>
+      {{/each}}
+      <button type="button" data-screen-action="addZone">Добавить зону</button>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+{{/if}}
+{{#if blocks.workspaceGM}}
+<form data-screen-form="saveEpisode" data-episode-fields data-episode-tool="workspaceGM" class="ms-episode-form"><section class="ms-details" data-episode-tool="workspaceGM">
+      <h3>Рабочий стол мастера</h3>
+      <p class="ms-note">Окна документов и их положение при входе. Перетащите документ сюда или снимите расположение уже открытых листов. Ширма управляет только своими окнами.</p>
+      <div data-workspace-drop="gm" class="ms-drop-zone">
+        {{#each workspaceGM}}
+        <div class="ms-config-row" data-workspace-row="gm">
+          <label class="ms-field">UUID документа<input name="windowUuid" value="{{uuid}}" required></label>
+          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">Ширина<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">Высота<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
+          <button type="button" data-screen-action="deleteWindow" data-audience="gm" data-index="{{@index}}" class="ms-danger">Убрать окно</button>
+        </div>
+        {{/each}}
+        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="gm">Запомнить открытые окна</button><button type="button" data-screen-action="addWindow" data-audience="gm">Добавить по UUID</button></div>
+      </div>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+{{/if}}
+{{#if blocks.workspacePlayers}}
+<form data-screen-form="saveEpisode" data-episode-fields data-episode-tool="workspacePlayers" class="ms-episode-form"><section class="ms-details" data-episode-tool="workspacePlayers">
+      <h3>Окна игроков</h3>
+      <p class="ms-note">Открываются только документы, которые игроку разрешено видеть средствами Foundry. Эта настройка не выдаёт новые права на документы.</p>
+      <div data-workspace-drop="players" class="ms-drop-zone">
+        {{#each workspacePlayers}}
+        <div class="ms-config-row" data-workspace-row="players">
+          <label class="ms-field">UUID документа<input name="windowUuid" value="{{uuid}}" required></label>
+          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">Ширина<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">Высота<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
+          <button type="button" data-screen-action="deleteWindow" data-audience="players" data-index="{{@index}}" class="ms-danger">Убрать окно</button>
+        </div>
+        {{/each}}
+        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="players">Взять расположение открытых окон</button><button type="button" data-screen-action="addWindow" data-audience="players">Добавить по UUID</button></div>
+      </div>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+{{/if}}
+{{#if blocks.playback}}
+<section class="ms-section" data-episode-tool="playback">
+    <h2>{{activeName}}</h2>
+    <p class="ms-note">Переход применяет подготовленное состояние и однократные действия. Повторный вход выполняет их заново. Переподключение оставляет текущее состояние.</p>
+    <form data-screen-form="transition" class="ms-inline-form">
+      <select name="targetEpisode" aria-label="Следующий эпизод">{{#each episodes}}<option value="{{id}}" {{#unless allowed}}disabled{{/unless}}>{{name}}{{#unless allowed}} · переход закрыт{{/unless}}</option>{{/each}}</select>
+      <button type="submit" class="ms-primary"><i class="fa-solid fa-play"></i> Перейти</button>
+    </form>
+    <div class="ms-actions"><button type="button" data-screen-action="stop" class="ms-danger"><i class="fa-solid fa-hand"></i> Остановка · ручное управление</button><button type="button" data-screen-action="combat"><i class="fa-solid fa-dice-d20"></i> Бой и инициатива</button></div>
+    {{#if activeStop}}<p class="ms-status">Автоматизация сцены остановлена. Положение, состояние и ресурсы персонажей сохраняются.</p>{{/if}}
+  </section>
+{{/if}}
+{{#if blocks.automation}}
+<section class="ms-section" data-episode-tool="automation">
+    <h2>Управление объектами</h2>
+    <p class="ms-note">Выключение сохраняется между эпизодами и переподключениями. Возврат под автоматизацию происходит только по вашей команде.</p>
+    <div class="ms-list">
+      {{#each tokens}}<div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}}<small class="ms-note">{{#if disabled}}Ручное управление{{else}}Разрешена автоматизация эпизода{{/if}}</small></span></span><button type="button" data-screen-action="automation" data-token-id="{{id}}" data-enable="{{#if disabled}}true{{else}}false{{/if}}">{{#if disabled}}Включить{{else}}Отключить{{/if}}</button></div>{{/each}}
+    </div>
+  </section>
+{{/if}}
+{{#if blocks.counts}}
+<section class="ms-details" data-episode-tool="counts"><h3>Допуск и счётчики триггеров</h3><p class="ms-note">Ручной допуск имеет приоритет над подготовленным флагом до следующего вашего переключения. Остальные условия продолжают действовать. Счётчик общий для триггера; можно сбросить его отдельно или для всей основной схемы.</p><div class="ms-list">{{#each triggerCounts}}<div class="ms-token-row"><span>{{episodeName}} · {{typeLabel}} · {{name}}<strong> · {{count}}</strong>{{#if canToggle}}<small class="ms-note">{{#if enabled}}Допуск включён{{else}}Допуск выключен{{/if}}</small>{{/if}}</span><div class="ms-actions">{{#if canToggle}}<button type="button" data-screen-action="toggleTrigger" data-trigger-key="{{key}}" data-enable="{{#if enabled}}false{{else}}true{{/if}}">{{#if enabled}}Выключить{{else}}Включить{{/if}}</button>{{/if}}<button type="button" data-screen-action="resetTrigger" data-trigger-key="{{key}}">Сбросить счётчик</button></div></div>{{else}}<p class="ms-note">В текущем эпизоде ещё нет триггеров.</p>{{/each}}</div><button type="button" data-screen-action="resetTriggers">Сбросить все счётчики</button></section>
+{{/if}}
+{{#if blocks.journal}}
+<section class="ms-section" data-episode-tool="journal"><h2>События сцены</h2><form data-screen-form="emitEvent" class="ms-inline-form"><input name="eventName" placeholder="Имя события для ручного запуска" aria-label="Имя события" pattern="[a-z][a-z0-9_.-]{0,99}" required><button type="submit">Сообщить событие</button></form><p class="ms-note">Последние 100 записей. Старые запуски и повторные уведомления не переигрывают события.</p><div class="ms-event-log">{{#each eventLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">Источник: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">Событий пока нет.</p>{{/each}}</div></section>
+{{/if}}

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { exportBundle, importBundle, validateBundle, remapReferences } from "../dmicher-master-screen/scripts/transfer.js";
-import { defaultDefinition, defaultTokenBehavior, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
 
 const copy = (value) => structuredClone(value);
 function fixture() {
@@ -29,12 +29,10 @@ function fixture() {
   const page = { uuid: `${journal.uuid}.JournalEntryPage.oldPage`, documentName: "JournalEntryPage", parent: journal };
   docs.set(page.uuid, page);
   const definition = defaultDefinition();
-  definition.episodes[0].tokens.oldToken = { ...defaultTokenBehavior(), patrol: { enabled: true, speed: 5,
-    points: [{ x: 100, y: 100, macroUuid: macro.uuid, onTrue: "alarm" }] } };
   definition.episodes[0].workspace.gm = [{ uuid: page.uuid, x: 0, y: 0, width: 400, height: 300 }];
   const sceneData = { name: "Market", active: true, navigation: true, background: { src: "maps/market.webp" },
     tokens: [{ _id: "oldToken", actorId: actor.id, name: "Guard", x: 100, y: 100 }],
-    flags: { [MODULE_ID]: { definitions: { main: definition }, runtimes: { main: { runId: "LIVE" } } }, other: { preserved: true } }
+    flags: { [MODULE_ID]: { definitions: { main: definition }, eventCatalog: { macros: [{ uuid: macro.uuid, triggerIds: [] }] }, objectBindings: { bindings: { "Token:oldToken": { type: "Token", id: "oldToken", schemeId: "main", routines: [{ episodeId: "calm", steps: [{ id: 1, kind: "macro", parameters: { macroUuid: macro.uuid, parameters: {} }, next: [] }] }] } } }, runtimes: { main: { runId: "LIVE" } } }, other: { preserved: true } }
   };
   const scene = document("Scene", "oldScene", sceneData);
   scene.tokens = new Map([["oldToken", sceneData.tokens[0]]]);
@@ -67,8 +65,7 @@ test("scene export/import round trip keeps embedded IDs and remaps actors, macro
   const imported = sceneCall.data.flags[MODULE_ID].definitions.main;
   assert.equal(imported.symbol, "🌦️"); assert.deepEqual(imported.description, f.definition.description);
   assert.equal(imported.episodes[0].description, f.definition.episodes[0].description);
-  assert.ok(imported.episodes[0].tokens.oldToken);
-  assert.equal(imported.episodes[0].tokens.oldToken.patrol.points[0].macroUuid, newMacro.uuid);
+  assert.equal(sceneCall.data.flags[MODULE_ID].objectBindings.bindings["Token:oldToken"].routines[0].steps[0].parameters.macroUuid, newMacro.uuid);
   assert.equal(imported.episodes[0].workspace.gm[0].uuid, `${newJournal.uuid}.JournalEntryPage.oldPage`);
   assert.equal(sceneCall.data.active, false);
   assert.equal(sceneCall.data.navigation, false);
@@ -97,7 +94,8 @@ test("wrong format, version, system and malformed definitions produce no writes"
   const good = await exportBundle(f.scene);
   for (const modify of [
     (b) => { b.format = "other"; }, (b) => { b.schemaVersion = 2; }, (b) => { b.systemId = "other"; },
-    (b) => { delete b.definition; delete b.definitions; }, (b) => { b.definition.schemaVersion = 99; },
+    (b) => { delete b.definitions; }, (b) => { b.definitions[0].schemaVersion = 99; },
+    (b) => { b.definition = b.definitions[0]; delete b.definitions; },
     (b) => { b.definitions = [null]; },
     (b) => { b.scene.name = {}; }, (b) => { b.scene.tokens = {}; }, (b) => { b.scene.notes = {}; },
     (b) => { b.actors[0].uuid = 123; }, (b) => { b.macros[0].data.name = {}; },
@@ -115,7 +113,7 @@ test("wrong format, version, system and malformed definitions produce no writes"
 test("an empty scene exports and imports with zero schemes and no synthetic running state", async () => {
   const f = fixture(); f.sceneData.flags[MODULE_ID] = { definitions: {} };
   const before = copy(f.sceneData.flags), bundle = await exportBundle(f.scene);
-  assert.deepEqual(bundle.definitions, []); assert.equal(bundle.definition, null); assert.deepEqual(f.sceneData.flags, before);
+  assert.deepEqual(bundle.definitions, []); assert.equal(bundle.definition, undefined); assert.deepEqual(f.sceneData.flags, before);
   await importBundle(bundle);
   const scene = f.calls.find((call) => call.type === "Scene").data;
   assert.deepEqual(scene.flags[MODULE_ID].definitions, {});
@@ -187,40 +185,4 @@ test("native map notes bring their Journal and retain Page IDs under the new Jou
   assert.equal(sceneData.notes[0].entryId, journal.id);
   assert.equal(sceneData.notes[0].pageId, "oldPage");
   assert.equal(sceneData.notes[0]._id, "noteOriginal");
-});
-
-test("subscription macros and Tile-bound dialogue survive export with no runtime sessions", async () => {
-  const f = fixture();
-  f.definition.episodes[0].tokens.oldToken.patrol.points = [];
-  f.definition.episodes[0].subscriptions = [{ id: "on-touch", event: "door.touched", kind: "macro", macroUuid: f.macro.uuid }];
-  f.definition.episodes[0].interactions = [{ id: "touch", name: "Touch", target: { type: "Tile", id: "oldTile" }, eventName: "door.touched" }];
-  f.definition.episodes[0].dialogues = [{ id: "talk", name: "Door", target: { type: "Tile", id: "oldTile" }, startNodeId: "start",
-    nodes: [{ id: "start", text: "Speak", art: "art/door.webp", responses: [{ id: "answer", label: "Open", eventName: "door.touched" }] }] }];
-  f.sceneData.tiles = [{ _id: "oldTile", x: 100, y: 100, width: 200, height: 200 }];
-  const bundle = await exportBundle(f.scene);
-  assert.equal(bundle.macros.length, 1);
-  await importBundle(bundle);
-  const data = f.calls.find((call) => call.type === "Scene").data;
-  const episode = data.flags[MODULE_ID].definitions.main.episodes[0];
-  assert.equal(data.tiles[0]._id, "oldTile");
-  assert.equal(episode.dialogues[0].target.id, "oldTile");
-  assert.equal(episode.dialogues[0].nodes[0].responses[0].eventName, "door.touched");
-  assert.equal(episode.interactions[0].target.id, "oldTile");
-  assert.equal(episode.subscriptions[0].macroUuid, f.created.find((doc) => doc.documentName === "Macro").uuid);
-  assert.equal(data.flags[MODULE_ID].runtimes, undefined);
-});
-
-test("scene object tags survive export/import independently of episodes and runtime counts", async () => {
-  const f = fixture();
-  f.sceneData.tiles = [{ _id: "tile", x: 0, y: 0, width: 100, height: 100 }];
-  f.sceneData.flags[MODULE_ID].objectTags = { Token: { oldToken: [" Merchant ", "human"] }, Tile: { tile: ["EXIT"] } };
-  f.sceneData.flags[MODULE_ID].runtimes.main = { runId: "LIVE", halted: true, triggerCounts: { "main:calm:zone:door": 1 } };
-  const bundle = await exportBundle(f.scene);
-  assert.deepEqual(bundle.scene.flags[MODULE_ID], { objectTags: { Token: { oldToken: ["merchant", "human"] }, Tile: { tile: ["exit"] } } });
-  await importBundle(bundle);
-  const scope = f.calls.find((call) => call.type === "Scene").data.flags[MODULE_ID];
-  assert.deepEqual(scope.objectTags, bundle.scene.flags[MODULE_ID].objectTags);
-  assert.equal(scope.runtimes, undefined);
-  assert.equal(scope.triggerCounts, undefined);
-  assert.equal(scope.halted, undefined);
 });

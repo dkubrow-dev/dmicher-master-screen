@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODULE_ID, defaultDefinition, defaultTokenBehavior, normalizeDefinition, normalizeTokenBehavior,
-  getEpisode, canTransition, parseTransitions, transitionsText, emptyRuntime, normalizeRuntime, normalizeDialogue } from "../dmicher-master-screen/scripts/model.js";
-import { getDefinition, getRuntime, saveDefinition, saveRuntime, withSceneLock, isAuthority, getObjectTags, saveObjectTags } from "../dmicher-master-screen/scripts/store.js";
+import { MODULE_ID, defaultDefinition, normalizeDefinition, normalizeTrigger, getEpisode, emptyRuntime, normalizeRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { getDefinition, getDefinitions, getRuntime, saveDefinition, saveRuntime, withSceneLock, isAuthority, getObjectTags, saveObjectTags } from "../dmicher-master-screen/scripts/store.js";
 
 const copy = (value) => structuredClone(value);
 function world() {
@@ -20,53 +19,65 @@ function world() {
   });
 }
 
-test("default scene has one explicit main scheme, four episodes and all-to-all transitions", () => {
+test("current definitions require an explicit entry and exactly one destination per event", () => {
   const definition = defaultDefinition();
-  assert.equal(definition.schemeId, "main");
-  assert.deepEqual(definition.episodes.map((episode) => episode.id), ["calm", "tension", "alarm", "stop"]);
-  for (const from of definition.episodes) for (const to of definition.episodes) assert.equal(canTransition(definition, from.id, to.id), true);
-  assert.equal(getEpisode(definition, "stop").stop, true);
-  assert.equal(canTransition(definition, "calm", "missing"), false);
-  definition.episodes[0].name = "changed";
-  assert.notEqual(defaultDefinition().episodes[0].name, "changed");
+  definition.episodes[1].events = ["alarm.started"];
+  assert.equal(normalizeDefinition(definition).entryEpisodeId, "calm");
+  definition.episodes[2].events = ["alarm.started"];
+  assert.throws(() => normalizeDefinition(definition));
+  delete definition.entryEpisodeId;
+  assert.throws(() => normalizeDefinition(definition));
+  assert.throws(() => normalizeDefinition({ ...defaultDefinition(), episodes: [] }));
 });
 
-test("restricted graph admits declared incoming transitions while Stop remains reachable", () => {
-  const definition = defaultDefinition();
-  definition.episodes = parseTransitions("calm -> tension\ntension -> alarm", definition.episodes);
-  assert.equal(canTransition(definition, "calm", "tension"), true);
-  assert.equal(canTransition(definition, "alarm", "tension"), false);
-  assert.equal(canTransition(definition, "alarm", "stop"), true);
-  assert.equal(canTransition(definition, null, "calm"), true);
+test("scene readers never adopt singular definitions, runtime or separate tag flags", () => {
+  const scene = world()();
+  scene.flags[MODULE_ID] = { definition: defaultDefinition(), runtime: { ...emptyRuntime(), runId: "old" }, objectTags: { Token: { npc: ["old"] } } };
+  const before = copy(scene.flags);
+  assert.deepEqual(getDefinitions(scene), []); assert.equal(getRuntime(scene).runId, ""); assert.deepEqual(getObjectTags(scene), {});
+  assert.deepEqual(scene.flags, before); assert.equal(scene.writes.length, 0);
 });
 
-test("plain graph syntax supports names, IDs, wildcard and comments without mutating input", () => {
-  const definition = defaultDefinition(), before = copy(definition);
-  const result = parseTransitions(`# comment\n${definition.episodes[0].name} -> tension\n* -> alarm\ncalm -> *`, definition.episodes);
-  assert.deepEqual(definition, before);
-  assert.deepEqual(result.find((episode) => episode.id === "tension").from, ["calm"]);
-  assert.equal(result.find((episode) => episode.id === "alarm").allowFromAll, true);
-  assert.deepEqual(result.find((episode) => episode.id === "stop").from, ["calm"]);
+test("current episode preparation preserves zones, direct actions, alarm, spawn and workspace", () => {
+  const definition = defaultDefinition(), episode = definition.episodes[0];
+  episode.pause = true; episode.sound = "alarm.ogg";
+  episode.events = ["zone.entered"]; episode.zones = [{ id: "zone", x: 0, y: 0, width: 10, height: 20, eventName: "zone.entered" }];
+  episode.interactions = [{ id: "door", target: { type: "Tile", id: "tile" }, eventName: "door.open" }];
+  episode.spawns = [{ id: "guards", actorUuid: "Actor.guard", x: 0, y: 0, count: 2 }];
+  episode.workspace.gm = [{ uuid: "JournalEntry.notes", x: 0, y: 0, width: 500, height: 400 }];
+  const result = normalizeDefinition(definition).episodes[0];
+  assert.equal(result.pause, true); assert.equal(result.sound, "alarm.ogg"); assert.equal(result.spawns[0].count, 2);
+  assert.equal(result.interactions[0].target.type, "Tile"); assert.equal(result.workspace.gm[0].uuid, "JournalEntry.notes");
+  assert.deepEqual(result.events, ["zone.entered"]); assert.equal(result.zones[0].eventName, "zone.entered");
+  assert.equal(result.tokens, undefined); assert.equal(result.dialogues, undefined); assert.equal(result.subscriptions, undefined);
+  assert.deepEqual(normalizeTrigger(), { enabled: true, schemeIds: [], episodeIds: [], allowTags: [], denyTags: [], repeat: "limited", limit: 1, resetOnEntry: true });
 });
 
-test("graph syntax rejects missing targets, executable-looking text and ambiguous names", () => {
-  const definition = defaultDefinition();
-  for (const input of ["calm => alarm", "calm -> absent", "calm -> alarm -> stop", "game.togglePause(true)"])
-    assert.throws(() => parseTransitions(input, definition.episodes));
-  definition.episodes[0].name = "Same";
-  definition.episodes[1].name = "Same";
-  assert.throws(() => parseTransitions("Same -> alarm", definition.episodes));
+test("runtime snapshot writes remove absent nested facts only inside the selected scheme", async () => {
+  const scene = world()();
+  scene.flags[MODULE_ID] = { definitions: { main: defaultDefinition() }, runtimes: { other: { untouched: true } }, external: { untouched: true } };
+  const merge = (target, patch) => {
+    for (const [key, value] of Object.entries(patch)) {
+      if (key.startsWith("-=")) { delete target[key.slice(2)]; continue; }
+      if (value && typeof value === "object" && !Array.isArray(value)) { target[key] ??= {}; merge(target[key], value); }
+      else target[key] = copy(value);
+    }
+  };
+  scene.setFlag = async (scope, key, patch) => { let parent = scene.flags[scope]; const parts = key.split(".");
+    for (const part of parts.slice(0, -1)) parent = parent[part] ??= {};
+    merge(parent[parts.at(-1)] ??= {}, patch);
+  };
+  await saveRuntime(scene, { ...emptyRuntime(), effects: { completed: true }, dialogueSessions: { gone: { state: "open" } }, routineStates: { npc: { stepId: 1, remainingMs: 0, nextAt: 40 } } });
+  await saveRuntime(scene, { ...emptyRuntime(), routineStates: { npc: { stepId: 2 } } });
+  const state = getRuntime(scene);
+  assert.deepEqual(state.effects, {}); assert.deepEqual(state.dialogueSessions, {}); assert.deepEqual(state.routineStates.npc, { stepId: 2 });
+  assert.deepEqual(scene.flags[MODULE_ID].runtimes.other, { untouched: true }); assert.deepEqual(scene.flags[MODULE_ID].external, { untouched: true });
 });
 
-test("serialized graph uses IDs and survives ambiguous display names", () => {
-  const definition = defaultDefinition();
-  definition.episodes[0].name = "Room -> Door";
-  definition.episodes[1].name = "Room -> Door";
-  const output = transitionsText(definition);
-  assert.equal(output.includes("Room"), false);
-  const restored = parseTransitions(output, definition.episodes);
-  assert.equal(restored.every((episode) => episode.allowFromAll), true);
-});
+
+
+
+
 
 test("invalid schemas and duplicate episode IDs are rejected before use", () => {
   assert.throws(() => normalizeDefinition({ ...defaultDefinition(), schemaVersion: 2 }));
@@ -78,32 +89,7 @@ test("invalid schemas and duplicate episode IDs are rejected before use", () => 
   assert.equal(normalizeRuntime({ ...emptyRuntime(), schemeId: "another" }).schemeId, "another");
 });
 
-test("zone, interaction and patrol transitions reject references to deleted episodes", () => {
-  for (const change of [
-    (episode) => { episode.zones.push({ id: "zone", targetEpisodeId: "absent" }); },
-    (episode) => { episode.tokens.npc = defaultTokenBehavior(); episode.tokens.npc.interaction.targetEpisodeId = "absent"; },
-    (episode) => { episode.tokens.npc = defaultTokenBehavior(); episode.tokens.npc.patrol.points = [{ x: 0, y: 0, onTrue: "absent" }]; }
-  ]) {
-    const definition = defaultDefinition(); change(definition.episodes[0]);
-    assert.throws(() => normalizeDefinition(definition));
-  }
-});
 
-test("behavior normalization bounds speeds and clocks but retains explicit zero range and hidden policy", () => {
-  const behavior = normalizeTokenBehavior({ enabled: false, hidden: false,
-    speech: { interval: -1, range: 0, visibleOnly: false, phrases: ["hello"] },
-    patrol: { enabled: true, speed: Infinity, points: [] }, shop: { items: [{ id: "item", stock: -4, data: { name: "Item" } }] } });
-  assert.equal(behavior.speech.interval, 1);
-  assert.equal(behavior.speech.range, 0);
-  assert.equal(behavior.speech.visibleOnly, false);
-  assert.equal(behavior.hidden, false);
-  assert.equal(behavior.enabled, false);
-  assert.ok(Number.isFinite(behavior.patrol.speed));
-  assert.equal(behavior.shop.items[0].stock, 0);
-  const first = defaultTokenBehavior(), second = defaultTokenBehavior();
-  first.speech.phrases.push("isolated");
-  assert.deepEqual(second.speech.phrases, []);
-});
 
 test("runtime snapshots clone nested mutable values and deduplicate manual disabled tokens", () => {
   const source = { ...emptyRuntime(), disabledTokens: ["npc", "npc"], shops: { npc: { items: [{ stock: 1 }] } } };
@@ -168,65 +154,9 @@ test("runtime writes require elected full GM; definition writes require current 
   assert.equal(scene.writes.length, 0);
 });
 
-test("dialogue responses can continue or finish with an event but cannot do both", () => {
-  const dialogue = { id: "talk", target: { type: "Tile", id: "tile" }, nodes: [
-    { id: "start", text: "Hello", responses: [{ id: "continue", label: "Next", nextNodeId: "end" }] },
-    { id: "end", responses: [{ id: "finish", label: "Done", eventName: "talk.finished" }] }
-  ] };
-  assert.equal(normalizeDialogue(dialogue).startNodeId, "start");
-  dialogue.nodes[0].responses[0].eventName = "talk.finished";
-  assert.throws(() => normalizeDialogue(dialogue));
-  delete dialogue.nodes[0].responses[0].eventName;
-  dialogue.nodes[0].responses[0].nextNodeId = "absent";
-  assert.throws(() => normalizeDialogue(dialogue));
-});
 
-test("dialogue and interaction bindings permit Token or Tile and retain event subscriptions", () => {
-  const definition = defaultDefinition();
-  definition.episodes[0].dialogues = [{ id: "draft", target: { type: "Tile", id: "tile" }, nodes: [] }];
-  definition.episodes[0].interactions = [{ id: "touch", target: { type: "Token", id: "npc" }, eventName: "npc.touched" }];
-  definition.episodes[0].subscriptions = [{ id: "say", event: "npc.touched", kind: "chat", text: "Notice", audience: { gms: false, interactor: true } }];
-  const episode = normalizeDefinition(definition).episodes[0];
-  assert.equal(episode.dialogues[0].target.type, "Tile");
-  assert.equal(episode.subscriptions[0].audience.gms, false);
-  assert.equal(episode.subscriptions[0].audience.interactor, true);
-  definition.episodes[0].dialogues[0].target.type = "Scene";
-  assert.throws(() => normalizeDefinition(definition));
-});
 
-test("dialogues, direct interactions and subscriptions survive normalization and reject dangling routes", () => {
-  const definition = defaultDefinition(), episode = definition.episodes[0];
-  episode.dialogues = [{ id: "door", target: { type: "Tile", id: "tile" }, startNodeId: "hello", nodes: [
-    { id: "hello", text: "A door", responses: [{ id: "ask", label: "Ask", nextNodeId: "end" }] },
-    { id: "end", text: "Closed", responses: [{ id: "knock", label: "Knock", eventName: "door.knocked" }] }
-  ] }];
-  episode.interactions = [{ id: "bell", target: { type: "Token", id: "npc" }, eventName: "bell.rang" }];
-  episode.subscriptions = [{ id: "alert", event: "door.knocked", kind: "transition", episodeId: "alarm" },
-    { id: "tell", event: "bell.rang", kind: "chat", text: "Hello", audience: { gms: false, interactor: true, nearby: true, range: 0 } }];
-  const normalized = normalizeDefinition(definition);
-  assert.equal(normalized.episodes[0].dialogues[0].nodes[1].responses[0].eventName, "door.knocked");
-  assert.equal(normalized.episodes[0].interactions[0].target.type, "Token");
-  assert.deepEqual(normalized.episodes[0].subscriptions[1].audience,
-    { gms: false, interactor: true, nearby: true, range: 0, visibleOnly: true });
-  episode.dialogues[0].nodes[0].responses[0].nextNodeId = "absent";
-  assert.throws(() => normalizeDefinition(definition));
-  episode.dialogues = [];
-  episode.subscriptions[0].episodeId = "absent";
-  assert.throws(() => normalizeDefinition(definition));
-});
 
-test("dialogue identifiers and mutually exclusive continuation/event preserve a deterministic current page", () => {
-  const definition = defaultDefinition(), episode = definition.episodes[0];
-  episode.dialogues = [{ id: "dialogue", nodes: [{ id: "start", responses: [
-    { id: "a", nextNodeId: "start", eventName: "event" }
-  ] }] }];
-  assert.throws(() => normalizeDefinition(definition));
-  episode.dialogues[0].nodes[0].responses[0].eventName = "";
-  assert.equal(normalizeDefinition(definition).episodes[0].dialogues[0].startNodeId, "start");
-  episode.dialogues[0].nodes.push({ id: "start", text: "Ambiguous" });
-  assert.throws(() => normalizeDefinition(definition));
-  assert.throws(() => normalizeRuntime({ ...emptyRuntime(), schemeId: "other/path" }));
-});
 
 test("scene object tags are normalized independently of episode definitions and require a GM", async () => {
   const scene = world()();
@@ -240,15 +170,4 @@ test("scene object tags are normalized independently of episode definitions and 
   game.user = { isGM: false };
   await assert.rejects(saveObjectTags(scene, { type: "Token", id: "hero" }, ["forged"]));
   assert.deepEqual(getObjectTags(scene, { type: "Token", id: "hero" }), ["hero", "invited"]);
-});
-
-test("default trigger is enabled once per entry and each policy is stored with its interaction", () => {
-  const definition = defaultDefinition(), episode = definition.episodes[0];
-  episode.tokens.guard = defaultTokenBehavior();
-  episode.tokens.guard.shop.trigger = { enabled: false, allowTags: ["hero"], denyTags: ["wanted"], repeat: "always", resetOnEntry: false, episodeIds: ["calm"], schemeIds: ["main"] };
-  const normalized = normalizeDefinition(definition).episodes[0].tokens.guard;
-  assert.deepEqual(normalized.interaction.trigger, { enabled: true, schemeIds: [], episodeIds: [], allowTags: [], denyTags: [], repeat: "limited", limit: 1, resetOnEntry: true });
-  assert.equal(normalized.shop.trigger.enabled, false);
-  assert.equal(normalized.shop.trigger.resetOnEntry, false);
-  assert.deepEqual(normalized.shop.trigger.denyTags, ["wanted"]);
 });

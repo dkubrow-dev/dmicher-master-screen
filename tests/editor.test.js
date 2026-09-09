@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
-import { buildGraphView, parsePointRows, formatPointRows, requireNumber, buildTriggerRows } from "../dmicher-master-screen/scripts/apps/editor-view.js";
+import { requireNumber, buildTriggerRows } from "../dmicher-master-screen/scripts/apps/editor-view.js";
 import { buildTriggerFields, readTriggerFields } from "../dmicher-master-screen/scripts/apps/trigger-fields.js";
-import { defaultDefinition, defaultTokenBehavior, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { defaultDefinition, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
 
 class ApplicationStub {
   constructor(options) { this.options = options; this.rendered = true; this.renderCount = 0; }
@@ -19,9 +19,8 @@ globalThis.foundry = {
   utils: { deepClone: structuredClone }
 };
 globalThis.game = { settings: { get: () => "dark" } };
-const { EditorApplication, TokenEditorApplication } = await import("../dmicher-master-screen/scripts/apps/editor.js");
+const { EditorApplication } = await import("../dmicher-master-screen/scripts/apps/editor.js");
 const { ShopsManagerApplication } = await import("../dmicher-master-screen/scripts/apps/shops-manager.js");
-const { DialogueEditorApplication } = await import("../dmicher-master-screen/scripts/apps/dialogue-editor.js");
 const { DialogueCatalogApplication } = await import("../dmicher-master-screen/scripts/apps/dialogue-catalog.js");
 
 function fixture() {
@@ -31,43 +30,14 @@ function fixture() {
   runtime.disabledTokens = ["guard"];
   const context = { definition, runtime, scene: { id: "scene", name: "Market" }, isGM: true,
     selectedEpisodeId: "calm", episode: definition.episodes[0], tokens: [{ id: "guard", name: "Guard", texture: { src: "guard.webp" } }] };
-  context.scene.getFlag = (_scope, key) => key === "definitions" ? { main: definition } : key === "runtimes" ? { main: runtime } : undefined;
+  context.scene.getFlag = (_scope, key) => key === "interactionCatalog" ? context.assets : key === "definitions" ? { main: definition } : key === "runtimes" ? { main: runtime } : undefined;
   const saved = [];
   const controller = { getContext: () => context, saveToken: async (...args) => saved.push(args) };
   return { context, controller, saved };
 }
 
-test("graph represents unrestricted incoming edges without a dense all-to-all drawing", () => {
-  const graph = buildGraphView(defaultDefinition().episodes, "calm");
-  assert.equal(graph.nodes.length, 4);
-  assert.equal(graph.edges.length, 0);
-  assert.ok(graph.nodes.every((node) => node.all));
-  assert.equal(graph.nodes.filter((node) => node.selected).length, 1);
-});
 
-test("graph draws only existing explicit sources and preserves hostile names as text data", () => {
-  const episodes = defaultDefinition().episodes;
-  episodes[1].allowFromAll = false;
-  episodes[1].from = ["calm", "missing", "tension"];
-  episodes[1].name = "<img onerror=alert(1)>";
-  const graph = buildGraphView(episodes, "tension");
-  assert.equal(graph.edges.length, 1);
-  assert.equal(graph.edges[0].sourceId, "calm");
-  assert.equal(graph.nodes[1].name, episodes[1].name);
-  assert.equal(graph.edges[0].targetId, "tension");
-});
 
-test("patrol text roundtrips optional checks and refuses malformed coordinates", () => {
-  const points = parsePointRows("# waypoint\n100, 200\n300; 400 | Macro.check | alarm");
-  assert.deepEqual(points, [
-    { x: 100, y: 200, macroUuid: "", onTrue: "" },
-    { x: 300, y: 400, macroUuid: "Macro.check", onTrue: "alarm" }
-  ]);
-  assert.deepEqual(parsePointRows(formatPointRows(points)), points);
-  for (const invalid of ["100", "100, bad", "NaN, 1", "-2, 3", "1,2,3", "1,2 | a | b | c"]) assert.throws(() => parsePointRows(invalid));
-  assert.throws(() => requireNumber("", "X"));
-  assert.throws(() => requireNumber("Infinity", "X"));
-});
 
 test("director reads persisted disabled IDs and uses domain rules including emergency stop", async () => {
   const f = fixture();
@@ -108,44 +78,11 @@ test("editor drafts are isolated from saved scene configuration and survive swit
 test("new episode name input is not mistaken for unsaved episode configuration", () => {
   const app = new EditorApplication(fixture().controller);
   assert.equal(app.onDraftInput({ target: { name: "newEpisodeName", closest: () => null } }), false);
-  assert.equal(app.onDraftInput({ target: { name: "graphText", closest: () => null } }), true);
+  assert.equal(app.onDraftInput({ target: { name: "unrelated", closest: () => null } }), false);
   assert.equal(app.episodeDirty, false);
 });
 
-test("legacy token form preserves the complete shop while editing unrelated behavior", async () => {
-  const f = fixture();
-  const app = new TokenEditorApplication(f.controller, "guard", { episodeId: "calm" });
-  await app._prepareContext({});
-  app.draft.shop.items.push({ id: "stock", data: { name: "Rope", system: { quantity: 3 } }, stock: 2 });
-  Object.assign(app.draft.shop, { range: 7, requireGMApproval: true, display: "tiles" });
-  const originalShop = structuredClone(app.draft.shop);
-  const values = {
-    enabled: true, emoji: "!", positionEnabled: false, hidden: "keep", speechInterval: "40", phrases: "First\nSecond",
-    speechRange: "25", visibleOnly: true, entrySpeech: "Welcome", patrolEnabled: true, patrolSpeed: "4", points: "10, 20",
-    interactionLabel: "Ask", interactionTarget: "tension"
-  };
-  app.element = { querySelector(selector) {
-    const key = selector.match(/name="([^"]+)"/)?.[1];
-    return key in values ? { value: String(values[key]), checked: values[key] === true } : null;
-  } };
-  const data = app.readBehavior();
-  assert.deepEqual(data.shop, originalShop);
-  assert.equal(data.shop.range, 7);
-  assert.equal(data.shop.requireGMApproval, true);
-  assert.equal(data.shop.display, "tiles");
-  assert.deepEqual(data.shop.items[0].data, { name: "Rope", system: { quantity: 3 } });
-  assert.deepEqual(data.speech.phrases, ["First", "Second"]);
-  assert.equal(data.hidden, null);
-  assert.equal(data.position, null);
-});
 
-test("a token editor refuses writes after switching scenes", async () => {
-  const f = fixture();
-  const app = new TokenEditorApplication(f.controller, "guard", { episodeId: "calm" });
-  f.context.scene.id = "different";
-  await assert.rejects(app.handleAction("saveToken"));
-  assert.equal(f.saved.length, 0);
-});
 
 test("an old episode form cannot be submitted into the scene selected meanwhile", async () => {
   const f = fixture();
@@ -216,7 +153,7 @@ test("shop manager dispatches a reviewed pending message and restricts actions t
   await assert.rejects(app.handleAction("reject", { tokenId: "guard", messageId: "message-1" }));
 });
 
-test("chat audience opt-outs and Tile event actions survive episode form serialization", async () => {
+test("Tile event actions survive episode form serialization", async () => {
   const f = fixture();
   const app = new EditorApplication(f.controller);
   await app._prepareContext({});
@@ -224,39 +161,15 @@ test("chat audience opt-outs and Tile event actions survive episode form seriali
     const name = selector.match(/name="([^"]+)"/)?.[1];
     return name in values ? { value: String(values[name]), checked: values[name] === true } : null;
   } });
-  const subscription = formFields({ subscriptionEnabled: true, subscriptionEvent: "lever.used", subscriptionKind: "chat",
-    subscriptionMacro: "", subscriptionEpisode: "", subscriptionText: "The lever moves.", audienceGMs: false,
-    audienceInteractor: true, audienceNearby: false, audienceRange: "20", audienceVisible: true }, { subscriptionRow: "notice" });
   const interaction = formFields({ actionName: "Use lever", actionEnabled: true, actionTarget: "Tile:lever", actionRange: "5", actionEvent: "lever.used" }, { interactionRow: "lever-use" });
   const form = formFields({ name: "Calm", allowFromAll: true, sound: "", stop: false, pause: false });
-  form.querySelectorAll = (selector) => selector === "[data-subscription-row]" ? [subscription] : selector === "[data-interaction-row]" ? [interaction] : [];
+  form.querySelectorAll = (selector) => selector === "[data-interaction-row]" ? [interaction] : [];
   app.element = { querySelector: () => form };
   const episode = app.readEpisode();
-  assert.equal(episode.subscriptions[0].audience.gms, false);
-  assert.equal(episode.subscriptions[0].audience.interactor, true);
-  assert.equal(episode.subscriptions[0].audience.range, 20);
   assert.deepEqual(episode.interactions[0].target, { type: "Tile", id: "lever" });
   assert.equal(episode.interactions[0].eventName, "lever.used");
 });
 
-test("dialogue editor lists scene targets and keeps its source revision", async () => {
-  const f = fixture();
-  f.context.scene.tiles = new Map([["lever", { id: "lever", name: "Lever" }]]);
-  f.context.definition.revision = 7;
-  f.context.episode.dialogues = [{ id: "talk", name: "Guard", enabled: true, target: { type: "Token", id: "guard" }, range: 5,
-    startNodeId: "start", nodes: [{ id: "start", text: "Hello", art: "", responses: [] }] }];
-  const app = new DialogueEditorApplication(f.controller, "talk", { episodeId: "calm" });
-  const view = await app._prepareContext({});
-  assert.equal(view.targets.length, 2);
-  assert.equal(view.targets[1].value, "Tile:lever");
-  assert.equal(app.draftRevision, 7);
-  app.dirty = true;
-  app.draft.name = "Local draft";
-  f.context.definition.revision = 8;
-  await app._prepareContext({});
-  assert.equal(app.draftRevision, 7);
-  assert.equal(app.draft.name, "Local draft");
-});
 
 test("shared trigger markup escapes every configured label, tag, and attribute value", () => {
   const html = buildTriggerFields({ allowTags: ['" onfocus="alert(1)'], denyTags: ["<script>bad</script>"] },
@@ -304,12 +217,11 @@ test("manual dialogue catalog reads preparation while halted and calls only manu
   f.context.runtime.episodeId = null;
   f.context.runtime.halted = true;
   f.context.scene.tokens = new Map([["guard", { id: "guard", name: "Guard" }]]);
-  f.context.episode.dialogues = [{ id: "talk", name: "Talk", enabled: false, target: { type: "Token", id: "guard" }, startNodeId: "start",
-    nodes: [{ id: "start", text: "Hello", responses: [{ id: "leave", label: "Leave", eventName: "alarm" }] }] }];
+  f.context.assets = { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: "talk", name: "Talk", startPageId: "start", pages: [{ id: "start", name: "Start", text: "Hello", responses: [{ id: "leave", label: "Leave", eventName: "alarm" }] }] }] };
   f.controller.dialogues = { invitePlayers: async (args) => calls.push(args) };
   const app = new DialogueCatalogApplication(f.controller);
   const view = await app._prepareContext({});
-  assert.match(view.dialogue.id, /^legacy-dialogue-/);
+  assert.equal(view.dialogue.id, "talk");
   assert.equal(view.node.text, "Hello");
   globalThis.ui = { notifications: { info() {} } };
   app.recipients.add("player");
@@ -328,18 +240,13 @@ for (const version of ["13.351", "14.366"]) {
     hbs.registerHelper("selectOptions", () => "");
     const f = fixture();
     f.context.scene.name = '<script>alert("scene")</script>';
-    f.context.episode.name = '<img src=x onerror="alert(1)">';
+    f.context.tokens[0].name = '<img src=x onerror="alert(1)">';
     const editor = new EditorApplication(f.controller);
-    const editorTemplate = hbs.compile(readFileSync(new URL("../dmicher-master-screen/templates/editor.hbs", import.meta.url), "utf8"));
-    const output = editorTemplate(await editor._prepareContext({}));
-    assert.ok(output.includes("&lt;script&gt;"));
+    const editorTemplate = hbs.compile(readFileSync(new URL("../dmicher-master-screen/templates/episode-tools.hbs", import.meta.url), "utf8"));
+    const output = editorTemplate({ ...await editor._prepareContext({}), blocks: { tokens: true, entry: true } });
+    assert.ok(output.includes("&lt;img"));
     assert.ok(!output.includes("<script>"));
     assert.ok(!output.includes("<img src=x"));
-    const token = new TokenEditorApplication(f.controller, "guard", { episodeId: "calm" });
-    const view = await token._prepareContext({});
-    const tokenTemplate = hbs.compile(readFileSync(new URL("../dmicher-master-screen/templates/token-editor.hbs", import.meta.url), "utf8"));
-    assert.ok(tokenTemplate(view).includes("speechInterval"));
-    assert.ok(!tokenTemplate(view).includes("shopApproval"));
     const shops = shopsFixture();
     shops.shops[0].npcName = "<script>bad</script>";
     const manager = new ShopsManagerApplication(shops.controller);
@@ -348,7 +255,7 @@ for (const version of ["13.351", "14.366"]) {
     assert.match(managerOutput, /data-token-id="guard"[^>]*data-message-id="message-1"/);
     assert.ok(managerOutput.includes("&lt;script&gt;bad&lt;/script&gt;"));
     assert.ok(!managerOutput.includes("<script>"));
-    for (const template of ["interaction", "actor-view", "shop", "dialogue", "dialogue-editor", "dialogue-catalog"]) {
+    for (const template of ["interaction", "actor-view", "shop", "dialogue", "dialogue-catalog"]) {
       const compiled = hbs.compile(readFileSync(new URL(`../dmicher-master-screen/templates/${template}.hbs`, import.meta.url), "utf8"));
       const html = compiled({ name: "<script>bad</script>", npcName: "<script>bad</script>", sceneName: "<script>bad</script>",
         shop: true, transition: true, label: "<script>bad</script>", characters: [], groups: [], tokens: [],

@@ -1,4 +1,4 @@
-import { MODULE_ID, normalizeDefinition, normalizeObjectTags } from "./model.js";
+import { MODULE_ID, normalizeDefinition } from "./model.js";
 import { asArray, getDefinitions, requireGM } from "./store.js";
 import { getEventCatalog, normalizeCatalog } from "./event-catalog.js";
 import { getInteractionCatalog, normalizeInteractionCatalog } from "./scene-assets.js";
@@ -26,7 +26,7 @@ export function remapReferences(value, mapping) {
 export async function exportBundle(scene) {
   requireGM();
   if (!scene) throw new Error("Сначала откройте сцену");
-  const definitions = getDefinitions(scene), definition = definitions[0] ?? null, actors = [], macros = [], journals = [];
+  const definitions = getDefinitions(scene), actors = [], macros = [], journals = [];
   const allEvents = getEventCatalog(scene);
   const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
   const eventCatalog = normalizeCatalog({ ...allEvents, events: allEvents.events.filter((entry) => !entry.builtin), triggers: allEvents.triggers.filter((entry) => !entry.builtin) });
@@ -45,35 +45,26 @@ export async function exportBundle(scene) {
   for (const note of asArray(scene.notes)) if (note.entryId) await include(`JournalEntry.${note.entryId}`);
   for (const episode of definitions.flatMap((entry) => entry.episodes)) {
     for (const spawn of episode.spawns) await include(spawn.actorUuid);
-    for (const subscription of episode.subscriptions ?? []) if (subscription.kind === "macro") await include(subscription.macroUuid);
-    for (const behavior of Object.values(episode.tokens)) for (const point of behavior.patrol.points) await include(point.macroUuid);
     for (const entry of [...episode.workspace.gm, ...episode.workspace.players]) await include(entry.uuid);
   }
   for (const event of eventCatalog.events) for (const subscriber of event.subscribers) if (subscriber.kind === "macro") await include(subscriber.macroUuid);
   for (const macro of eventCatalog.macros) await include(macro.uuid);
   for (const binding of Object.values(objectBindings.bindings)) for (const feature of binding.features) {
     if (feature.kind === "macro") await include(feature.macroUuid);
-    if (feature.kind === "patrol") for (const point of feature.patrol.points) await include(point.macroUuid);
   }
   for (const binding of Object.values(objectBindings.bindings)) for (const routine of binding.routines) for (const step of routine.steps) if (step.kind === "macro") await include(step.parameters.macroUuid);
   const data = portable(scene);
-  const objectTags = normalizeObjectTags(data.flags?.[MODULE_ID]?.objectTags);
   if (data.flags) delete data.flags[MODULE_ID];
-  if (Object.values(objectTags).some((entries) => Object.keys(entries).length)) {
-    data.flags ??= {};
-    data.flags[MODULE_ID] = { objectTags };
-  }
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,
-    definition, definitions, eventCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
+    definitions, eventCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
 }
 export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
   const name = (entry) => typeof entry === "string" && entry.trim().length > 0;
   if (value?.format !== MODULE_ID || value.schemaVersion !== 1 || !object(value.scene) || !name(value.scene.name)
-    || (!Array.isArray(value.definitions) && !object(value.definition))) throw new Error("Это не JSON сцены Ширмы версии 1");
+    || !Array.isArray(value.definitions)) throw new Error("Это не JSON сцены Ширмы версии 1");
   if (value.systemId !== game.system.id) throw new Error("Предметы и персонажи требуют той же игровой системы");
-  if (value.definition) normalizeDefinition(value.definition);
   if (value.definitions) {
     if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error("Некорректный список схем.");
     const schemes = value.definitions.map(normalizeDefinition);
@@ -100,7 +91,7 @@ export function validateBundle(value) {
     if (!object(token) || !name(token._id) || tokenIds.has(token._id)) throw new Error("Повреждён или повторён ID токена сцены");
     tokenIds.add(token._id);
   }
-  const definitions = (value.definitions ?? [value.definition]).map((entry) => normalizeDefinition(entry));
+  const definitions = value.definitions.map((entry) => normalizeDefinition(entry));
   const objectBindings = normalizeObjectBindings(value.objectBindings ?? {});
   const flags = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, entry])), eventCatalog: value.eventCatalog,
     ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings };
@@ -137,12 +128,11 @@ export async function importBundle(value) {
       const mapped = mapping.get(`JournalEntry.${note.entryId}`);
       if (mapped) note.entryId = mapped.slice("JournalEntry.".length);
     }
-    const definitions = (value.definitions ?? [value.definition]).map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
+    const definitions = value.definitions.map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
     data.active = false; data.navigation = false;
     data.flags ??= {};
-    const objectTags = normalizeObjectTags(data.flags[MODULE_ID]?.objectTags);
     data.flags[MODULE_ID] = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, { ...entry, revision: 1 }])),
-      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)), objectTags,
+      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)),
       ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog, mapping)) } : {}),
       ...(value.objectBindings ? { objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings, mapping)) } : {}) };
     const Scene = CONFIG.Scene?.documentClass ?? getDocumentClass("Scene");

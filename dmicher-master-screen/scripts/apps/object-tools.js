@@ -8,7 +8,7 @@ import { getEventCatalog } from "../event-catalog.js";
 import { randomId, normalizeTrigger } from "../model.js";
 import { buildTriggerFields, readTriggerFields, splitTags } from "./trigger-fields.js";
 import { routineStepTemplate } from "../routine-model.js";
-import { buildRoutineFields, readRoutineFields, appendRoutineStep, removeRoutineStep } from "./routine-fields.js";
+import { buildRoutineFields, readRoutineFields, appendRoutineStep, removeRoutineStep, bindRoutineSorting } from "./routine-fields.js";
 
 const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
@@ -50,8 +50,7 @@ class ObjectForm extends ScreenFormApplication {
   async persist({ close = false } = {}) {
     this.assertCurrentScene();
     const scene = this.context().scene;
-    // Only edited fields constitute a command. Merely inspecting legacy behavior must
-    // not flatten its per-episode shop/dialogue variants into one new attachment.
+    // Send only changed fields; opening another object's form is not an edit.
     const patch = Object.fromEntries(["schemeId", "tags", "notes", "playerCharacter", "entry", "episodes", "shop", "dialogue", "features", "routines"]
       .filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key]))
       .map((key) => [key, clone(this.draft[key])]));
@@ -142,7 +141,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   automationFields({ definition, scene }) {
     const events = getEventCatalog(scene), eventOptions = events.events.map((item) => ({ id: item.name, name: item.name }));
     const macros = events.macros.map((item) => ({ id: item.uuid, name: game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.name ?? item.uuid }));
-    const features = (this.draft.features ?? []).filter((feature) => feature.kind !== "patrol").map((feature) => {
+    const features = (this.draft.features ?? []).map((feature) => {
       const fieldPrefix = `feature-${feature.id}`;
       const details = `<label>${t("При событии", "On event")}<select name="${fieldPrefix}-event">${options(eventOptions, feature.eventName)}</select></label>`
           + (feature.kind === "macro" ? `<label>${t("Макрос", "Macro")}<select name="${fieldPrefix}-macro">${options(macros, feature.macroUuid)}</select></label>` : `<label>${t("Вызвать триггер", "Invoke trigger")}<select name="${fieldPrefix}-trigger">${options(events.triggers, feature.triggerId)}</select></label><label>${t("Параметры триггера (JSON)", "Trigger parameters (JSON)")}<textarea name="${fieldPrefix}-parameters">${e(JSON.stringify(feature.parameters ?? {}, null, 2))}</textarea></label>`);
@@ -169,7 +168,6 @@ export class ObjectBehaviorApplication extends ObjectForm {
       return;
     }
     this.draft.features = (this.draft.features ?? []).map((feature) => {
-      if (feature.kind === "patrol") return feature;
       const prefix = `feature-${feature.id}`, next = { ...feature,
         enabled: root.querySelector(`[name="${prefix}-enabled"]`)?.checked === true,
         episodeIds: [...root.querySelectorAll(`[name="${prefix}-episode"]:checked`)].map((item) => item.value) };
@@ -181,6 +179,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   async _onRender(context, options) {
     await super._onRender(context, options);
+    if (this.tab === "routine") bindRoutineSorting(this.element, this.draft.routines ?? [], () => { this.dirty = true; }, { signal: this.events.signal });
     this.element.addEventListener("change", (event) => {
       if (event.target.matches("[data-routine-definition]")) {
         try {
@@ -215,7 +214,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   async handleAction(action, button) {
     if (action === "information") return this.controller.openObjectInfo(this.descriptor);
-    if (["add-routine", "remove-routine", "clear-routine", "convert-routine", "add-routine-step", "remove-routine-step", "routine-point"].includes(action)) {
+    if (["add-routine", "remove-routine", "add-routine-step", "remove-routine-step", "routine-point"].includes(action)) {
       this.capture();
       this.draft.routines ??= [];
       const routines = this.draft.routines, index = Number(button.dataset.index), routine = routines[index], stepIndex = Number(button.dataset.step);
@@ -224,13 +223,6 @@ export class ObjectBehaviorApplication extends ObjectForm {
         if (episode) routines.push({ episodeId: episode.id, repeat: false, steps: [] });
       }
       if (action === "remove-routine") routines.splice(index, 1);
-      if (action === "clear-routine") routines[index] = { episodeId: routine.episodeId, repeat: false, steps: [] };
-      if (action === "convert-routine") {
-        const conditional = routine.legacyPatrol?.points?.some((point) => point.macroUuid || point.onTrue || point.eventName);
-        if (conditional && !await foundry.applications.api.DialogV2.confirm({ window: { title: t("Преобразовать патруль", "Convert patrol") },
-          content: `<p>${t("Таблица сохранит маршрут. Условные проверки прежних точек не переносятся; исходные настройки останутся в техдолге. Продолжить?", "The table preserves the route. Former waypoint conditions are not transferred; the original setup remains in legacy behavior. Continue?")}</p>`, rejectClose: false })) return;
-        delete routine.legacy; delete routine.legacyPatrol;
-      }
       if (action === "add-routine-step") appendRoutineStep(routine);
       if (action === "remove-routine-step") removeRoutineStep(routine, stepIndex);
       if (action === "routine-point") {

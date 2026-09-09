@@ -11,9 +11,6 @@ const builtinSpecs = [
   ["episode.entered", fields([["episodeId", "string"], ["previousEpisodeId", "string"], ["schemeId", "string"]])],
   ["automation.changed", fields([["tokenId", "string"], ["enabled", "boolean"]])],
   ["zone.entered", fields([["zoneId", "string"], ["label", "string"]])],
-  ["npc.interacted", fields([["tokenId", "string"], ["userId", "string"]])],
-  ["patrol.arrived", fields([["pointIndex", "integer"], ["x", "number"], ["y", "number"]])],
-  ["patrol.check", fields([["result", "boolean"], ["macroUuid", "string"]])],
   ["dialogue.finished", fields([["dialogueId", "string"], ["responseId", "string"], ["userId", "string"]])]
 ];
 export function builtinCatalog() {
@@ -27,7 +24,7 @@ export function builtinCatalog() {
 function normalizeParameter(raw) {
   const name = String(raw.name ?? "").trim();
   if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(name) || ["type", "__proto__", "constructor", "prototype"].includes(name)) throw new Error("Имя параметра: латиница, цифры и подчёркивание; поле type занято именем триггера.");
-  const type = ({ text: "string", int: "integer", float: "number", bool: "boolean" })[raw.type] ?? raw.type;
+  const type = raw.type;
   if (!["string", "integer", "number", "boolean"].includes(type)) throw new Error("Неизвестный тип параметра.");
   const result = { name, type, description: normalizeDescription(raw.description), required: raw.required !== false };
   for (const key of type === "string" ? ["minLength", "maxLength"] : type === "integer" || type === "number" ? ["min", "max", ...(type === "number" ? ["decimals"] : [])] : []) {
@@ -109,31 +106,13 @@ export function normalizeCatalog(raw = {}) {
 export function getEventCatalog(scene) {
   const custom = normalizeCatalog(scene?.getFlag(MODULE_ID, "eventCatalog") ?? {}), builtin = builtinCatalog();
   const result = { ...custom, events: [...builtin.events, ...custom.events], triggers: [...builtin.triggers, ...custom.triggers] };
-  // Upgrade older scene-local event names into explicit catalog entries on first edit.
-  const names = new Set(getDefinitions(scene).flatMap((definition) => definition.episodes.flatMap((episode) => [
-    ...episode.events, ...episode.subscriptions.map((entry) => entry.event), ...episode.interactions.map((entry) => entry.eventName),
-    ...episode.zones.map((entry) => entry.eventName), ...Object.values(episode.tokens).flatMap((entry) => [entry.interaction.eventName, ...entry.patrol.points.map((point) => point.eventName)]),
-    ...episode.dialogues.flatMap((dialogue) => dialogue.nodes.flatMap((node) => node.responses.map((entry) => entry.eventName)))
-  ])).filter(Boolean));
-  const hash = (value) => { let sum = 2166136261; for (const char of value) sum = Math.imul(sum ^ char.codePointAt(0), 16777619); return (sum >>> 0).toString(16); };
-  for (const name of names) if (!result.events.some((entry) => entry.name === name)) {
-    const suffix = hash(name), eventId = `legacy-event-${suffix}`;
-    result.events.push({ id: eventId, name, builtin: false, subscribers: [], description: {
-      ru: "Событие, указанное в подготовленных взаимодействиях или переходах сцены. Уточните его назначение и настройте подписчиков перед использованием.",
-      en: "An event referenced by prepared scene interactions or transitions. Clarify its purpose and configure subscribers before using it." } });
-    result.triggers.push({ id: `legacy-trigger-${suffix}`, name, eventId, builtin: false,
-      description: { ru: "Совместимый набор данных существующего события сцены. Поля необязательны; их наличие зависит от источника события.",
-        en: "A compatible data set for an existing scene event. Fields are optional; their presence depends on the event source." },
-      parameters: fields([["tokenId", "string"], ["userId", "string"], ["dialogueId", "string"], ["responseId", "string"], ["interactionId", "string"]]) });
-  }
   return result;
 }
 
 export function exportCatalogDependencies(scene, episodes) {
-  const catalog = getEventCatalog(scene), names = new Set(episodes.flatMap((episode) => [...episode.events,
-    ...episode.subscriptions.map((entry) => entry.event), ...episode.interactions.map((entry) => entry.eventName),
-    ...(episode.zones ?? []).map((entry) => entry.eventName), ...Object.values(episode.tokens ?? {}).flatMap((entry) => [entry.interaction?.eventName, ...(entry.patrol?.points ?? []).map((point) => point.eventName)]),
-    ...episode.dialogues.flatMap((dialogue) => dialogue.nodes.flatMap((node) => node.responses.map((entry) => entry.eventName)))
+  const catalog = getEventCatalog(scene), names = new Set(episodes.flatMap((episode) => [...(episode.events ?? []),
+    ...(episode.interactions ?? []).map((entry) => entry.eventName),
+    ...(episode.zones ?? []).map((entry) => entry.eventName)
   ]).filter(Boolean));
   const eventIds = new Set(catalog.events.filter((entry) => names.has(entry.name)).map((entry) => entry.id));
   let changed;
@@ -191,12 +170,11 @@ export function mergeCatalogDependencies(scene, source = {}) {
 function eventIsReferenced(scene, name) {
   return assetDialogues(scene).some((dialogue) => dialogue.pages.some((page) => page.responses.some((response) => response.eventName === name)))
     || objectRoutineSteps(scene).some((step) => step.kind === "event" && step.parameters.eventName === name)
-    || objectFeatures(scene).some((feature) => feature.eventName === name || feature.patrol?.points?.some((point) => point.eventName === name))
+    || objectFeatures(scene).some((feature) => feature.eventName === name)
     || getDefinitions(scene).some((definition) => definition.episodes.some((episode) => episode.events.includes(name)
-    || episode.subscriptions.some((entry) => entry.event === name) || episode.interactions.some((entry) => entry.eventName === name)
+    || episode.interactions.some((entry) => entry.eventName === name)
     || episode.zones.some((entry) => entry.eventName === name)
-    || Object.values(episode.tokens).some((entry) => entry.interaction.eventName === name || entry.patrol.points.some((point) => point.eventName === name))
-    || episode.dialogues.some((dialogue) => dialogue.nodes.some((node) => node.responses.some((entry) => entry.eventName === name)))));
+  ));
 }
 const assetDialogues = (scene) => scene?.getFlag(MODULE_ID, "interactionCatalog")?.dialogues ?? [];
 const objectFeatures = (scene) => Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {}).flatMap((binding) => binding?.features ?? []);
@@ -240,11 +218,8 @@ export class EventCatalog {
       for (const definition of definitions) {
         for (const episode of definition.episodes) {
           episode.events = episode.events.map((entry) => entry === previous.name ? name : entry);
-          episode.subscriptions.forEach((entry) => replace(entry, "event"));
           episode.interactions.forEach((entry) => replace(entry, "eventName"));
           episode.zones.forEach((entry) => replace(entry, "eventName"));
-          episode.dialogues.forEach((dialogue) => dialogue.nodes.forEach((node) => node.responses.forEach((entry) => replace(entry, "eventName"))));
-          for (const behavior of Object.values(episode.tokens)) { replace(behavior.interaction, "eventName"); behavior.patrol.points.forEach((entry) => replace(entry, "eventName")); }
         }
         definition.revision++;
       }
@@ -256,7 +231,7 @@ export class EventCatalog {
       }
       if (bindings) {
         for (const binding of Object.values(bindings.bindings)) {
-          for (const feature of binding?.features ?? []) { replace(feature, "eventName"); feature.patrol?.points?.forEach((point) => replace(point, "eventName")); }
+          for (const feature of binding?.features ?? []) replace(feature, "eventName");
           for (const routine of binding?.routines ?? []) for (const step of routine.steps) if (step.kind === "event") replace(step.parameters, "eventName");
         }
         bindings.revision = (bindings.revision ?? 0) + 1; catalog._objectBindings = bindings;
@@ -288,7 +263,7 @@ export class EventCatalog {
     if (index < 0) catalog.macros.push(next); else catalog.macros[index] = next; return next;
   }, options); }
   removeMacro(uuid) { return this.change((catalog) => {
-    if (objectFeatures(this.scene).some((feature) => feature.macroUuid === uuid || feature.patrol?.points?.some((point) => point.macroUuid === uuid))) throw new Error("Макрос используется особенностью объекта.");
+    if (objectFeatures(this.scene).some((feature) => feature.macroUuid === uuid)) throw new Error("Макрос используется особенностью объекта.");
     if (objectRoutineSteps(this.scene).some((step) => step.kind === "macro" && step.parameters.macroUuid === uuid)) throw new Error("Макрос используется распорядком объекта.");
     catalog.macros = catalog.macros.filter((entry) => entry.uuid !== uuid);
   }); }

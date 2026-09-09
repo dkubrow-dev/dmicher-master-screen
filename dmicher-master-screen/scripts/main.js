@@ -1,7 +1,6 @@
 import { MODULE_ID, VERSION } from "./model.js";
 import { ScreenController } from "./controller.js";
 import { installControls } from "./controls.js";
-import { getRuntime, isAuthority } from "./store.js";
 import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
 import { installScreenSettingHelp } from "./setting-help.js";
@@ -31,12 +30,6 @@ function attachCanvas() {
 }
 
 Hooks.once("init", () => {
-  game.settings.register(MODULE_ID, "theme", { name: "Тема ширмы", scope: "client", config: false, type: String,
-    choices: { dark: "Тёмная", light: "Светлая" }, default: "dark", onChange: () => theme.apply() });
-  try {
-    const saved = game.settings.storage.get("client").getItem(`${MODULE_ID}.theme`);
-    if (saved !== null && saved !== undefined) generics.appearance.adoptLegacyTheme(JSON.parse(saved), 20);
-  } catch (_error) { /* Invalid legacy storage does not replace the common appearance. */ }
   theme.install();
   controller = new ScreenController();
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
@@ -70,11 +63,6 @@ Hooks.once("ready", () => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
     void controller.dialogues.processCommand(message, userId).catch(notifyError);
-    const command = message.getFlag?.(MODULE_ID, "interaction");
-    if (!command || !isAuthority() || typeof command.schemeId !== "string" || command.sceneId !== canvas.scene?.id
-      || command.runId !== getRuntime(canvas.scene, { schemeId: command.schemeId }).runId || generics.chat.getMessageAuthorId(message) !== userId
-      || !message.whisper.includes(game.user.id)) return;
-    void controller.runtime.interact(canvas.scene, command.tokenId, { sourceTokenId: command.sourceTokenId, user: game.users.get(userId), schemeId: command.schemeId }).catch(notifyError);
   });
   on(generics.chat.getChatMessageRenderHook(), (message, html) => controller.shop.renderChatMessage?.(message, html));
   attachCanvas();

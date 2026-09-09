@@ -13,13 +13,14 @@ function fixture() {
       { id: "start", text: "Opening", art: "", responses: [{ id: "next", label: "Continue", nextNodeId: "last" }] },
       { id: "last", text: "Conclusion", art: "", responses: [{ id: "finish", label: "Accept", eventName: "alarm.start" }] }
     ] };
-  const definition = { episodes: [{ id: "stopped", dialogues: [dialogue] }] };
+  const catalog = { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: dialogue.id, name: dialogue.name, startPageId: dialogue.startNodeId,
+    pages: dialogue.nodes.map((node) => ({ ...node, art: "npc.webp", responses: node.responses.map((response) => ({ ...response, nextPageId: response.nextNodeId })) })) }] };
   const runtime = { halted: true, runId: "", triggerCounts: { "main:stopped:dialogue:talk": 50 }, dialogueSessions: {} };
-  const scene = { id: "scene", getFlag: () => undefined, tokens: new Map([["npc", { id: "npc", name: "Merchant", hidden: true, texture: { src: "npc.webp" } }]]), tiles: new Map() };
+  const scene = { id: "scene", getFlag: (_scope, key) => key === "interactionCatalog" ? catalog : undefined, tokens: new Map([["npc", { id: "npc", name: "Merchant", hidden: true, texture: { src: "npc.webp" } }]]), tiles: new Map() };
   const sent = [], opened = [];
   globalThis.game = { user: gm, users: new Map([[gm.id, gm], [player.id, player], [other.id, other]]), scenes: new Map([[scene.id, scene]]) };
   globalThis.foundry ??= {}; foundry.utils = { ...(foundry.utils ?? {}), randomID: () => `id-${++serial}` };
-  const service = createManualDialogueService({ definitionOf: () => definition,
+  const service = createManualDialogueService({
     openWindow: async (data) => { opened.push(structuredClone(data)); return data; },
     messageService: { create: async (data, options) => {
       sent.push({ data, options }); return [{ id: `message-${++serial}` }];

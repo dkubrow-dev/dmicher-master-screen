@@ -5,7 +5,9 @@ import { MODULE_ID, defaultEpisode, emptyRuntime } from "../dmicher-master-scree
 import { requestHalt, finishHalt } from "../dmicher-master-screen/scripts/execution.js";
 
 function fixture() {
-  const scene = { id: "scene", tokens: new Map(), flags: { [MODULE_ID]: { objectTags: { Token: { pc: [" Member ", "human"] }, Tile: {} } } },
+  const scene = { id: "scene", tokens: new Map(), flags: { [MODULE_ID]: { objectBindings: { schemaVersion: 1, revision: 0, bindings: {
+    "Token:pc": { type: "Token", id: "pc", schemeId: null, tags: [" Member ", "human"] }
+  } } } },
     getFlag(scope, key) { return structuredClone(this.flags[scope]?.[key]); } };
   const pc = { id: "pc", parent: scene };
   scene.tokens.set(pc.id, pc);
@@ -71,11 +73,11 @@ test("explicit runtime enable overrides both directions and does not reset consu
 test("entry resets only incoming episode policies that opt in and preserves manual overrides", () => {
   const f = fixture();
   f.state.episode.zones = [{ id: "door", trigger: {} }, { id: "once-ever", trigger: { resetOnEntry: false } }];
-  f.state.episode.dialogues = [{ id: "talk", trigger: {} }];
+  f.state.episode.dialogues = [{ id: "talk", target: { type: "Token", id: "npc" }, trigger: {} }];
   f.state.episode.interactions = [{ id: "touch", trigger: {} }];
-  f.state.episode.tokens = { npc: { shop: { trigger: {} }, interaction: { trigger: { resetOnEntry: false } } } };
-  const keep = ["main:calm:zone:once-ever", "main:calm:npc-interaction:npc", "main:alarm:zone:door", "other:calm:zone:door"];
-  const reset = [f.key, "main:calm:dialogue:talk", "main:calm:interaction:touch", "main:calm:shop:npc"];
+  f.state.episode.shops = [{ target: { type: "Token", id: "npc" }, trigger: {} }];
+  const keep = ["main:calm:zone:once-ever", "main:alarm:zone:door", "other:calm:zone:door"];
+  const reset = [f.key, "main:calm:dialogue:Token:npc", "main:calm:interaction:touch", "main:calm:shop:Token:npc"];
   f.state.triggerCounts = Object.fromEntries([...keep, ...reset].map((key) => [key, 3]));
   f.state.triggerEnabledOverrides[f.key] = false;
   resetEpisodeTriggerCounts(f.state);

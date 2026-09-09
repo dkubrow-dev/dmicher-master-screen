@@ -13,18 +13,20 @@ export class TokenRoutineRuntime {
   constructor(runtime, { random = Math.random } = {}) { this.runtime = runtime; this.random = random; this.jobs = new Map(); this.cancels = new Set(); }
   next(routine, step) {
     if (step.next.length) return step.next[Math.min(step.next.length - 1, Math.floor(this.random() * step.next.length))];
-    return routine.repeat ? routine.steps[0]?.id ?? null : null;
+    return routine.repeat && routine.steps.some((entry) => entry.id === 1) ? 1 : null;
   }
   advance(state, tokenId, next) {
     const progress = state.routineStates[tokenId]; progress.stepId = next; progress.status = next === null ? "done" : "ready";
-    delete progress.remainingMs; delete progress.nextStepId;
+    // Foundry merges flag objects recursively: omitting a deleted property does not
+    // remove its stored zero. Explicit null starts every following wait afresh.
+    progress.remainingMs = null; progress.waitStepId = null; progress.nextStepId = null;
   }
   async tick(scene, initial, token, routine, elapsed) {
     const runtime = this.runtime, key = keyOf(scene, initial, token);
     let state = getRuntimeForRun(scene, initial.runId);
     if (!state || !runtime.currentToken(scene, state.runId, token.id)) return;
     state.routineStates ??= {};
-    let progress = state.routineStates[token.id] ??= { stepId: routine.steps[0]?.id ?? null, status: routine.steps.length ? "ready" : "done", sequence: 0 };
+    let progress = state.routineStates[token.id] ??= { stepId: routine.steps.length ? 1 : null, status: routine.steps.length ? "ready" : "done", sequence: 0, remainingMs: null, waitStepId: null, nextStepId: null };
     if (progress.status === "pending") {
       if (!this.jobs.has(key)) {
         progress.status = "uncertain"; state.error = `Распорядок «${token.name}»: исход прежнего действия неизвестен. Явно перезапустите эпизод после проверки.`;
@@ -39,7 +41,9 @@ export class TokenRoutineRuntime {
       if (!step) { progress.status = "done"; await saveRuntime(scene, state); return; }
       const params = step.parameters;
       if (step.kind === "wait") {
-        progress.remainingMs ??= params.seconds * 1000;
+        if (progress.waitStepId !== step.id || progress.remainingMs === null || progress.remainingMs === undefined) {
+          progress.waitStepId = step.id; progress.remainingMs = params.seconds * 1000;
+        }
         progress.remainingMs = Math.max(0, progress.remainingMs - elapsed * 1000);
         if (progress.remainingMs > 0) { await saveRuntime(scene, state); return; }
       } else if (step.kind === "move") {

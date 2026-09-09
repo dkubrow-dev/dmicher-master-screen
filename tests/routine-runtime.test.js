@@ -1,17 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultDefinition, defaultTokenBehavior, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
 import { EpisodeRuntime } from "../dmicher-master-screen/scripts/runtime.js";
-import { getRuntime, saveRuntime, withSceneLock } from "../dmicher-master-screen/scripts/store.js";
+import { getRuntime, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { createDialogueService } from "../dmicher-master-screen/scripts/dialogues.js";
 import { createShopService } from "../dmicher-master-screen/scripts/shop.js";
 import { isInteractionPaused, beginInteractionPause } from "../dmicher-master-screen/scripts/interaction-pause.js";
 import { createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
-import { listAvailableInteractions } from "../dmicher-master-screen/scripts/interaction-access.js";
 
 const clone = structuredClone;
+function mergeFlags(previous, incoming) {
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return clone(incoming);
+  const result = previous && typeof previous === 'object' && !Array.isArray(previous) ? clone(previous) : {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key.startsWith('-=')) delete result[key.slice(2)];
+    else result[key] = mergeFlags(result[key], value);
+  }
+  return result;
+}
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
-async function fixture(steps = [], { repeat = false, legacy = false, emptyAnswers = false } = {}) {
+async function fixture(steps = [], { repeat = false, emptyAnswers = false, nativeMerge = false } = {}) {
   let serial = 0, now = Date.now();
   const gm = { id: "gm", isGM: true, role: 4, active: true }, player = { id: "player", isGM: false, role: 1, active: true };
   globalThis.game = { user: gm, users: new Map([gm, player].map((user) => [user.id, user])), scenes: new Map(), modules: new Map(), messages: new Map(), paused: false };
@@ -20,7 +28,7 @@ async function fixture(steps = [], { repeat = false, legacy = false, emptyAnswer
   const scene = { id: "map", grid: { size: 100, distance: 5 }, tokens: new Map(), tiles: new Map(), flags: { [MODULE_ID]: flags },
     getFlag(_scope, key) { return clone(flags[key]); },
     async setFlag(_scope, key, value) { const parts = key.split("."); let owner = flags;
-      for (const part of parts.slice(0, -1)) owner = owner[part] ??= {}; owner[parts.at(-1)] = clone(value); } };
+      for (const part of parts.slice(0, -1)) owner = owner[part] ??= {}; owner[parts.at(-1)] = nativeMerge ? mergeFlags(owner[parts.at(-1)], value) : clone(value); } };
   const make = (id, x, owned = false) => { const actor = { id: `actor-${id}`, items: new Map(), testUserPermission: (user) => owned && user.id === player.id };
     const token = { id, name: id, documentName: "Token", parent: scene, actor, x, y: 0, width: 1, height: 1, hidden: false,
       object: { checkCollision: () => false }, updates: [], async update(changes) { this.updates.push(clone(changes)); Object.assign(this, changes); } };
@@ -28,13 +36,11 @@ async function fixture(steps = [], { repeat = false, legacy = false, emptyAnswer
   const npc = make("npc", 0), pc = make("pc", 50, true), pc2 = make("pc2", 50, true);
   const trigger = { repeat: "always", allowTags: ["hero"] };
   flags.objectBindings = { schemaVersion: 1, revision: 1, bindings: {
-    "Token:npc": { type: "Token", id: "npc", schemeId: "main", routines: legacy ? [] : [{ episodeId: "calm", repeat, steps }],
+    "Token:npc": { type: "Token", id: "npc", schemeId: "main", routines: [{ episodeId: "calm", repeat, steps }],
       shop: { shopId: "shop", episodeIds: ["calm"], range: 30, trigger }, dialogue: { dialogueId: "talk", episodeIds: ["calm"], range: 30, trigger } },
     "Token:pc": { type: "Token", id: "pc", schemeId: null, playerCharacter: true, tags: ["hero"] },
     "Token:pc2": { type: "Token", id: "pc2", schemeId: null, playerCharacter: true, tags: ["hero"] }
   } };
-  if (legacy) flags.definitions.main.episodes[0].tokens.npc = { ...defaultTokenBehavior(),
-    speech: { interval: 10, phrases: ["legacy"], range: 30, visibleOnly: true }, patrol: { enabled: true, speed: 5, points: [{ x: 500, y: 0 }] } };
   flags.interactionCatalog = { schemaVersion: 1, revision: 1, shops: [{ id: "shop", name: "Shop", items: [], requireGMApproval: false }],
     dialogues: [{ id: "talk", name: "Talk", startPageId: "page", pages: [{ id: "page", name: "Page", text: "Hello", art: "", responses:
       emptyAnswers ? [] : [{ id: "finish", label: "Finish", nextPageId: "", eventName: "" }] }] }] };
@@ -132,17 +138,6 @@ test("all conversations and trade leases pause the same NPC until the last lease
   await f.tick(500); assert.equal(f.state().routineStates.npc.remainingMs, 1000);
 });
 
-test("legacy patrol and speech stop at admission, preserve remaining speech delay, and resume after expiry", async () => {
-  const f = await fixture([], { legacy: true });
-  await f.tick(); const x = f.npc.x;
-  await f.dialogueCommand(f.command({ kind: "start" }));
-  const delay = f.state().interactionClocks.npc.speechRemainingMs;
-  await f.tick(60000); assert.equal(f.npc.x, x); assert.equal(f.calls.speak.length, 0);
-  const state = f.state(); for (const session of Object.values(state.dialogueSessions)) session.expiresAt = Date.now() - 1; await saveRuntime(f.scene, state);
-  await f.tick(); assert.equal(f.npc.x, x); assert.equal(f.state().speech.npc.nextAt, f.now() + delay);
-  await f.tick(); assert.ok(f.npc.x > x); assert.equal(f.calls.speak.length, 0);
-});
-
 test("pending admission prevents following movement while geometry validates the latest completed move", async () => {
   const f = await fixture([step(1, "move", { x: 500, y: 0, speed: 5 })]);
   let completeMove, began; const moving = new Promise((resolve) => { began = resolve; });
@@ -206,18 +201,50 @@ test("interaction arriving during native Macro lookup defers its unstarted step 
   assert.deepEqual(calls[0].objectTarget, { type: "Token", id: "npc" }); assert.deepEqual(calls[0].parameters, { role: "guard" });
 });
 
-test("expired and pre-upgrade dialogue leases resume without spending the one-use trigger twice", async () => {
+test("expired dialogue leases resume without spending the one-use trigger twice", async () => {
   const f = await fixture([], { emptyAnswers: true });
   f.flags.objectBindings.bindings["Token:npc"].dialogue.trigger = { repeat: "limited", limit: 1 };
   const first = await f.dialogueCommand(f.command({ kind: "start" })); assert.ok(first.sessionId);
   const counts = clone(f.state().triggerCounts);
-  let state = f.state(); for (const session of Object.values(state.dialogueSessions)) delete session.expiresAt;
-  await saveRuntime(f.scene, state); assert.equal(isInteractionPaused(f.scene, "npc"), false, "old closed windows do not create perpetual pauses");
-  assert.ok(listAvailableInteractions(f.scene, { type: "Token", id: "npc" }, f.pc, f.player).some((entry) => entry.kind === "dialogue"));
-  const restored = await f.dialogueCommand(f.command({ kind: "start" })); assert.equal(restored.sessionId, first.sessionId);
-  assert.equal(isInteractionPaused(f.scene, "npc"), true); assert.deepEqual(f.state().triggerCounts, counts);
-  state = f.state(); for (const session of Object.values(state.dialogueSessions)) session.expiresAt = Date.now() - 1;
+  let state = f.state(); for (const session of Object.values(state.dialogueSessions)) session.expiresAt = Date.now() - 1;
   await saveRuntime(f.scene, state); assert.equal(isInteractionPaused(f.scene, "npc"), false);
   const reopened = await f.dialogueCommand(f.command({ kind: "start" })); assert.equal(reopened.sessionId, first.sessionId);
   assert.deepEqual(f.state().triggerCounts, counts); assert.equal(f.dialogueEvents.length, 1);
+});
+
+test("native recursive flag merging preserves full seven- and ten-second waits across repeated paths", async () => {
+  const f = await fixture([
+    step(1, "wait", { seconds: 1 }, [4]), step(4, "move", { x: 100, y: 0, speed: 5 }, [7]),
+    step(7, "wait", { seconds: 1 }, [9]), step(9, "speech", { text: "x", chat: true, bubble: false }, [12]),
+    step(12, "wait", { seconds: 5 }, [16]), step(16, "wait", { seconds: 7 }, [18]),
+    step(18, "wait", { seconds: 10 }, [20]),
+    step(20, "event", { eventName: "automation.changed", triggerId: "trigger-automation-changed", parameters: { enabled: true } })
+  ], { repeat: true, nativeMerge: true });
+  const observed = []; let previous = f.state().routineStates.npc.stepId;
+  for (let tick = 0; tick < 125; tick++) {
+    await f.tick(500); const id = f.state().routineStates.npc.stepId;
+    if (id !== previous) { observed.push({ id, at: f.now() }); previous = id; }
+  }
+  const sevens = observed.filter((entry) => entry.id === 16);
+  const tens = observed.filter((entry) => entry.id === 18);
+  assert.ok(sevens.length >= 2); assert.ok(tens.length >= 2);
+  for (const entering of sevens.slice(0, 2)) assert.equal(observed.find((entry) => entry.at > entering.at && entry.id === 18).at - entering.at, 7000);
+  for (const entering of tens.slice(0, 2)) assert.equal(observed.find((entry) => entry.at > entering.at && entry.id === 1).at - entering.at, 10000);
+});
+
+test("remaining time belongs to its wait ID, never to an earlier step's merged tail", async () => {
+  const f = await fixture([step(1, "emotion", { emoji: "" }, [16]), step(16, "wait", { seconds: 7 }, [18]), step(18, "wait", { seconds: 10 })], { nativeMerge: true });
+  const state = f.state(); Object.assign(state.routineStates.npc, { stepId: 16, waitStepId: 9, remainingMs: 500, nextStepId: 18 });
+  await saveRuntime(f.scene, state); await f.tick(500);
+  assert.equal(f.state().routineStates.npc.waitStepId, 16); assert.equal(f.state().routineStates.npc.remainingMs, 6500);
+  await f.runtime.enter(f.scene, "calm", { force: true });
+  assert.equal(f.state().routineStates.npc.remainingMs, null); assert.equal(f.state().routineStates.npc.waitStepId, null);
+  await f.tick(500); assert.equal(f.state().routineStates.npc.remainingMs, 7000);
+});
+
+test("visual row order never changes the start or repeat target ID one", async () => {
+  const f = await fixture([step(7, "emotion", { emoji: "b" }), step(1, "wait", { seconds: 1 }, [7])], { repeat: true });
+  assert.equal(f.state().routineStates.npc.stepId, 1); await f.tick(500); assert.equal(f.state().routineStates.npc.remainingMs, 500);
+  await f.tick(500); assert.equal(f.state().routineStates.npc.stepId, 1); assert.equal(f.state().routineStates.npc.emoji, "b");
+  assert.equal(f.state().routineStates.npc.remainingMs, 1000);
 });

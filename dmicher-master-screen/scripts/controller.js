@@ -1,4 +1,4 @@
-import { MODULE_ID, defaultEpisode, defaultTokenBehavior, getEpisode, randomId } from "./model.js";
+import { MODULE_ID, getEpisode } from "./model.js";
 import { asArray, currentScene, getDefinition, getRuntime, getDefinitions, getRuntimes, requireGM, saveDefinition, getObjectTags, saveObjectTags } from "./store.js";
 import { generics } from "./generics.js";
 import { notifyError } from "./ui.js";
@@ -8,12 +8,10 @@ import { exportBundle, importBundle } from "./transfer.js";
 import { createShopService } from "./shop.js";
 import { SceneEvents } from "./events.js";
 import { createDialogueService } from "./dialogues.js";
-import { TokenEditorApplication } from "./apps/editor.js";
 import { MasterScreenApplication } from "./apps/ide.js";
 import { ActorViewApplication } from "./apps/actor-view.js";
 import { ShopApplication } from "./apps/shop-window.js";
 import { ShopsManagerApplication } from "./apps/shops-manager.js";
-import { DialogueEditorApplication } from "./apps/dialogue-editor.js";
 import { DialogueApplication } from "./apps/dialogue-window.js";
 import { DialogueCatalogApplication } from "./apps/dialogue-catalog.js";
 import { HelpApplication, InteractionApplication } from "./apps/help.js";
@@ -22,16 +20,14 @@ import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
 import { ObjectInfoApplication, ObjectBehaviorApplication } from "./apps/object-tools.js";
 import { listAvailableInteractions, objectDescriptor } from "./interaction-access.js";
-import { getSceneObject, SceneObjects } from "./scene-objects.js";
+import { getSceneObject } from "./scene-objects.js";
 
 export class ScreenController {
   constructor() {
     this.mode = null;
     this.selected = new Map();
     this.selectedSchemes = new Map();
-    this.tokenWindows = new Map();
     this.shopWindows = new Map();
-    this.dialogueEditors = new Map();
     this.dialogueWindows = new Map();
     this.objectInfoWindows = new Map();
     this.objectBehaviorWindows = new Map();
@@ -45,7 +41,6 @@ export class ScreenController {
     this.events = new SceneEvents({ runtime: this.runtime, chat: generics.chat, onChange: (scene) => this.changed(scene) });
     this.dialogues = createDialogueService({ emitEvent: (scene, event) => this.events.emit(scene, event), onChange: (scene) => this.changed(scene) });
     this.shop = createShopService({ onChange: (scene) => this.changed(scene) });
-    this.interactionMessages = generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "interaction" });
     this.hooks = [];
   }
   getContext({ schemeId } = {}) {
@@ -107,10 +102,6 @@ export class ScreenController {
         { label: ru ? "Информация" : "Information", action: () => this.openObjectInfo(descriptor) },
         { label: ru ? "Поведение" : "Behavior", action: () => this.openObjectBehavior(descriptor) }
       ];
-      if (descriptor.type === "Token") items.push({ label: ru ? "Поведение токена (техдолг)" : "Token behavior (legacy)", action: () => {
-        const binding = new SceneObjects(scene).get(descriptor);
-        return this.openToken(descriptor.id, { schemeId: binding?.schemeId ?? undefined });
-      } });
     } else {
       const actorTokenId = this.getActingTokenId(undefined, descriptor.type === "Token" ? descriptor.id : undefined);
       const actorToken = scene.tokens?.get(actorTokenId);
@@ -118,8 +109,7 @@ export class ScreenController {
         label: entry.kind === "shop" ? (ru ? "Торг" : "Trade") : entry.kind === "dialogue" ? (ru ? "Диалог" : "Dialogue") : entry.name,
         action: () => entry.kind === "shop" ? this.openShop(descriptor, { actorTokenId, schemeId: entry.schemeId })
           : entry.kind === "dialogue" ? this.openDialogue(entry.id, actorTokenId, { schemeId: entry.schemeId, target: descriptor })
-            : entry.kind === "transition" ? this.triggerInteraction(descriptor.id, actorTokenId, { schemeId: entry.schemeId })
-              : this.requestNamedInteraction(entry.id, actorTokenId, { schemeId: entry.schemeId })
+            : this.requestNamedInteraction(entry.id, actorTokenId, { schemeId: entry.schemeId })
       }));
     }
     if (!items.length) { this.objectMenu.close(); return false; }
@@ -199,55 +189,6 @@ export class ScreenController {
     definition.episodes = definition.episodes.map((entry) => entry.id === episode.id ? episode : entry);
     await this.saveDefinition(definition, expectedRevision ?? definition.revision, { sceneId });
   }
-  async saveToken(tokenId, behavior, episodeId, { expectedRevision, sceneId, schemeId } = {}) {
-    const { scene, definition, selectedEpisodeId } = this.getContext({ schemeId });
-    if (sceneId && scene?.id !== sceneId) throw new Error("Сцена изменилась. Вернитесь к сцене редактируемого токена.");
-    if (!scene?.tokens.has(tokenId)) throw new Error("Токен больше не существует");
-    const episode = getEpisode(definition, episodeId ?? selectedEpisodeId);
-    if (!episode) throw new Error("Эпизод больше не существует");
-    episode.tokens[tokenId] = behavior;
-    await this.saveDefinition(definition, expectedRevision ?? definition.revision, { sceneId });
-  }
-  async addEpisode(name) {
-    const { definition } = this.getContext();
-    const episode = defaultEpisode(name);
-    definition.episodes.push(episode);
-    await this.saveDefinition(definition);
-    return this.selectEpisode(episode.id);
-  }
-  async deleteEpisode(id) {
-    const { definition, runtime } = this.getContext();
-    if (runtime.episodeId === id) throw new Error("Сначала перейдите из удаляемого эпизода в другой");
-    definition.episodes = definition.episodes.filter((entry) => entry.id !== id);
-    for (const episode of definition.episodes) {
-      episode.from = episode.from.filter((entry) => entry !== id);
-      episode.zones = episode.zones.filter((zone) => zone.targetEpisodeId !== id);
-      episode.subscriptions = (episode.subscriptions ?? []).filter((entry) => entry.kind !== "transition" || entry.episodeId !== id);
-      for (const behavior of Object.values(episode.tokens)) {
-        if (behavior.interaction.targetEpisodeId === id) behavior.interaction.targetEpisodeId = "";
-        for (const point of behavior.patrol.points) if (point.onTrue === id) point.onTrue = "";
-      }
-    }
-    await this.saveDefinition(definition);
-    if (definition.episodes.length) this.selectEpisode(definition.episodes[0].id);
-  }
-  openToken(tokenId, { schemeId, episodeId } = {}) {
-    requireGM();
-    const { scene, selectedEpisodeId, definition } = this.getContext({ schemeId });
-    if (!scene?.tokens.get(tokenId)) return;
-    if (!definition) { ui.notifications.warn("Сначала создайте схему и выберите эпизод."); return; }
-    episodeId ??= selectedEpisodeId;
-    const key = `${scene.id}:${definition.schemeId}:${episodeId}:${tokenId}`;
-    const app = generics.windows.openSingletonApplication(this.tokenWindows.get(key),
-      () => new TokenEditorApplication(this, tokenId, { episodeId, schemeId: definition.schemeId }), { moduleId: MODULE_ID });
-    this.tokenWindows.set(key, app);
-    return app;
-  }
-  captureToken(tokenId) {
-    const token = currentScene()?.tokens.get(tokenId);
-    if (!token) throw new Error("Токен не найден");
-    return { x: token.x, y: token.y, hidden: token.hidden };
-  }
   captureWorkspace() { return this.workspace.capture(); }
   async saveObjectTags(type, id, tags, sceneId = currentScene()?.id) {
     const scene = currentScene();
@@ -260,41 +201,6 @@ export class ScreenController {
   haltScene() { return this.runtime.haltAll(currentScene()); }
   haltScheme(schemeId = this.getContext().schemeId) { return this.runtime.halt(currentScene(), { schemeId }); }
   resumeScheme(episodeId, schemeId = this.getContext().schemeId) { return this.runtime.enter(currentScene(), episodeId, { force: true, schemeId }); }
-  openDialogueEditor(dialogueId, { schemeId } = {}) {
-    requireGM();
-    const { scene, episode, selectedEpisodeId, definition } = this.getContext({ schemeId });
-    if (!scene || !episode?.dialogues?.some((entry) => entry.id === dialogueId)) throw new Error("Диалог не найден в выбранном эпизоде.");
-    const key = `${scene.id}:${definition.schemeId}:${selectedEpisodeId}:${dialogueId}`;
-    const app = generics.windows.openSingletonApplication(this.dialogueEditors.get(key),
-      () => new DialogueEditorApplication(this, dialogueId, { episodeId: selectedEpisodeId, schemeId: definition.schemeId }), { moduleId: MODULE_ID });
-    this.dialogueEditors.set(key, app);
-    return app;
-  }
-  async addDialogue() {
-    const { scene, definition, episode } = this.getContext();
-    if (!scene || !episode) throw new Error("Выберите эпизод сцены.");
-    const token = asArray(scene.tokens)[0], tile = asArray(scene.tiles)[0];
-    if (!token && !tile) throw new Error("Сначала добавьте на сцену НИП или тайл.");
-    const dialogue = { id: randomId(), name: "Новый диалог", enabled: true, target: { type: token ? "Token" : "Tile", id: token?.id ?? tile.id },
-      range: 5, startNodeId: "start", nodes: [{ id: "start", text: "", art: "", responses: [] }] };
-    episode.dialogues ??= [];
-    episode.dialogues.push(dialogue);
-    await this.saveDefinition(definition);
-    return this.openDialogueEditor(dialogue.id);
-  }
-  async saveDialogue(dialogue, episodeId, { sceneId, expectedRevision, schemeId } = {}) {
-    const { scene, definition } = this.getContext({ schemeId });
-    if (sceneId && scene?.id !== sceneId) throw new Error("Вернитесь к сцене редактируемого диалога.");
-    const episode = getEpisode(definition, episodeId);
-    if (!episode?.dialogues?.some((entry) => entry.id === dialogue.id)) throw new Error("Диалог больше не существует.");
-    episode.dialogues = episode.dialogues.map((entry) => entry.id === dialogue.id ? dialogue : entry);
-    await this.saveDefinition(definition, expectedRevision ?? definition.revision, { sceneId });
-  }
-  async deleteDialogue(dialogueId) {
-    const { definition, episode } = this.getContext();
-    episode.dialogues = (episode.dialogues ?? []).filter((entry) => entry.id !== dialogueId);
-    await this.saveDefinition(definition);
-  }
   emitEvent(name, { payload = {}, actorTokenId, id, runId, source = "manual", schemeId = this.getContext().schemeId } = {}) {
     requireGM();
     return this.events.emit(currentScene(), { name, source, actorTokenId, id, runId, schemeId, payload: { userId: game.user.id, ...payload } });
@@ -326,26 +232,11 @@ export class ScreenController {
     this.shopWindows.set(key, app);
     return app;
   }
-  getInteractions(targetType, targetId, { schemeId } = {}) {
-    const scene = currentScene();
-    const candidates = schemeId ? [getRuntime(scene, { schemeId })] : getRuntimes(scene);
-    const matches = (entry) => entry.enabled && entry.target.type === targetType && entry.target.id === targetId;
-    for (const runtime of candidates) {
-      if (runtime.halted || !runtime.episode || runtime.episode.stop || (targetType === "Token" && runtime.disabledTokens.includes(targetId))) continue;
-      const behavior = targetType === "Token" ? runtime.episode.tokens?.[targetId] : null;
-      const result = { dialogues: (runtime.episode.dialogues ?? []).filter(matches), actions: (runtime.episode.interactions ?? []).filter(matches),
-        behavior: behavior?.enabled ? behavior : null, schemeId: runtime.schemeId };
-      if (result.dialogues.length || result.actions.length || result.behavior?.shop?.enabled || result.behavior?.interaction?.targetEpisodeId) return result;
-    }
-    return { dialogues: [], actions: [], behavior: null, schemeId };
-  }
   async interact(tokenId, sourceTokenId, { targetType = "Token", schemeId } = {}) {
-    const { scene } = this.getContext();
-    const interaction = this.getInteractions(targetType, tokenId, { schemeId });
-    const { behavior, dialogues, actions } = interaction;
-    schemeId = interaction.schemeId;
-    if (!behavior?.shop.enabled && !behavior?.interaction.targetEpisodeId && !dialogues.length && !actions.length) throw new Error("Взаимодействие сейчас отключено");
-    if (behavior?.shop.enabled && !behavior.interaction.targetEpisodeId && !dialogues.length && !actions.length) return this.openShop(tokenId, { actorTokenId: sourceTokenId, schemeId });
+    const scene = currentScene(), target = { type: targetType, id: tokenId };
+    sourceTokenId = this.getActingTokenId(sourceTokenId, targetType === "Token" ? tokenId : undefined);
+    const choices = listAvailableInteractions(scene, target, scene?.tokens.get(sourceTokenId), game.user).filter((entry) => !schemeId || entry.schemeId === schemeId);
+    if (!choices.length) throw new Error("Interaction is unavailable for this character.");
     this.interaction = new InteractionApplication(this, { sceneId: scene.id, tokenId, sourceTokenId, targetType, schemeId });
     return this.interaction.render({ force: true });
   }
@@ -378,18 +269,6 @@ export class ScreenController {
     actorTokenId = this.getActingTokenId(actorTokenId);
     if (!actorTokenId) throw new Error("Выберите персонажа игрока для взаимодействия.");
     return this.dialogues.requestInteraction({ sceneId: scene.id, schemeId, interactionId, actorTokenId });
-  }
-  async triggerInteraction(tokenId, sourceTokenId, { schemeId = this.getContext().schemeId } = {}) {
-    const scene = currentScene();
-    sourceTokenId ??= asArray(canvas.tokens.controlled).find((token) => token.id !== tokenId)?.id;
-    if (!sourceTokenId) throw new Error("Сначала выберите своего персонажа");
-    if (game.user.isGM) return this.runtime.interact(scene, tokenId, { sourceTokenId, user: game.user, schemeId });
-    const actor = scene.tokens.get(sourceTokenId)?.actor;
-    if (!actor?.testUserPermission(game.user, "OWNER")) throw new Error("Нужен принадлежащий вам персонаж");
-    return this.interactionMessages.create({
-      content: "<p>Ширма: взаимодействие с персонажем.</p>",
-      flags: { [MODULE_ID]: { interaction: { sceneId: scene.id, tokenId, sourceTokenId, runId: getRuntime(scene, { schemeId }).runId, schemeId } } }
-    }, { audience: { type: "gms" }, kind: "interaction", technical: true });
   }
   async moveActorToken(tokenId, position) {
     requireGM();
@@ -427,7 +306,7 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
-    for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.tokenWindows.values(), ...this.shopWindows.values(), ...this.dialogueEditors.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) void Promise.resolve(app.refresh?.()).catch(notifyError);
     }
     for (const runtime of getRuntimes(scene)) void this.workspace.apply(scene, runtime).catch(notifyError);
@@ -435,12 +314,12 @@ export class ScreenController {
   async closeScreen() {
     this.cancelPick?.();
     if (this.editor?.rendered && !(await this.editor.mayClose())) return;
-    const dirty = [...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.tokenWindows.values(), ...this.dialogueEditors.values()]
+    const dirty = [...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values()]
       .find((app) => app?.rendered && app.dirty);
     if (dirty && !(await dirty.mayDiscard())) return;
     this.mode = null;
     this.objectMenu.close(); this.constructorIndicator.dispose();
-    for (const app of [this.editor, this.actor, this.shops, this.interaction, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.tokenWindows.values(), ...this.shopWindows.values(), ...this.dialogueEditors.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.actor, this.shops, this.interaction, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) await app.close();
     }
     await this.workspace.close();

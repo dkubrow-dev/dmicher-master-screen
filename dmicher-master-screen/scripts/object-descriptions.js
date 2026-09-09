@@ -22,12 +22,6 @@ export const BUILTIN_EVENT_DESCRIPTIONS = Object.freeze({
     en: "Reports that the GM explicitly enabled or disabled an individual token's automation in its current scheme." },
   "zone.entered": { ru: "Возникает при допустимом пересечении настроенной зоны персонажем. Ограничения тегов, области действия и кратности проверены до регистрации события.",
     en: "Occurs when a character crosses a configured zone and is admitted. Tag, scope and repetition restrictions are checked before the event is recorded." },
-  "npc.interacted": { ru: "Сообщает о разрешённом взаимодействии персонажа с настроенным НПС. Перед событием проверяются права, дистанция и допуск взаимодействия.",
-    en: "Reports an admitted character interaction with a configured NPC. Permissions, range and interaction eligibility are checked before the event." },
-  "patrol.arrived": { ru: "Сообщает, что патрулирующий НПС достиг опорной точки маршрута. Макрос проверки этой точки, если задан, исполняется после прибытия.",
-    en: "Reports that a patrolling NPC reached a route waypoint. A waypoint check macro, when configured, runs after arrival." },
-  "patrol.check": { ru: "Сообщает о завершении макроса проверки в опорной точке патруля. Положительным считается только результат true; остальные результаты передаются как false.",
-    en: "Reports completion of a patrol waypoint check macro. Only a strict true result is positive; other results are reported as false." },
   "dialogue.finished": { ru: "Сообщает о завершении диалога выбранным ответом или страницей без продолжения. Закрытие окна и действие «Уйти» не считаются таким завершением.",
     en: "Reports a dialogue ending through an answer or a page without continuation. Closing the window or choosing Leave does not count as this completion." }
 });
@@ -42,12 +36,6 @@ export const BUILTIN_FIELD_DESCRIPTIONS = Object.freeze({
   zoneId: { ru: "ID настроенной зоны, пересечение которой прошло проверку допуска.", en: "The configured zone ID whose crossing passed its eligibility checks." },
   label: { ru: "Подпись зоны, заданная мастером; полезна для читаемого сообщения или журнала.", en: "The GM's zone label, useful for a readable message or log entry." },
   userId: { ru: "ID участника Foundry, выполнившего взаимодействие. Права берутся из текущего пользователя Foundry, а не из этой строки.", en: "The Foundry user ID of the participant who interacted. Permissions come from the current Foundry user, not from this string." },
-  pointIndex: { ru: "Номер достигнутой опорной точки в маршруте, начиная с нуля.", en: "The reached waypoint's index in the route, starting at zero." },
-  x: { ru: "Горизонтальная координата опорной точки в пикселях сцены.", en: "The waypoint's horizontal coordinate in scene pixels." },
-  y: { ru: "Вертикальная координата опорной точки в пикселях сцены.", en: "The waypoint's vertical coordinate in scene pixels." },
-  result: { ru: "Логический результат проверки: true только когда макрос вернул строго true.", en: "The boolean check result: true only when the macro returned a strict true." },
-  macroUuid: { ru: "UUID выполненного макроса Foundry, позволяющий найти его документ.", en: "The executed Foundry macro's UUID, identifying its document." },
   dialogueId: { ru: "ID завершённого диалога в текущем эпизоде.", en: "The ID of the completed dialogue in the current episode." },
-  responseId: { ru: "ID ответа, которым завершён диалог; отсутствует при завершении страницы без ответа.", en: "The answer ID that ended the dialogue; omitted when a page ends without an answer." },
-  interactionId: { ru: "ID настроенного интерактивного действия, которое породило событие.", en: "The configured interactive action ID which produced this event." }
+  responseId: { ru: "ID ответа, которым завершён диалог; отсутствует при завершении страницы без ответа.", en: "The answer ID that ended the dialogue; omitted when a page ends without an answer." }
 });

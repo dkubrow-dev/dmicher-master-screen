@@ -4,7 +4,8 @@ import { getObjectBindings, resolveObjectShop } from "./scene-objects.js";
 import { getInteractionCatalog } from "./scene-assets.js";
 import { objectDescriptor, objectKey, sceneObject, validateObjectAccess } from "./interaction-access.js";
 import { generics } from "./generics.js";
-import { createShopSessions, requireShopSession, sessionIsLive } from "./shop-sessions.js";
+import { createShopSessions, requireShopSession, sessionIsLive, shopKey } from "./shop-sessions.js";
+export { shopKey } from "./shop-sessions.js";
 
 const copy = (value) => structuredClone(value);
 const id = () => globalThis.foundry?.utils?.randomID?.() ?? crypto.randomUUID();
@@ -29,24 +30,18 @@ export function getShopContext(sceneId, source, schemeId = "main") {
   const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { schemeId }) : null;
   const target = objectDescriptor(source), resolved = scene && runtime ? resolveObjectShop(scene, target, { schemeId, episodeId: runtime.episodeId }) : null;
   const shopId = resolved?.asset.id, token = sceneObject(scene, target);
-  const legacyKey = resolved?.config.legacyInventoryKey;
   const inventories = scene?.getFlag?.(MODULE_ID, "shopInventories");
-  const inventory = shopId && ((legacyKey ? inventories?.[legacyKey] : undefined) ?? inventories?.[shopId]
-    ?? getRuntimes(scene).filter((state) => state.shops?.[shopId] || legacyKey && state.shops?.[legacyKey])
-      .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId] ?? state.shops[legacyKey])[0]);
+  const inventory = shopId && (inventories?.[shopId]
+    ?? getRuntimes(scene).filter((state) => state.shops?.[shopId])
+      .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId])[0]);
   if (runtime && inventory) { runtime.shops ??= {}; runtime.shops[shopId] = copy(inventory); }
   return { scene, runtime, token, target, shopId, asset: resolved?.asset,
     behavior: resolved ? { ...runtime.episode?.tokens?.[target.id], enabled: runtime.episode?.tokens?.[target.id]?.enabled !== false, shop: resolved.config } : null };
 }
-export const shopKey = (context) => context.shopId ?? context.behavior?.shop?.shopId ?? context.token?.id;
 async function saveInventory(current, inventory) {
   if (!current.scene.setFlag) return;
   const values = current.scene.getFlag?.(MODULE_ID, "shopInventories") ?? {};
   values[shopKey(current)] = copy(inventory);
-  // Inferred old episode variants shared one NPC stock. Preserve that fact until the
-  // GM explicitly replaces the legacy binding with a catalog asset of their choice.
-  const legacyKey = current.behavior?.shop?.legacyInventoryKey;
-  if (legacyKey) values[legacyKey] = copy(inventory);
   await current.scene.setFlag(MODULE_ID, "shopInventories", values);
 }
 /** Catalog stock seeds new lot IDs. Existing lots, including deposits from players,
@@ -289,7 +284,7 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       if (!scene) return [];
       const definitions = getDefinitions(scene), states = getRuntimes(scene), bindings = Object.values(getObjectBindings(scene).bindings);
       return getInteractionCatalog(scene).shops.map((asset) => {
-        const owners = bindings.filter((binding) => binding.shop?.shopId === asset.id || binding.legacyVariants?.some((variant) => variant.kind === "shop" && variant.assetId === asset.id));
+        const owners = bindings.filter((binding) => binding.shop?.shopId === asset.id);
         const occupiedState = states.find((state) => sessionIsLive(state.shopSessions?.[asset.id]));
         const fallbackState = states.find((state) => state.shopSessions?.[asset.id]);
         const source = occupiedState ?? fallbackState;

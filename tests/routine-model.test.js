@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeRoutine, normalizeRoutines, normalizeRoutineStep, routineStepTemplate, ROUTINE_STEP_KINDS } from "../dmicher-master-screen/scripts/routine-model.js";
 
-test("routine graph renumbering retains identities after reorder/deletion and removes dangling edges", () => {
+test("routine graph IDs survive row reorder and deletion only removes dangling edges", () => {
   const step = (id, next) => ({ id, kind: "wait", parameters: { seconds: 0.5 }, next });
-  const result = normalizeRoutine({ episodeId: "calm", steps: [step(30, [10, 90, 10]), step(10, [30, 50]), step(50, [])] });
-  assert.deepEqual(result.steps.map(({ id, next }) => ({ id, next })), [{ id: 1, next: [2] }, { id: 2, next: [1, 3] }, { id: 3, next: [] }]);
+  const result = normalizeRoutine({ episodeId: "calm", steps: [step(30, [1, 90, 1]), step(1, [30, 50]), step(50, [])] });
+  assert.deepEqual(result.steps.map(({ id, next }) => ({ id, next })), [{ id: 30, next: [1] }, { id: 1, next: [30, 50] }, { id: 50, next: [] }]);
   assert.equal(result.repeat, false);
   assert.throws(() => normalizeRoutine({ episodeId: "calm", steps: [step(1, []), step(1, [])] }));
+  assert.throws(() => normalizeRoutine({ episodeId: "calm", steps: [step(2, [])] }));
   assert.throws(() => normalizeRoutines([{ episodeId: "calm", steps: [] }, { episodeId: "calm", steps: [] }]));
   assert.deepEqual(normalizeRoutines(), []);
 });

@@ -226,7 +226,11 @@ export class SceneEvents {
     for (const target of event.targets ?? [{ schemeId: event.schemeId, runId: event.runId }]) {
       const current = getRuntime(scene, { schemeId: target.schemeId });
       if (current.runId !== target.runId || current.episode?.stop || isExecutionHalted(scene, current)) continue;
-      subscriptions.push(...(current.episode?.subscriptions ?? []).filter((entry) => entry.enabled !== false && entry.event === event.name).map((entry) => ({ ...entry, _runId: current.runId, _schemeId: current.schemeId })));
+      // This runtime list is produced only by materialized object features. Authored
+      // event subscriptions belong to EventCatalog, never to an episode definition.
+      subscriptions.push(...(current.episode?.subscriptions ?? []).filter((entry) => entry.featureId && entry.target
+        && ["macro", "trigger"].includes(entry.kind) && entry.enabled !== false && entry.event === event.name)
+        .map((entry) => ({ ...entry, _runId: current.runId, _schemeId: current.schemeId })));
       const routes = getDefinitions(scene).find((entry) => entry.schemeId === target.schemeId)?.episodes.filter((episode) => episode.events.includes(event.name)) ?? [];
       if (routes.length > 1) throw new Error("Событие ведёт в несколько эпизодов одной схемы.");
       if (routes[0]) subscriptions.push({ id: `route:${target.schemeId}:${routes[0].id}`, kind: "transition", episodeId: routes[0].id, _runId: current.runId, _schemeId: current.schemeId });
@@ -269,7 +273,7 @@ export class SceneEvents {
           else if (subscription.action === "halt-scheme") await this.runtime.halt(scene, { schemeId: subscription.schemeId });
           else if (["pause", "unpause"].includes(subscription.action)) await game.togglePause(subscription.action === "pause", { broadcast: true });
           else throw new Error("Неизвестное встроенное действие.");
-        } else if (subscription.kind === "chat" || subscription.kind === "builtin" && subscription.action === "chat") {
+        } else if (subscription.kind === "builtin" && subscription.action === "chat") {
           if (!this.messages) throw new Error("Общий сервис чата Generics недоступен.");
           const audience = eventChatAudience(scene, event, subscription.audience);
           result.recipientCount = audience.userIds.length;

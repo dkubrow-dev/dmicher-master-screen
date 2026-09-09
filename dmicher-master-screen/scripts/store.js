@@ -1,4 +1,4 @@
-import { MODULE_ID, DEFAULT_SCHEME_ID, normalizeDefinition, normalizeRuntime, normalizeObjectTags, normalizeTags, emptyRuntime } from "./model.js";
+import { MODULE_ID, DEFAULT_SCHEME_ID, normalizeDefinition, normalizeRuntime, normalizeTags, emptyRuntime } from "./model.js";
 import { generics } from "./generics.js";
 
 const queues = new WeakMap();
@@ -18,12 +18,8 @@ export function scheme(id = DEFAULT_SCHEME_ID) {
 }
 export const getDefinitions = (scene) => {
   const stored = scene?.getFlag(MODULE_ID, "definitions");
-  // An explicit empty collection is intentional, including after deleting the final
-  // scheme. Do not resurrect an old single-definition flag behind that collection.
-  if (stored !== undefined && stored !== null) return Object.entries(stored).filter(([, value]) => value?.schemaVersion === 1)
-    .map(([id, value]) => normalizeDefinition({ ...value, schemeId: scheme(id) }, { allowEmptyLegacy: true })).sort((a, b) => a.order - b.order);
-  const legacy = scene?.getFlag(MODULE_ID, "definition");
-  return legacy ? [normalizeDefinition(legacy, { allowEmptyLegacy: true })] : [];
+  return Object.entries(stored ?? {}).filter(([, value]) => value?.schemaVersion === 1)
+    .map(([id, value]) => normalizeDefinition({ ...value, schemeId: scheme(id) })).sort((a, b) => a.order - b.order);
 };
 export const getDefinition = (scene, { schemeId = DEFAULT_SCHEME_ID } = {}) => {
   const id = scheme(schemeId), found = getDefinitions(scene).find((entry) => entry.schemeId === id);
@@ -31,12 +27,12 @@ export const getDefinition = (scene, { schemeId = DEFAULT_SCHEME_ID } = {}) => {
   return found;
 };
 export const getRuntime = (scene, { schemeId = DEFAULT_SCHEME_ID } = {}) => normalizeRuntime(scene?.getFlag(MODULE_ID, "runtimes")?.[scheme(schemeId)]
-  ?? (schemeId === DEFAULT_SCHEME_ID ? scene?.getFlag(MODULE_ID, "runtime") : null) ?? emptyRuntime(schemeId));
+  ?? emptyRuntime(schemeId));
 export const getRuntimes = (scene) => getDefinitions(scene).map(({ schemeId }) => getRuntime(scene, { schemeId }));
 export const getRuntimeForRun = (scene, runId) => getRuntimes(scene).find((state) => state.runId === runId) ?? null;
 
 export function getObjectTags(scene, descriptor) {
-  const tags = normalizeObjectTags(scene?.getFlag(MODULE_ID, "objectTags"));
+  const tags = {};
   for (const binding of Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {})) {
     if (!binding?.type || !binding?.id) continue;
     tags[binding.type] ??= {}; tags[binding.type][binding.id] = normalizeTags(binding.tags);
@@ -64,14 +60,10 @@ export function saveDefinition(scene, definition, { expectedRevision } = {}) {
     if (expectedRevision !== undefined && (current?.revision ?? 0) !== expectedRevision) throw new Error("Настройки изменены другим окном. Обновите их перед сохранением.");
     const next = normalizeDefinition(definition);
     next.revision = (current?.revision ?? 0) + 1;
-    const { validateDefinitionObjectOwnership, reconcileDefinitionBindings } = await import("./scene-objects.js");
+    const { reconcileDefinitionBindings } = await import("./scene-objects.js");
     const definitions = getDefinitions(scene), changed = [...definitions.filter((entry) => entry.schemeId !== next.schemeId), next];
-    validateDefinitionObjectOwnership(scene, changed);
     const bindings = reconcileDefinitionBindings(scene, definitions, changed);
     const fields = { [`definitions.${scheme(next.schemeId)}`]: next, ...(bindings ? { objectBindings: bindings } : {}) };
-    if (current?.episodes.some((episode) => !next.episodes.some((entry) => entry.id === episode.id))) {
-      const { getInteractionCatalog } = await import("./scene-assets.js"); fields.interactionCatalog = getInteractionCatalog(scene);
-    }
     if (scene.update) await scene.update(Object.fromEntries(Object.entries(fields).map(([key, value]) => [`flags.${MODULE_ID}.${key}`, value])));
     else for (const [key, value] of Object.entries(fields)) await scene.setFlag(MODULE_ID, key, value);
     return next;
@@ -83,6 +75,20 @@ export async function saveRuntime(scene, state) {
   if (!isAuthority()) throw new Error("Исполнение доступно первому подключённому полному мастеру");
   const next = normalizeRuntime(state);
   getDefinition(scene, { schemeId: next.schemeId });
-  await scene.setFlag(MODULE_ID, `runtimes.${scheme(next.schemeId)}`, next);
+  const previous = scene.getFlag(MODULE_ID, "runtimes")?.[scheme(next.schemeId)] ?? {};
+  await scene.setFlag(MODULE_ID, `runtimes.${scheme(next.schemeId)}`, runtimeWriteData(previous, next));
   return next;
+}
+
+/** Foundry merges flag maps recursively. A new runtime snapshot must remove absent
+ * keys in its own scope, so finished timers, claims and sessions cannot reappear. */
+function runtimeWriteData(previous, next) {
+  const data = structuredClone(next);
+  const record = (value) => value && typeof value === "object" && !Array.isArray(value);
+  if (!record(previous) || !record(next)) return data;
+  for (const key of Object.keys(previous)) {
+    if (!Object.hasOwn(next, key)) data[`-=${key}`] = null;
+    else if (record(previous[key]) && record(next[key])) data[key] = runtimeWriteData(previous[key], next[key]);
+  }
+  return data;
 }

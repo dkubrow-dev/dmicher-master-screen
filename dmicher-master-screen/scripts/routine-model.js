@@ -58,14 +58,15 @@ export function normalizeRoutineStep(raw) {
   return { id: raw.id, kind: raw.kind, parameters, next: [...new Set(raw.next ?? [])] };
 }
 
-/** IDs are identities in the incoming graph, not array offsets. Renumber every edge
- * after deletions/reordering; never redirect a dangling edge to the next surviving row. */
+/** Row order is presentation only. Stable IDs and graph edges survive reordering;
+ * deleting a row removes its incoming edges instead of redirecting them. */
 export function normalizeRoutine(raw) {
   if (!record(raw) || !Array.isArray(raw.steps) || raw.steps.length > 200) fail("Распорядок должен содержать список до 200 шагов.");
-  const steps = raw.steps.map(normalizeRoutineStep), mapping = new Map(steps.map((step, index) => [step.id, index + 1]));
-  if (mapping.size !== steps.length) fail("ID шагов распорядка не должны повторяться.");
+  const steps = raw.steps.map(normalizeRoutineStep), ids = new Set(steps.map((step) => step.id));
+  if (ids.size !== steps.length) fail("ID шагов распорядка не должны повторяться.");
+  if (steps.length && !ids.has(1)) fail("Непустой распорядок должен содержать начальный шаг ID 1.");
   return { ...(raw.id === undefined ? {} : { id: identifier(raw.id, "Распорядок") }), episodeId: identifier(raw.episodeId, "Эпизод распорядка"),
-    repeat: boolean(raw.repeat, false, "Повтор распорядка"), steps: steps.map((step) => ({ ...step, id: mapping.get(step.id), next: step.next.filter((id) => mapping.has(id)).map((id) => mapping.get(id)) })) };
+    repeat: boolean(raw.repeat, false, "Повтор распорядка"), steps: steps.map((step) => ({ ...step, next: step.next.filter((id) => ids.has(id)) })) };
 }
 export function normalizeRoutines(value = []) {
   if (!Array.isArray(value) || value.length > 100) fail("Допустимо до 100 распорядков объекта.");

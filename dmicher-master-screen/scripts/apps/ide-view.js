@@ -7,10 +7,9 @@ export const TAB_LABELS = Object.freeze({ scene: "Сцена", shops: "Мага�
 export const OTHER_BLOCKS = Object.freeze([
   { id: "tokens", name: "НИП и поведение", mode: "constructor" },
   { id: "tags", name: "Теги объектов", mode: "constructor" },
-  { id: "subscriptions", name: "Прежние реакции эпизода", mode: "constructor" },
-  { id: "dialogues", name: "Прежние прямые взаимодействия", mode: "constructor" },
+  { id: "dialogues", name: "Прямые взаимодействия", mode: "constructor" },
   { id: "entry", name: "Пауза, звук и подкрепление", mode: "constructor" },
-  { id: "zones", name: "Зоны перехода", mode: "constructor" },
+  { id: "zones", name: "Зоны событий", mode: "constructor" },
   { id: "workspaceGM", name: "Рабочий стол мастера", mode: "constructor" },
   { id: "workspacePlayers", name: "Окна игроков", mode: "constructor" },
   { id: "sceneIO", name: "Перенос всей сцены", mode: "constructor" },
@@ -168,12 +167,6 @@ export function eventSources(definitions, scene, { assets = { dialogues: [] }, b
   for (const definition of definitions) for (const episode of definition.episodes) {
     add(definition, episode, "episode", episode.id, "Вход в эпизод", "episode.entered");
     for (const zone of episode.zones ?? []) add(definition, episode, "zone", zone.id, zone.label || "Зона", names("zone.entered", zone.eventName));
-    for (const [id, token] of Object.entries(episode.tokens ?? {})) {
-      const name = scene.tokens?.get(id)?.name ?? id;
-      if (token.interaction?.targetEpisodeId || token.interaction?.eventName) add(definition, episode, "npc", id, `${name} · взаимодействие`, names("npc.interacted", token.interaction.eventName), id);
-      if (token.patrol?.points?.length) add(definition, episode, "patrol", id, `${name} · патруль`, names("patrol.arrived", token.patrol.points.some((point) => point.macroUuid) ? "patrol.check" : null, token.patrol.points.map((point) => point.eventName)), id);
-    }
-    for (const dialogue of episode.dialogues ?? []) add(definition, episode, "dialogue", dialogue.id, dialogue.name, [...new Set(["dialogue.finished", ...dialogue.nodes.flatMap((node) => node.responses.map((response) => response.eventName).filter(Boolean))])].join(", "));
     for (const action of episode.interactions ?? []) add(definition, episode, "interaction", action.id, action.name, action.eventName || "Событие не выбрано");
   }
   for (const binding of bindings) {
@@ -184,8 +177,10 @@ export function eventSources(definitions, scene, { assets = { dialogues: [] }, b
       add(definition, episode, "dialogue", `${binding.type}:${binding.id}:${dialogue.id}`, `${objectName} · ${dialogue.name}`, names("dialogue.finished", dialogue.pages.flatMap((page) => page.responses.map((response) => response.eventName))));
       rows.at(-1).assetId = dialogue.id;
     }
-    for (const feature of binding.features ?? []) if (feature.kind === "patrol") for (const episode of definition.episodes.filter((entry) => !feature.episodeIds.length || feature.episodeIds.includes(entry.id))) {
-      add(definition, episode, "patrol", `${binding.id}:${feature.id}`, `${objectName} · патруль`, names("patrol.arrived", feature.patrol?.points?.map((point) => point.eventName)));
+    for (const routine of binding.routines ?? []) {
+      const episode = definition.episodes.find((entry) => entry.id === routine.episodeId);
+      if (!episode || !routine.steps.length) continue;
+      add(definition, episode, "routine", binding.id, `${objectName} · рутина`, names(routine.steps.filter((step) => step.kind === "event").map((step) => step.parameters.eventName)));
       rows.at(-1).objectTarget = { type: binding.type, id: binding.id };
     }
   }
@@ -194,14 +189,4 @@ export function eventSources(definitions, scene, { assets = { dialogues: [] }, b
 
 export function renderObjectList(rows, selected, kind) {
   return `<table class="ms-ide-tree" role="grid"><tbody>${rows.map((row) => `<tr data-select-kind="${kind}" data-select-id="${esc(row.id)}" data-scheme-id="${esc(row.schemeId ?? "")}" aria-selected="${selected.kind === kind && selected.id === row.id}" class="${selected.kind === kind && selected.id === row.id ? "is-selected" : ""}"><td><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="${kind}" data-id="${esc(row.id)}" data-scheme-id="${esc(row.schemeId ?? "")}">${esc(row.name)}</button></td><td title="${esc(row.schemeName ?? "")}">${esc(row.episodeName ?? row.detail ?? "")}</td></tr>`).join("") || '<tr><td>Нет элементов</td></tr>'}</tbody></table>`;
-}
-
-export function extractLegacyBlock(html, id, doc = globalThis.document) {
-  const template = doc.createElement("template"); template.innerHTML = html;
-  const block = [...template.content.querySelectorAll("[data-legacy-block]")].find((element) => element.dataset.legacyBlock === id);
-  if (!block) return '<p class="ms-note">Выберите эпизод, затем нужный блок.</p>';
-  if (block.tagName === "DETAILS") { block.open = true; block.querySelector(":scope > summary")?.remove(); }
-  const editable = Boolean(block.closest("[data-episode-fields]"));
-  if (!editable) return block.outerHTML;
-  return `<form data-screen-form="saveEpisode" data-episode-fields data-legacy-block="${esc(id)}" class="ms-episode-form">${block.outerHTML}<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discard", "Отменить ввод")}<button type="submit">Сохранить блок</button></footer></form>`;
 }

@@ -9,12 +9,12 @@ function fixture({ emitFailure = false } = {}) {
   const player = { id: "player", isGM: false, role: 1, active: true };
   const other = { id: "other", isGM: false, role: 1, active: true };
   const pc = { id: "pc", x: 0, y: 0, width: 1, height: 1,
-    actor: { testUserPermission: (user) => user.id === player.id }, object: { checkCollision: () => false } };
+    actor: { id: "actor-pc", testUserPermission: (user) => user.id === player.id }, object: { checkCollision: () => false } };
   const npc = { id: "npc", name: "Shopkeeper", x: 100, y: 0, width: 1, height: 1, texture: { src: "npc.webp" } };
   const tile = { id: "chest", name: "Chest", x: 100, y: 0, width: 100, height: 100, texture: { src: "chest.webp" } };
   const tags = {};
   const scene = { id: "scene", grid: { size: 100, distance: 5 }, tokens: new Map([["pc", pc], ["npc", npc]]), tiles: new Map([["chest", tile]]),
-    getFlag: (_module, name) => name === "objectTags" ? { Token: tags } : undefined };
+    getFlag: (_module, name) => name === "objectBindings" ? { bindings: Object.fromEntries(Object.entries(tags).map(([id, values]) => [`Token:${id}`, { type: "Token", id, tags: values }])) } : undefined };
   let runtime = { schemaVersion: 1, runId: "run", schemeId: "main", episodeId: "calm", disabledTokens: [], dialogueSessions: {}, dialogueCommands: {}, episode: {
     dialogues: [{ id: "talk", name: "Conversation", enabled: true, target: { type: "Token", id: "npc" }, range: 5, startNodeId: "start", nodes: [
       { id: "start", text: "Welcome", art: "", responses: [{ id: "ask", label: "Ask", nextNodeId: "info", eventName: "" },
@@ -194,7 +194,7 @@ test("deny tags override matching allow tags and reject dialogue/direct actions 
 
 test("two participants racing to open a one-use dialogue produce only one admitted session", async () => {
   const f = fixture();
-  f.scene.tokens.set("pc2", { ...f.pc, id: "pc2", actor: { testUserPermission: (user) => user.id === f.other.id } });
+  f.scene.tokens.set("pc2", { ...f.pc, id: "pc2", actor: { id: "actor-pc2", testUserPermission: (user) => user.id === f.other.id } });
   const replies = await Promise.all([f.send(f.start), f.send({ ...f.start, actorTokenId: "pc2" }, { user: f.other })]);
   assert.equal(replies.filter(({ result }) => result.status === "active").length, 1);
   assert.equal(replies.filter(({ result }) => result.failure).length, 1);
@@ -220,4 +220,14 @@ test("direct actions apply their count before event admission and a fresh comman
   await assert.rejects(f.service.requestInteraction(args));
   assert.equal(f.events.length, 1);
   assert.equal(f.runtime().triggerCounts["main:calm:interaction:lever"], 1);
+});
+
+test("an ongoing dialogue requires its exact stored Actor and object identities", async () => {
+  for (const field of ["actorId", "target"]) {
+    const f = fixture(), { result: opened } = await f.send(f.start);
+    const state = f.runtime(), session = Object.values(state.dialogueSessions)[0]; delete session[field]; f.setRuntime(state);
+    const { result } = await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, nodeId: "start", step: 0, responseId: "ask" });
+    assert.ok(result.failure, field); assert.equal(f.events.length, 0);
+    assert.equal(Object.values(f.runtime().dialogueSessions)[0].nodeId, "start");
+  }
 });

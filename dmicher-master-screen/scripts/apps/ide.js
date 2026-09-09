@@ -1,6 +1,6 @@
 import { EditorApplication } from "./editor.js";
 import { ScreenLayout, MAIN_TABS, DETAIL_TABS } from "./screen-layout.js";
-import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderEventTree, renderMacroList, renderParameters, renderOtherList, extractLegacyBlock, renderMenu, renderMenuSettings, eventSources, renderObjectList } from "./ide-view.js";
+import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderEventTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, eventSources, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
 import { renderSchemeBadges, updateSceneNavigationBadges } from "./scheme-badges.js";
 import { SchemeEditor } from "../scheme-editor.js";
@@ -8,7 +8,7 @@ import { EventCatalog } from "../event-catalog.js";
 import { getDefinitions, getRuntimes } from "../store.js";
 import { randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
-import { SceneAssets, legacyAssetId } from "../scene-assets.js";
+import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
 import { bindIDEMenus } from "./ide-menu.js";
@@ -198,7 +198,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
     if (["shops", "dialogues"].includes(activeMain)) {
       const kind = activeMain === "shops" ? "shop" : "dialogue";
-      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[kind]?.[`${kind}Id`] === entry.id || binding.legacyVariants?.some((link) => link.kind === kind && link.assetId === entry.id)).length} об.` }));
+      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[kind]?.[`${kind}Id`] === entry.id).length} об.` }));
       mainHTML = renderObjectList(rows, this.selection, kind);
       nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? "+ Магазин" : "+ Диалог") + actionButton("deleteSelected", "Удалить") + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: "Импорт", exportLabel: "Экспорт" }) : "")
         + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
@@ -220,7 +220,7 @@ export class MasterScreenApplication extends EditorApplication {
     } else if (activeMain === "other") {
       if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.</p>${actionButton("shops", "Магазины")}${actionButton("dialogues", "Диалоги и действия")}`;
       else {
-        detailHTML = await this.legacyBlock(this.otherBlock, base);
+        detailHTML = await this.episodeTool(this.otherBlock, base);
       }
     } else {
       detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, runtimes, mode: this.mode });
@@ -417,11 +417,11 @@ export class MasterScreenApplication extends EditorApplication {
     return this.render({ force: true });
   }
 
-  async legacyBlock(id, base) {
+  async episodeTool(id, base) {
     if (!this.controller.getContext().definition && id !== "sceneIO") return '<p class="ms-note">Сначала создайте схему во вкладке «Сцена».</p>';
     if (id === "sceneIO") return `<div>${actionButton("export", "Экспорт сцены")}${actionButton("import", "Импорт сцены")}<input type="file" data-import-file accept=".json,application/json" hidden></div>`;
     const renderTemplate = foundry.applications.handlebars?.renderTemplate ?? globalThis.renderTemplate;
-    return extractLegacyBlock(await renderTemplate("modules/dmicher-master-screen/templates/editor.hbs", base), id, this.element?.ownerDocument ?? globalThis.document);
+    return renderTemplate("modules/dmicher-master-screen/templates/episode-tools.hbs", { ...base, blocks: { [id]: true } });
   }
 
   openMenuSettings(zone) {
@@ -534,8 +534,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "configureTool") {
       const row = this.toolRows.find((entry) => entry.id === this.selection.id); if (!row) return;
       if (row.objectTarget) return this.controller.openObjectBehavior(row.objectTarget);
-      if (row.tokenId) return this.controller.openToken(row.tokenId, { schemeId: row.schemeId, episodeId: row.episodeId });
-      if (row.type === "dialogue") return this.openAsset("dialogue", row.assetId ?? legacyAssetId("dialogue", row.schemeId, row.episodeId, row.id.split(":").at(-1)));
+      if (row.type === "dialogue") return this.openAsset("dialogue", row.assetId);
       if (row.type === "interaction") { await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "dialogues"; return this.render({ force: true }); }
       if (row.type === "episode") { await this.switchMainTab("scene"); return this.selectNode("episode", row.episodeId, row.schemeId); }
       await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });

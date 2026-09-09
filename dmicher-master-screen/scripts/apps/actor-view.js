@@ -1,6 +1,9 @@
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { tokenCenter } from "../effects.js";
+import { listAvailableInteractions } from "../interaction-access.js";
+import { getRuntimes } from "../store.js";
+import { getObjectBindings } from "../scene-objects.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const values = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
@@ -190,6 +193,7 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
       }
     }
     const visible = values(scene.tokens).filter((token) => isTokenVisibleFrom(observer, token));
+    const bindings = getObjectBindings(scene).bindings, runtimes = getRuntimes(scene);
     for (const token of visible) {
       const width = Number(token.width ?? 1) * scene.grid.size;
       const height = Number(token.height ?? 1) * scene.grid.size;
@@ -197,19 +201,18 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
         context.fillStyle = token.id === observer.id ? "#b4d8f3" : "#c6b394";
         context.beginPath(); context.arc(token.x + width / 2, token.y + height / 2, Math.min(width, height) / 3, 0, Math.PI * 2); context.fill();
       }
-      const behavior = state.runtime?.episode?.tokens?.[token.id];
-      if (behavior?.enabled && !state.runtime.disabledTokens?.includes(token.id) && behavior.emoji) {
+      const binding = bindings[`Token:${token.id}`], runtime = runtimes.find((entry) => entry.schemeId === binding?.schemeId);
+      const emoji = runtime?.routineStates?.[token.id]?.emoji;
+      if (emoji && !binding.playerCharacter && !runtime.halted && !runtime.episode?.stop && !runtime.disabledTokens?.includes(token.id)) {
         context.font = `${Math.max(20, width / 3)}px sans-serif`;
         context.textAlign = "center";
-        context.fillText(behavior.emoji, token.x + width / 2, token.y);
+        context.fillText(emoji, token.x + width / 2, token.y);
       }
     }
     context.restore();
     this.updateInteractions(visible.filter((token) => token.id !== observer.id).flatMap((token) => {
-      const behavior = state.runtime?.episode?.tokens?.[token.id];
-      if (!behavior?.enabled || state.runtime.disabledTokens?.includes(token.id)
-        || (!behavior.shop?.enabled && !behavior.interaction?.targetEpisodeId)) return [];
-      return [{ id: token.id, label: behavior.interaction?.label || (behavior.shop?.enabled ? "Открыть магазин" : "Взаимодействовать") }];
+      const choices = listAvailableInteractions(scene, { type: "Token", id: token.id }, observer, game.user);
+      return choices.length ? [{ id: token.id, label: `${token.name} · Взаимодействовать` }] : [];
     }));
     setStatus(scene.tokenVision ? "Предпросмотр выбранного персонажа: базовое зрение и прямая видимость." : "В сцене отключено зрение токенов: карта открыта, скрытые токены исключены.");
   }

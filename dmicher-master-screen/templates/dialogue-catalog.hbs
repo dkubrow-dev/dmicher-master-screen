@@ -13,6 +13,5 @@
   </section>
   {{/if}}
   <details class="ms-details"><summary>Прямые действия · справочник мастера</summary><p class="ms-note">Просмотр настроек не выполняет действие.</p>{{#each actions}}<div class="ms-config-row"><strong>{{name}}</strong><p>Объект: {{targetName}} · Событие: <code>{{eventName}}</code></p><p class="ms-note">{{#if enabled}}Подготовлено к работе в эпизоде{{else}}Выключено{{/if}} · Дальность {{range}}</p></div>{{else}}<p class="ms-note">Прямых действий нет.</p>{{/each}}</details>
-  <details class="ms-details"><summary>Подготовленные реакции · справочник</summary>{{#each subscriptions}}<div class="ms-config-row"><strong>{{event}}</strong><p>{{kind}} {{#if macroUuid}}· {{macroUuid}}{{/if}}{{#if episodeId}}· {{episodeId}}{{/if}}</p>{{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}</div>{{else}}<p class="ms-note">Подписок нет.</p>{{/each}}</details>
   {{/if}}
 </section>

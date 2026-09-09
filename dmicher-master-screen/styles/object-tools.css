@@ -31,3 +31,8 @@
 .dmicher-master-screen .ms-object-metadata dd { margin: 0; overflow-wrap: anywhere; }
 .dmicher-master-screen .ms-object-form footer { display: flex; justify-content: flex-end; gap: 8px; }
 .dmicher-master-screen .ms-object-feature { border: 1px solid var(--dmicher-border, #777); border-radius: 4px; padding: 8px; }
+.ms-routine-table .ms-routine-drag { cursor: grab; width: 22px; min-width: 22px; padding: 0; display: block; border: 0; background: transparent; }
+.ms-routine-table .ms-routine-drag:active { cursor: grabbing; }
+.ms-routine-table .is-dragging { opacity: .55; }
+.ms-routine-table .ms-routine-drop-before { box-shadow: inset 0 3px var(--dmicher-accent, #d8ae66); }
+.ms-routine-table .ms-routine-drop-after { box-shadow: inset 0 -3px var(--dmicher-accent, #d8ae66); }

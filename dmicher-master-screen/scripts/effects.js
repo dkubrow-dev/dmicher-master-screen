@@ -115,12 +115,12 @@ export function createFoundryEffects(chat) {
       }
       return created;
     },
-    async macro(uuid, { scene, token, episode, runId, parameters, stepId, InvokeDmicherMasterScreenEvent, isCurrent = () => true }) {
+    async macro(uuid, { scene, token, episode, runId, parameters = {}, stepId, InvokeDmicherMasterScreenEvent, isCurrent = () => true }) {
       const macro = await fromUuid(uuid);
       if (!isCurrent()) return;
       if (!macro || macro.documentName !== "Macro" || macro.type !== "script" || !macro.canExecute) throw new Error("Проверка требует доступный скриптовый макрос Foundry.");
       return macro.execute({ actor: token.actor, token: token.object, scene, episode, runId, InvokeDmicherMasterScreenEvent,
-        ...(parameters !== undefined ? { parameters: structuredClone(parameters), stepId, objectTarget: { type: "Token", id: token.id }, sceneObject: token } : {}) });
+        parameters: structuredClone(parameters), stepId, objectTarget: { type: "Token", id: token.id }, sceneObject: token });
     }
   };
 }

@@ -1,8 +1,9 @@
 import { themedClasses } from "../ui.js";
-import { defaultTokenBehavior, parseTransitions, transitionsText, randomId, canTransition } from "../model.js";
-import { buildGraphView, splitLines, parsePointRows, formatPointRows, requireNumber, buildTriggerRows } from "./editor-view.js";
+import { randomId } from "../model.js";
+import { requireNumber, buildTriggerRows } from "./editor-view.js";
 import { buildTriggerFields, readTriggerFields, splitTags } from "./trigger-fields.js";
 import { ConstructorDock } from "./constructor-dock.js";
+import { getObjectBindings } from "../scene-objects.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 const MODULE_ID = "dmicher-master-screen";
@@ -87,7 +88,7 @@ export class EditorApplication extends ScreenFormApplication {
     position: { width: 920, height: 760 },
     window: { title: "Ширма мастера", icon: "fa-solid fa-chalkboard", resizable: true }
   };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/editor.hbs`, scrollable: [".ms-body"] } };
+  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/episode-tools.hbs`, scrollable: [".ms-body"] } };
 
   constructor(controller, { mode = "constructor", ...options } = {}) {
     super(mode === "constructor" ? { ...options,
@@ -104,7 +105,7 @@ export class EditorApplication extends ScreenFormApplication {
     this.tagDrafts = new Map();
   }
 
-  get title() { return `▥ ${this.mode === "director" ? "Режиссёр" : "Конструктор"} · Ширма мастера`; }
+  get title() { return `🎬 ${this.mode === "director" ? "Режиссёр" : "Конструктор"} · Ширма мастера`; }
 
   _insertElement(element) {
     super._insertElement(element);
@@ -134,7 +135,7 @@ export class EditorApplication extends ScreenFormApplication {
       return false;
     }
     if (event.target.closest("[data-episode-fields]")) { this.episodeDirty = true; return true; }
-    return event.target.name === "graphText";
+    return false;
   }
 
   resetDraft() {
@@ -184,9 +185,8 @@ export class EditorApplication extends ScreenFormApplication {
       this.draftRevision = context.definition.revision;
     }
     const draft = this.draft;
-    const graph = buildGraphView(context.definition.episodes, draft?.id, { columns: this.mode === "constructor" ? 2 : 3 });
+    const bindings = getObjectBindings(context.scene).bindings;
     const active = context.definition.episodes.find((entry) => entry.id === context.runtime.episodeId);
-    const incoming = (draft?.from ?? []);
     return {
       ...parent,
       missing: false,
@@ -200,25 +200,18 @@ export class EditorApplication extends ScreenFormApplication {
       hasEpisode: Boolean(draft),
       episodes: context.definition.episodes.map((entry) => ({ ...entry,
         selected: entry.id === draft?.id,
-        incoming: incoming.includes(entry.id),
         allowed: true
       })),
-      otherEpisodes: context.definition.episodes.filter((entry) => entry.id !== draft?.id).map((entry) => ({ ...entry, incoming: incoming.includes(entry.id) })),
-      graph,
-      graphText: transitionsText(context.definition),
       activeName: active?.name ?? "Эпизод не запущен",
       activeStop: Boolean(active?.stop),
       runtime: context.runtime,
       tokens: context.tokens.map((token) => ({ id: token.id, name: token.name, img: token.texture?.src,
-        configured: Boolean(draft?.tokens?.[token.id]),
-        disabled: (context.runtime.disabledTokens ?? []).includes(token.id),
-        emoji: draft?.tokens?.[token.id]?.emoji ?? ""
+        configured: bindings[`Token:${token.id}`]?.schemeId === context.definition.schemeId,
+        disabled: (context.runtime.disabledTokens ?? []).includes(token.id)
       })),
       saveStatus: this.dirty ? "Есть несохранённые изменения" : "Изменения применяются после сохранения",
       workspaceGM: draft?.workspace?.gm ?? [],
       workspacePlayers: draft?.workspace?.players ?? [],
-      subscriptions: (draft?.subscriptions ?? []).map((entry) => ({ ...entry, isMacro: entry.kind === "macro", isChat: entry.kind === "chat", isTransition: entry.kind === "transition",
-        audience: { gms: true, interactor: true, nearby: false, range: 30, visibleOnly: true, ...entry.audience } })),
       interactionTargets: [
         ...context.tokens.map((token) => ({ value: `Token:${token.id}`, name: `НИП · ${token.name}` })),
         ...Array.from(context.scene.tiles?.values?.() ?? []).map((tile) => ({ value: `Tile:${tile.id}`, name: `Тайл · ${tile.name || tile.texture?.src?.split("/").pop() || tile.id}` }))
@@ -276,15 +269,8 @@ export class EditorApplication extends ScreenFormApplication {
     const root = this.element.querySelector("[data-episode-fields]");
     if (!root || !this.draft) return this.draft;
     const draft = clone(this.draft);
-    const block = root.dataset?.legacyBlock;
+    const block = root.dataset?.episodeTool;
     const includes = (name) => !block || block === name;
-    if (includes("episode")) {
-    draft.name = value(root, "name").trim();
-    if (!draft.name) throw new Error("Укажите название эпизода.");
-    draft.allowFromAll = checked(root, "allowFromAll");
-    draft.from = [...root.querySelectorAll('[name="from"]:checked')].map((input) => input.value);
-    draft.stop = checked(root, "stop");
-    }
     if (includes("entry")) {
     draft.pause = checked(root, "pause");
     draft.sound = value(root, "sound").trim();
@@ -304,17 +290,7 @@ export class EditorApplication extends ScreenFormApplication {
       x: number(row, "zoneX", "Зона X"), y: number(row, "zoneY", "Зона Y"),
       width: number(row, "zoneWidth", "Ширина зоны", { min: 1 }),
       height: number(row, "zoneHeight", "Высота зоны", { min: 1 }),
-      targetEpisodeId: value(row, "zoneTarget"), trigger: readTriggerFields(row, "zone-trigger")
-    }));
-    }
-    if (includes("subscriptions")) {
-    draft.subscriptions = [...root.querySelectorAll("[data-subscription-row]")].map((row) => ({
-      id: row.dataset.subscriptionRow, enabled: checked(row, "subscriptionEnabled"),
-      event: value(row, "subscriptionEvent").trim(), kind: value(row, "subscriptionKind"),
-      macroUuid: value(row, "subscriptionMacro").trim(), episodeId: value(row, "subscriptionEpisode"),
-      text: value(row, "subscriptionText"),
-      audience: { gms: checked(row, "audienceGMs"), interactor: checked(row, "audienceInteractor"), nearby: checked(row, "audienceNearby"),
-        range: number(row, "audienceRange", "Дальность сообщения"), visibleOnly: checked(row, "audienceVisible") }
+      eventName: value(row, "zoneEvent").trim(), trigger: readTriggerFields(row, "zone-trigger")
     }));
     }
     if (includes("dialogues")) {
@@ -362,25 +338,13 @@ export class EditorApplication extends ScreenFormApplication {
   }
 
   async handleAction(action, button) {
+    if (action === "token") return this.controller.openObjectBehavior({ type: "Token", id: button.dataset.tokenId });
     const context = this.controller.getContext();
     const currentKey = editorContextKey(context, context.episode?.id ?? context.definition?.episodes?.[0]?.id);
     const shownKey = this.element?.querySelector?.("[data-editor-context]")?.dataset?.editorContext ?? this.contextKey;
     if (shownKey && shownKey !== currentKey) {
       void this.refresh();
       throw new Error("Сцена или выбранный эпизод изменились. Дождитесь обновления окна; черновик сохранён отдельно.");
-    }
-    if (action === "selectEpisode") {
-      if (!(await this.mayDiscard())) return;
-      this.resetDraft();
-      return this.controller.selectEpisode(button.dataset.episodeId);
-    }
-    if (action === "addEpisode") {
-      const input = field(this.element, "newEpisodeName");
-      const name = input.value.trim();
-      if (!name) throw new Error("Укажите название нового эпизода.");
-      if (!(await this.mayDiscard())) return;
-      this.resetDraft();
-      return this.controller.addEpisode(name);
     }
     if (action === "saveEpisode") {
       const draft = this.readEpisode();
@@ -389,36 +353,6 @@ export class EditorApplication extends ScreenFormApplication {
       return this.render({ force: true });
     }
     if (action === "discard") { this.resetDraft(); return this.render({ force: true }); }
-    if (action === "deleteEpisode") {
-      if (!(await DialogV2.confirm({ window: { title: "Удаление эпизода" }, content: "<p>Удалить выбранный эпизод и его настройки? Документы сцены сохранятся.</p>", rejectClose: false }))) return;
-      const id = this.draft.id;
-      this.resetDraft();
-      return this.controller.deleteEpisode(id);
-    }
-    if (action === "saveGraph") {
-      if (this.episodeDirty && !(await this.mayDiscard())) return;
-      const definition = clone(this.controller.getContext().definition);
-      const parsed = parseTransitions(value(this.element, "graphText"), definition.episodes);
-      definition.episodes = parsed;
-      await this.controller.saveDefinition(definition, this.draftRevision, { sceneId: context.scene.id });
-      this.resetDraft();
-      return this.render({ force: true });
-    }
-    if (action === "previewGraph") {
-      const context = this.controller.getContext();
-      const parsed = parseTransitions(value(this.element, "graphText"), context.definition.episodes);
-      const summary = parsed.map((episode) => `${episode.name}: ${episode.allowFromAll ? "из любого" : (episode.from.map((id) => parsed.find((entry) => entry.id === id)?.name ?? id).join(", ") || "нет входов")}`).join("\n");
-      this.element.querySelector("[data-graph-preview]").textContent = summary;
-      this.previewGraph(parsed);
-      return;
-    }
-    if (action === "token") {
-      if (this.mode === "constructor" && this.dirty) {
-        ui.notifications.warn("Сохраните настройки эпизода перед настройкой токена.");
-        return;
-      }
-      return this.controller.openToken(button.dataset.tokenId);
-    }
     if (action === "addSpawn") return this.changeDraft((draft) => draft.spawns.push({ id: randomId(), actorUuid: "", x: 0, y: 0, count: 1, spacing: 100 }));
     if (action === "deleteSpawn") return this.changeDraft((draft) => { draft.spawns.splice(Number(button.dataset.index), 1); });
     if (action === "pickSpawn") {
@@ -426,7 +360,7 @@ export class EditorApplication extends ScreenFormApplication {
       if (point) return this.changeDraft((draft) => Object.assign(draft.spawns[Number(button.dataset.index)], point));
       return;
     }
-    if (action === "addZone") return this.changeDraft((draft) => draft.zones.push({ id: randomId(), label: "Новая зона", x: 0, y: 0, width: 200, height: 200, targetEpisodeId: "" }));
+    if (action === "addZone") return this.changeDraft((draft) => draft.zones.push({ id: randomId(), label: "Новая зона", x: 0, y: 0, width: 200, height: 200, eventName: "" }));
     if (action === "deleteZone") return this.changeDraft((draft) => { draft.zones.splice(Number(button.dataset.index), 1); });
     if (action === "pickZone") {
       const point = await this.controller.pickPoint();
@@ -469,20 +403,6 @@ export class EditorApplication extends ScreenFormApplication {
     if (action === "resetTrigger") return this.controller.resetTriggers(button.dataset.triggerKey);
     if (action === "resetTriggers") return this.controller.resetTriggers();
     if (action === "toggleTrigger") return this.controller.setTriggerEnabled(button.dataset.triggerKey, button.dataset.enable === "true");
-    if (action === "addDialogue" || action === "dialogue") {
-      if (this.dirty) throw new Error("Сохраните параметры эпизода перед открытием редактора диалога.");
-      return action === "addDialogue" ? this.controller.addDialogue() : this.controller.openDialogueEditor(button.dataset.dialogueId);
-    }
-    if (action === "deleteDialogue") {
-      if (this.dirty) throw new Error("Сначала сохраните параметры эпизода.");
-      return this.controller.deleteDialogue(button.dataset.dialogueId);
-    }
-    if (action === "addSubscription") return this.changeDraft((draft) => {
-      draft.subscriptions ??= [];
-      draft.subscriptions.push({ id: randomId(), enabled: true, event: "", kind: "transition", macroUuid: "", episodeId: "", text: "",
-        audience: { gms: true, interactor: true, nearby: false, range: 30, visibleOnly: true } });
-    });
-    if (action === "deleteSubscription") return this.changeDraft((draft) => { draft.subscriptions.splice(Number(button.dataset.index), 1); });
     if (action === "addInteraction") return this.changeDraft((draft) => {
       draft.interactions ??= [];
       const target = this.controller.getContext().tokens[0];
@@ -494,131 +414,5 @@ export class EditorApplication extends ScreenFormApplication {
     if (action === "close") return this.controller.closeScreen();
   }
 
-  previewGraph(episodes) {
-    const graph = buildGraphView(episodes, this.draft?.id);
-    const svg = this.element.querySelector(".ms-graph");
-    const doc = svg.ownerDocument;
-    const create = (tag, attributes = {}, text) => {
-      const node = doc.createElementNS("http://www.w3.org/2000/svg", tag);
-      for (const [name, val] of Object.entries(attributes)) node.setAttribute(name, String(val));
-      if (text !== undefined) node.textContent = text;
-      return node;
-    };
-    for (const child of [...svg.children]) if (child.localName !== "defs") child.remove();
-    svg.setAttribute("viewBox", `0 0 ${graph.width} ${graph.height}`);
-    for (const edge of graph.edges) svg.append(create("path", { d: edge.path, class: "ms-edge", "marker-end": "url(#ms-graph-arrow)" }));
-    for (const node of graph.nodes) {
-      const group = create("g", { class: `ms-node${node.selected ? " is-selected" : ""}`, "data-screen-action": "selectEpisode", "data-episode-id": node.id, role: "button", tabindex: "0", "aria-label": `Настроить ${node.name}` });
-      group.append(create("title", {}, node.name));
-      group.append(create("rect", { x: node.x, y: node.y, width: 180, height: 56, rx: 8 }));
-      group.append(create("text", { x: node.labelX, y: node.labelY, "text-anchor": "middle" }, node.label));
-      if (node.all) group.append(create("text", { x: node.labelX, y: node.labelY, dy: 18, "text-anchor": "middle", class: "ms-graph-caption" }, "из любого"));
-      svg.append(group);
-    }
-  }
-}
 
-export class TokenEditorApplication extends ScreenFormApplication {
-  static DEFAULT_OPTIONS = {
-    classes: themedClasses("dmicher-screen-token-editor"),
-    position: { width: 620, height: 720 },
-    window: { title: "Поведение токена (техдолг)", icon: "fa-solid fa-person-rays", resizable: true }
-  };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/token-editor.hbs` } };
-
-  constructor(controller, tokenId, { episodeId, schemeId, ...options } = {}) {
-    const context = controller.getContext({ schemeId });
-    const selectedId = episodeId ?? context.selectedEpisodeId;
-    super({ ...options, id: `dmicher-master-screen-token-${context.scene?.id}-${context.definition.schemeId}-${selectedId}-${tokenId}` });
-    this.controller = controller;
-    this.tokenId = tokenId;
-    this.episodeId = selectedId;
-    this.sceneId = context.scene?.id;
-    this.schemeId = context.definition.schemeId;
-    this.draft = null;
-    this.draftRevision = null;
-  }
-
-  async _prepareContext(options) {
-    const parent = await super._prepareContext(options);
-    const context = this.controller.getContext({ schemeId: this.schemeId });
-    const token = context.tokens.find((entry) => entry.id === this.tokenId);
-    const episode = context.definition?.episodes.find((entry) => entry.id === this.episodeId);
-    if (!token || !episode || context.scene?.id !== this.sceneId || !context.isGM) return { ...parent, missing: true };
-    if (!this.draft || !this.dirty) {
-      this.draft = clone(episode.tokens[this.tokenId] ?? defaultTokenBehavior());
-      this.draftRevision = context.definition.revision;
-    }
-    return {
-      ...parent, tokenName: token.name, episodeName: episode.name, behavior: this.draft,
-      hasPosition: Boolean(this.draft.position),
-      hiddenUnset: this.draft.hidden == null, hiddenTrue: this.draft.hidden === true, hiddenFalse: this.draft.hidden === false,
-      phrases: (this.draft.speech.phrases ?? []).join("\n"),
-      points: formatPointRows(this.draft.patrol.points),
-      interactionTriggerFields: buildTriggerFields(this.draft.interaction.trigger, context.definition.episodes, { prefix: "interaction-trigger", schemeId: this.schemeId, schemeName: context.definition.schemeName }),
-      episodes: context.definition.episodes.map((entry) => ({ ...entry, selected: entry.id === this.draft.interaction.targetEpisodeId })),
-      saveStatus: this.dirty ? "Есть несохранённые изменения" : "Настройки принадлежат выбранному эпизоду"
-    };
-  }
-
-  async _onRender(context, options) {
-    await super._onRender(context, options);
-    this.bindEvents();
-  }
-
-  readBehavior() {
-    const root = this.element;
-    const behavior = clone(this.draft);
-    behavior.enabled = checked(root, "enabled");
-    behavior.emoji = value(root, "emoji").trim();
-    behavior.position = checked(root, "positionEnabled") ? { x: number(root, "positionX", "Позиция X"), y: number(root, "positionY", "Позиция Y") } : null;
-    behavior.hidden = value(root, "hidden") === "keep" ? null : value(root, "hidden") === "true";
-    behavior.speech = {
-      interval: number(root, "speechInterval", "Интервал реплик", { min: 1 }),
-      phrases: splitLines(value(root, "phrases")),
-      range: number(root, "speechRange", "Дальность слышимости"),
-      visibleOnly: checked(root, "visibleOnly")
-    };
-    behavior.entrySpeech = value(root, "entrySpeech").trim();
-    behavior.patrol = {
-      enabled: checked(root, "patrolEnabled"),
-      speed: number(root, "patrolSpeed", "Скорость патруля", { min: 0.1 }),
-      points: parsePointRows(value(root, "points"))
-    };
-    // Catalog and object binding now own shops. Preserve old preparation while
-    // editing unrelated legacy token settings; this form must not erase it.
-    behavior.interaction = { ...behavior.interaction, label: value(root, "interactionLabel").trim(), targetEpisodeId: value(root, "interactionTarget"), trigger: readTriggerFields(root, "interaction-trigger") };
-    return behavior;
-  }
-
-  async changeDraft(callback) {
-    this.draft = this.readBehavior();
-    await callback(this.draft);
-    this.dirty = true;
-    return this.render({ force: true });
-  }
-
-  async handleAction(action, button) {
-    if (this.controller.getContext().scene?.id !== this.sceneId) throw new Error("Выбрана другая сцена. Откройте настройки её токена.");
-    if (action === "saveToken") {
-      await this.controller.saveToken(this.tokenId, this.readBehavior(), this.episodeId, { sceneId: this.sceneId, schemeId: this.schemeId, expectedRevision: this.draftRevision });
-      this.resetDraft();
-      return this.render({ force: true });
-    }
-    if (action === "discard") { this.resetDraft(); return this.render({ force: true }); }
-    if (action === "capturePosition") {
-      const point = this.controller.captureToken(this.tokenId);
-      return this.changeDraft((draft) => { draft.position = { x: point.x, y: point.y }; draft.hidden = point.hidden; });
-    }
-    if (action === "addPatrolPoint") {
-      const point = await this.controller.pickPoint();
-      if (point) return this.changeDraft((draft) => draft.patrol.points.push({ ...point, macroUuid: "", onTrue: "" }));
-      return;
-    }
-    if (action === "capturePatrolPoint") {
-      const point = this.controller.captureToken(this.tokenId);
-      return this.changeDraft((draft) => draft.patrol.points.push({ x: point.x, y: point.y, macroUuid: "", onTrue: "" }));
-    }
-    if (action === "close") return this.close();
-  }
 }

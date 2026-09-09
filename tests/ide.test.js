@@ -41,19 +41,18 @@ test("scheme badges report the actual run colours and distinguish an unstarted o
 });
 
 test("source inventory names built-in and configured events without creating definitions", () => {
-  const definitions = [{ schemeId: "s", schemeName: "S", episodes: [{ id: "e", name: "E", zones: [{ id: "z", eventName: "door.opened" }], tokens: { guard: { interaction: { eventName: "guard.asked" }, patrol: { points: [{ eventName: "guard.arrived" }] } } } }] }];
+  const definitions = [{ schemeId: "s", schemeName: "S", episodes: [{ id: "e", name: "E", zones: [{ id: "z", eventName: "door.opened" }], interactions: [{ id: "ask", name: "Ask", eventName: "guard.asked" }] }] }];
   const before = structuredClone(definitions), sources = eventSources(definitions, { tokens: new Map() });
   assert.equal(sources.find((row) => row.type === "zone").detail, "zone.entered, door.opened");
-  assert.equal(sources.find((row) => row.type === "npc").detail, "npc.interacted, guard.asked");
-  assert.equal(sources.find((row) => row.type === "patrol").detail, "patrol.arrived, guard.arrived");
+  assert.equal(sources.find((row) => row.type === "interaction").detail, "guard.asked");
   assert.deepEqual(definitions, before);
 });
 
-test("catalog dialogue and object patrol sources link to their owning editor without duplicating IDs", () => {
+test("catalog dialogue and object routine sources link to their owning editor without duplicating IDs", () => {
   const definitions = [{ schemeId: "s", schemeName: "S", episodes: [{ id: "a", name: "A" }, { id: "b", name: "B" }] }];
   const assets = { dialogues: [{ id: "talk", name: "Talk", pages: [{ responses: [{ eventName: "bell" }] }] }] };
   const bindings = [{ type: "Tile", id: "menu", schemeId: "s", dialogue: { dialogueId: "talk", episodeIds: ["a"] } },
-    { type: "Token", id: "guard", schemeId: "s", features: [{ id: "walk", kind: "patrol", episodeIds: [], patrol: { points: [{ eventName: "arrived" }] } }] }];
+    { type: "Token", id: "guard", schemeId: "s", routines: [{ episodeId: "a", steps: [{ id: 1, kind: "event", parameters: { eventName: "arrived" } }] }, { episodeId: "b", steps: [{ id: 1, kind: "wait", parameters: { seconds: 1 } }] }] }];
   const sources = eventSources(definitions, { tokens: new Map(), tiles: new Map() }, { assets, bindings });
   assert.equal(sources.filter((row) => row.assetId === "talk").length, 1);
   assert.equal(sources.find((row) => row.assetId === "talk").detail, "dialogue.finished, bell");

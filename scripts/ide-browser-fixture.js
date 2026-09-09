@@ -69,11 +69,8 @@ globalThis.openNativeItemForm = () => {
   form.addEventListener("submit", save); form.addEventListener("change", save);
   document.body.append(form); Hooks.callAll("renderApplicationV2", { element: form }, form); form.elements.name.focus();
 };
-const { defaultDefinition, defaultTokenBehavior, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
+const { defaultDefinition, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
 const definition = defaultDefinition(); definition.schemeName = "Town square";
-definition.episodes[0].tokens.guard = defaultTokenBehavior();
-definition.episodes[0].tokens.guard.speech.phrases = ["Hello traveller"];
-definition.episodes[0].dialogues = [{ id: "talk", name: "Guard conversation", enabled: true, target: { type: "Token", id: "guard" }, range: 5, startNodeId: "start", nodes: [{ id: "start", text: "Welcome", responses: [] }] }];
 definition.episodes[0].spawns = [{ id: "spawn", actorUuid: "Actor.guard", x: 100, y: 200, count: 1, spacing: 100 }];
 definition.episodes[0].workspace.gm = [{ uuid: "JournalEntry.note", x: 10, y: 20, width: 300, height: 200 }];
 const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: new Map(), tiles: new Map(), grid: { size: 100, distance: 5 },
@@ -88,6 +85,7 @@ const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: 
 const token = { id: "guard", name: "Guard", x: 100, y: 100, texture: { src: "" }, getFlag() {}, actor: { id: "guard-actor", name: "Guard actor", testUserPermission: () => false } };
 token.update = async function (changes) { Object.assign(this, structuredClone(changes)); return this; };
 scene.tokens.set(token.id, token); game.scenes.set(scene.id, scene);
+scene.flags[MODULE_ID].objectBindings = { schemaVersion: 1, revision: 0, bindings: { "Token:guard": { type: "Token", id: "guard", schemeId: "main", tags: [], notes: "", routines: [], features: [] } } };
 scene.tiles.set("menu", { id: "menu", name: "Menu", x: 150, y: 150, hidden: false, width: 100, height: 100, texture: { src: "" } });
 scene.tokens.set("waiter", { ...token, id: "waiter", name: "Waiter", actor: { id: "waiter-actor", name: "Waiter actor", testUserPermission: () => false } });
 globalThis.emptyScene = { ...scene, id: "scene-empty", name: "Empty scene", flags: {}, tokens: new Map(), tiles: new Map() };

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultDefinition, defaultTokenBehavior, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
 import { EpisodeRuntime } from "../dmicher-master-screen/scripts/runtime.js";
 import { getRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { createShopService, getShopContext, shopEntries, validateTradeContext } from "../dmicher-master-screen/scripts/shop.js";
@@ -191,21 +191,6 @@ test("object feature subscriptions cannot execute after reassignment, removal or
   f.flags.runtimes.main.disabledTokens = []; binding.schemeId = "east"; await fire("three"); assert.equal(calls.length, 1);
   binding.schemeId = "main"; binding.features = []; await fire("four"); assert.equal(calls.length, 1);
   events.dispose();
-});
-
-test("legacy episode shop variants preserve the depleted NPC inventory and existing trigger keys", async () => {
-  const f = await fixture(); delete f.flags.interactionCatalog; delete f.flags.objectBindings; f.flags.runtimes = {};
-  for (const episode of f.flags.definitions.main.episodes.slice(0, 2)) episode.tokens.waiter = { ...defaultTokenBehavior(),
-    shop: { enabled: true, range: 5, requireGMApproval: false, trigger: { repeat: "always", resetOnEntry: false }, items: [{ id: "sword", stock: 2, data: { name: "Sword", type: "gear" } }] } };
-  f.flags.shopInventories = { waiter: { items: [{ id: "sword", stock: 1, data: { name: "Sword", type: "gear" } }] } };
-  await f.runtime.enter(f.scene, "calm", { force: true });
-  const target = { type: "Token", id: "waiter" }, current = getShopContext(f.scene.id, target, "main");
-  const intent = { ...f.intent(target), shopId: current.shopId }, lease = await f.shop.requestSession(intent);
-  assert.equal(f.flags.runtimes.main.triggerCounts["main:calm:shop:waiter"], 1);
-  await f.shop.requestTrade({ ...intent, kind: "exchange", sessionId: lease.sessionId, requestId: "legacy", giveItemIds: [], take: [{ entryId: "sword", count: 1 }] });
-  await f.runtime.enter(f.scene, "tension", { force: true });
-  assert.equal(shopEntries(getShopContext(f.scene.id, target, "main"))[0].stock, 0);
-  assert.equal(f.flags.shopInventories.waiter.items[0].stock, 0);
 });
 
 test("one native macro receives each subscribing NPC document without changing the original trigger", async () => {

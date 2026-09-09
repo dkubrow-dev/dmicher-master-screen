@@ -1,5 +1,6 @@
 import { MODULE_ID } from "./model.js";
-import { getRuntime, saveRuntime, withSceneLock, isAuthority, asArray } from "./store.js";
+import { getRuntime, saveRuntime, withSceneLock, isAuthority } from "./store.js";
+import { requestGMReply } from "./gm-request.js";
 import { resolveObjectDialogue } from "./scene-objects.js";
 import { objectKey, validateObjectAccess, interactionTriggerId } from "./interaction-access.js";
 import { generics } from "./generics.js";
@@ -17,10 +18,7 @@ const targetOf = (scene, descriptor) => descriptor?.type === "Token" ? scene.tok
 export function getDialogueContext(sceneId, dialogueId, schemeId = "main", source) {
   const scene = game.scenes.get(sceneId), runtime = scene ? getRuntime(scene, { schemeId }) : null;
   const resolved = source && scene && runtime ? resolveObjectDialogue(scene, source, { schemeId, episodeId: runtime.episodeId }) : null;
-  const candidates = runtime?.episode?.dialogues?.filter((entry) => entry.id === dialogueId) ?? [];
-  // Catalog assets require an object; old snapshots retain their unambiguous target.
-  const legacy = candidates.length === 1 && !candidates[0].dialogueId ? candidates[0] : null;
-  const dialogue = source ? (resolved?.asset.id === dialogueId || resolved?.config.legacyDialogueId === dialogueId ? resolved.config : null) : legacy;
+  const dialogue = resolved && resolved.asset.id === dialogueId ? resolved.config : null;
   return { scene, runtime, dialogue, target: scene && dialogue ? targetOf(scene, dialogue.target) : null };
 }
 
@@ -83,7 +81,7 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
           validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, command.actorTokenId, user, command.runId);
           session = state.dialogueSessions[sessionKey(user.id, command.actorTokenId)];
           if (!(["active", "finished"].includes(session?.status) && session.runId === state.runId && session.dialogueId === dialogue.id
-            && (!session.target || objectKey(session.target) === objectKey(dialogue.target)))) {
+            && objectKey(session.target) === objectKey(dialogue.target))) {
             const triggerKey = getTriggerKey(state, "dialogue", interactionTriggerId(dialogue));
             const gate = getTriggerGate(initial.scene, state, dialogue.trigger, initial.scene.tokens.get(command.actorTokenId), { triggerKey });
             if (!gate.allowed) fail(gate.reason);
@@ -102,7 +100,8 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
           dialogue = context(command.sceneId, session.dialogueId, command.schemeId ?? "main", session.target).dialogue;
         } else fail("Неизвестное действие диалога.");
         const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
-        if (session.actorId && session.actorId !== initial.scene.tokens.get(session.actorTokenId)?.actor?.id) fail("Персонаж взаимодействия изменился.");
+        if (session.actorId !== initial.scene.tokens.get(session.actorTokenId)?.actor?.id) fail("Персонаж взаимодействия изменился.");
+        if (objectKey(session.target) !== objectKey(dialogue?.target)) fail("Разговор относится к другому объекту.");
         validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, session.actorTokenId, user, session.runId);
         const node = dialogue.nodes.find((entry) => entry.id === session.nodeId);
         if (!node) fail("Текущий шаг разговора не найден.");
@@ -159,24 +158,10 @@ export function createDialogueService({ emitEvent, onChange = () => {}, context 
       let response;
       if (authority() && game.user.isGM) response = await process(command, game.user, random());
       else {
-        const gms = asArray(game.users).filter((user) => user.active && Number(user.role) === 4).map((user) => user.id);
-        if (!gms.length) fail("Для взаимодействия нужен подключённый мастер.");
-        response = await new Promise((resolve, reject) => {
-          let messageId, timer, hookId;
-          const check = (message) => {
-            if (!messageId || message.id !== messageId) return;
-            const result = message.getFlag?.(MODULE_ID, "dialogueResult");
-            if (!result) return;
-            clearTimeout(timer); Hooks.off("updateChatMessage", hookId);
-            if (result.failure) reject(new Error(result.failure)); else resolve(result);
-          };
-          hookId = Hooks.on("updateChatMessage", check);
-          timer = setTimeout(() => { Hooks.off("updateChatMessage", hookId); reject(new Error("Мастер не ответил. Состояние разговора можно восстановить повторным открытием.")); }, 20_000);
-          chat.create({ author: game.user.id, content: "<p>Ширма: взаимодействие со сценой.</p>", flags: { [MODULE_ID]: { dialogueCommand: command } } },
-            { audience: { type: "users", userIds: [...gms, game.user.id] }, kind: "dialogue-command", technical: true })
-            .then((messages) => { if (!messages[0]) throw new Error("Запрос не отправлен."); messageId = messages[0].id; check(game.messages.get(messageId) ?? messages[0]); })
-            .catch((error) => { clearTimeout(timer); Hooks.off("updateChatMessage", hookId); reject(error); });
-        });
+        response = await requestGMReply(chat, { command, commandFlag: "dialogueCommand", responseFlag: "dialogueResult",
+          content: "<p>Ширма: взаимодействие со сценой.</p>", kind: "dialogue-command",
+          timeoutMessage: "Мастер не ответил. Состояние разговора можно восстановить повторным открытием." });
+        if (response.failure) throw new Error(response.failure);
       }
       if (response.sessionId) {
         knownSessions.set(response.sessionId, clone(response));

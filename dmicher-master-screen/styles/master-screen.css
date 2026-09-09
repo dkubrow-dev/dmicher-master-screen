@@ -34,7 +34,6 @@
 .dmicher-master-screen[data-dock-side="bottom"] .ms-dock-divider { top: 0; left: 0; right: 0; height: 7px; cursor: row-resize; }
 .dmicher-master-screen[data-dock-side="bottom"] .ms-dock-divider::after { left: calc(50% - 24px); top: 2px; width: 48px; height: 3px; }
 .dmicher-master-screen .ms-dock-divider:is(:hover, :focus-visible) { background: var(--dmicher-accent); outline: none; }
-.dmicher-master-screen[data-dock-side="bottom"] .ms-graph { height: 190px; min-height: 150px; max-height: 220px; }
 .dmicher-master-screen.ms-docked-editor .ms-body { padding: 12px; }
 .dmicher-master-screen.ms-docked-editor .ms-body > .ms-toolbar { gap: 6px; margin-bottom: 12px; }
 .dmicher-master-screen.ms-docked-editor .ms-body > .ms-toolbar .ms-actions { gap: 5px; }
@@ -44,7 +43,6 @@
   .dmicher-master-screen .ms-grid-two, .dmicher-master-screen .ms-grid-four { grid-template-columns: minmax(0, 1fr); }
   .dmicher-master-screen .ms-inline-form, .dmicher-master-screen .ms-object-tags { flex-wrap: wrap; }
   .dmicher-master-screen .ms-section { padding: 10px; }
-  .dmicher-master-screen .ms-graph { min-height: 135px; }
   .dmicher-master-screen .ms-field, .dmicher-master-screen .ms-check, .dmicher-master-screen .ms-note { overflow-wrap: anywhere; }
 }
 .dmicher-master-screen h2 { font-size: 1.13rem; margin: 0 0 10px; border: 0; }
@@ -66,24 +64,12 @@
 .dmicher-master-screen textarea { resize: vertical; width: 100%; min-height: 64px; padding: 8px; line-height: 1.5; }
 .dmicher-master-screen .ms-check { display: flex; gap: 8px; align-items: center; margin: 10px 0; line-height: 1.4; }
 .dmicher-master-screen .ms-check input { flex: 0 0 auto; margin: 0; }
-.dmicher-master-screen .ms-incoming { padding-left: 20px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
-.dmicher-master-screen .ms-incoming > .ms-note { flex-basis: 100%; margin-bottom: 0; }
 .dmicher-master-screen .ms-inline-form { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
 .dmicher-master-screen .ms-inline-form > input,
 .dmicher-master-screen .ms-inline-form > select { flex: 1; min-width: 120px; }
 .dmicher-master-screen .ms-episode-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .dmicher-master-screen .ms-episode-tabs .is-selected,
 .dmicher-master-screen .ms-primary { border-color: var(--dmicher-accent); background: var(--dmicher-row-hover); }
-.dmicher-master-screen .ms-graph { width: 100%; max-height: 310px; min-height: 110px; display: block; overflow: visible; }
-.dmicher-master-screen .ms-node { cursor: pointer; }
-.dmicher-master-screen .ms-node rect { fill: var(--dmicher-surface-bg); stroke: var(--dmicher-border-muted); stroke-width: 1.5; }
-.dmicher-master-screen .ms-node:hover rect,
-.dmicher-master-screen .ms-node:focus rect,
-.dmicher-master-screen .ms-node.is-selected rect { stroke: var(--dmicher-accent); stroke-width: 2.5; }
-.dmicher-master-screen .ms-node text { fill: var(--dmicher-text); font-family: inherit; font-size: 13px; pointer-events: none; }
-.dmicher-master-screen .ms-node .ms-graph-caption { fill: var(--dmicher-text-muted); font-size: 10px; }
-.dmicher-master-screen .ms-edge { fill: none; stroke: var(--dmicher-accent); stroke-width: 1.8; opacity: 0.75; }
-.dmicher-master-screen .ms-arrow { fill: var(--dmicher-accent); }
 .dmicher-master-screen .ms-list { display: flex; flex-direction: column; gap: 6px; }
 .dmicher-master-screen .ms-token-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px; border-radius: 5px; background: var(--dmicher-surface-muted); }
 .dmicher-master-screen .ms-token-title { display: flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }

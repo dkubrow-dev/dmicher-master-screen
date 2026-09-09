@@ -23,11 +23,7 @@ export function matchingActorTokens(scene, bindings, trigger = {}) {
 /** Reverse references are inspected here; eligibility is edited on the object. */
 export function renderAssetBindings(kind, assetId, bindings, objects, definitions, scene) {
   const key = kind === "shop" ? "shop" : "dialogue", assetKey = `${key}Id`;
-  const rows = bindings.flatMap((entry) => {
-    if (entry[key]?.[assetKey] === assetId) return [entry];
-    const legacy = entry.legacyVariants?.find((link) => link.kind === kind && link.assetId === assetId);
-    return legacy ? [{ ...entry, [key]: { [assetKey]: assetId, episodeIds: [legacy.episodeId], trigger: legacy.trigger } }] : [];
-  });
+  const rows = bindings.filter((entry) => entry[key]?.[assetKey] === assetId);
   return `<section class="ms-asset-bindings"><h4>Привязанные объекты · ${rows.length}</h4>${rows.length ? `<table class="ms-asset-table"><thead><tr><th>Объект</th><th>Эпизоды и допуск</th></tr></thead><tbody>${rows.map((binding) => {
     const object = objects.find((item) => item.type === binding.type && item.id === binding.id);
     const definition = definitions.find((item) => item.schemeId === binding.schemeId), config = binding[key];

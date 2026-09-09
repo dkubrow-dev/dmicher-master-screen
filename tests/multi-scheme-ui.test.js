@@ -53,16 +53,20 @@ test("dialogue start, answer and leave retain the originating scheme", async () 
   assert.match(window.options.id, /map-east-run-talk/);
 });
 
-test("manual dialogue catalog projects saved dialogues from every scheme independently of director selection", async () => {
+test("manual dialogue catalog lists scene assets independently of their binding and director selection", async () => {
   const west = defaultDefinition(), east = { ...defaultDefinition(), schemeId: "east", schemeName: "East" };
-  east.episodes[0].dialogues = [{ id: "talk", name: "East only", target: { type: "Token", id: "merchant" }, startNodeId: "start", nodes: [{ id: "start", text: "East", responses: [] }] }];
-  const scene = { id: "map", name: "Map", tokens: new Map(), tiles: new Map(), getFlag: (_module, key) => key === "definitions" ? { main: west, east } : undefined };
+  const flags = { definitions: { main: west, east },
+    interactionCatalog: { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: "talk", name: "East only", startPageId: "start",
+      pages: [{ id: "start", name: "Start", text: "East", art: "", responses: [] }] }] },
+    objectBindings: { schemaVersion: 1, revision: 0, bindings: { "Token:merchant": { type: "Token", id: "merchant", schemeId: "east",
+      dialogue: { dialogueId: "talk", episodeIds: ["calm"], range: 5, trigger: {} } } } } };
+  const scene = { id: "map", name: "Map", tokens: new Map([["merchant", { id: "merchant", name: "Merchant" }]]), tiles: new Map(), getFlag: (_module, key) => flags[key] };
   const sent = [], controller = { getContext: () => ({ isGM: true, scene, definition: west, selectedEpisodeId: "calm" }), dialogues: { openManualDialogue: descriptor => sent.push(descriptor) } };
   const window = new DialogueCatalogApplication(controller);
   await window._prepareContext({});
   const context = await window._prepareContext({});
-  assert.equal(context.dialogue.name, `East only · ${east.episodes[0].name}`);
-  assert.match(context.dialogue.id, /^legacy-dialogue-/);
+  assert.equal(context.dialogue.name, "East only");
+  assert.equal(context.dialogue.id, "talk");
   await window.handleAction("self");
   assert.deepEqual(sent[0], { sceneId: "map", dialogueId: context.dialogue.id, pageId: "start" });
 });

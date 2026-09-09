@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultDefinition, defaultTokenBehavior, emptyRuntime, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { defaultDefinition, emptyRuntime, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
 
 // These are lifecycle/contract tests, not a browser renderer or a multiplayer Foundry server.
 const instances = new Map();
@@ -58,7 +58,7 @@ function fixture(generation, isGM = true) {
   const settings = new Map(), pagehide = [], intervals = new Map(), errors = [], hookBus = createHooks();
   let timerId = 0;
   const makeScene = (id) => {
-    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: { [MODULE_ID]: { definition: defaultDefinition() } }, updates: [],
+    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: { [MODULE_ID]: { definitions: { main: defaultDefinition() } } }, updates: [],
       getFlag(scope, key) { return structuredClone(this.flags[scope]?.[key]); },
       async setFlag(scope, key, value) {
         this.flags[scope] ??= {};
@@ -154,49 +154,19 @@ for (const generation of [13, 14]) {
   });
 }
 
-test("controller persists edited token only into its source scene and rejects stale revisions", async () => {
-  const f = fixture(14);
-  try {
-    const controller = new ScreenController();
-    const behavior = defaultTokenBehavior();
-    behavior.emoji = "!";
-    await controller.saveToken("guard", behavior, "calm", { sceneId: f.scene.id, expectedRevision: 0 });
-    const saved = getDefinition(f.scene);
-    assert.equal(saved.revision, 1);
-    assert.equal(saved.episodes[0].tokens.guard.emoji, "!");
-    behavior.emoji = "stale";
-    await assert.rejects(controller.saveToken("guard", behavior, "calm", { sceneId: f.scene.id, expectedRevision: 0 }));
-    assert.equal(getDefinition(f.scene).episodes[0].tokens.guard.emoji, "!");
-    canvas.scene = f.other;
-    await assert.rejects(controller.saveToken("guard", behavior, "calm", { sceneId: f.scene.id, expectedRevision: 1 }));
-    assert.equal(f.other.updates.length, 0);
-  } finally { await f.dispose(); }
-});
 
-test("controller rejects an old episode draft instead of replacing a newer token configuration", async () => {
+test("controller rejects an old episode draft instead of replacing a newer episode configuration", async () => {
   const f = fixture(14);
   try {
     const controller = new ScreenController();
     const oldEpisode = structuredClone(controller.getContext().episode);
-    await controller.saveToken("guard", defaultTokenBehavior(), "calm", { expectedRevision: 0, sceneId: f.scene.id });
+    const changed = structuredClone(oldEpisode); changed.sound = "alarm.ogg";
+    await controller.saveEpisode(changed, { expectedRevision: 0, sceneId: f.scene.id });
     await assert.rejects(controller.saveEpisode(oldEpisode, { expectedRevision: 0, sceneId: f.scene.id }));
-    assert.ok(getDefinition(f.scene).episodes[0].tokens.guard);
+    assert.equal(getDefinition(f.scene).episodes[0].sound, "alarm.ogg");
   } finally { await f.dispose(); }
 });
 
-test("token window IDs distinguish the same imported token across scenes and episodes", async () => {
-  const f = fixture(14);
-  try {
-    const controller = new ScreenController();
-    const first = controller.openToken("guard");
-    controller.selected.set(f.scene.id, "tension");
-    const second = controller.openToken("guard");
-    canvas.scene = f.other;
-    const third = controller.openToken("guard");
-    assert.equal(new Set([first.id, second.id, third.id]).size, 3);
-    await Promise.resolve();
-  } finally { await f.dispose(); }
-});
 
 test("switching editor modes retains independent drafts; actor observation preserves the editor", async () => {
   const f = fixture(14);
@@ -240,7 +210,7 @@ test("an empty scene stays empty through constructor, director and tool windows"
     assert.equal(controller.editor.context.missingScheme, true);
     assert.match(controller.editor.context.nodeActions, /addScheme/);
     assert.equal(controller.editor.context.badgesHTML, "");
-    assert.equal(controller.openToken("guard"), undefined);
+    await controller.openObjectBehavior({ type: "Token", id: "guard" }).render();
     await controller.setMode("director");
     await controller.openDialogues().render();
     assert.deepEqual(controller.dialogueCatalog.context.dialogues, [], "the independent catalog can open before any scheme exists");
@@ -264,11 +234,14 @@ test("controller wires a validated Tile interaction through the event bus to an 
     const definition = defaultDefinition();
     definition.episodes[0].interactions = [{ id: "lever-use", name: "Pull lever", enabled: true,
       target: { type: "Tile", id: "lever" }, range: 5, eventName: "lever.used" }];
-    definition.episodes[0].subscriptions = [{ id: "alarm-route", enabled: true, event: "lever.used", kind: "transition", episodeId: "alarm" }];
+    definition.episodes[2].events = ["lever.used"];
+    f.scene.flags[MODULE_ID].objectBindings = { schemaVersion: 1, revision: 0, bindings: { "Tile:lever": { type: "Tile", id: "lever", schemeId: "main", tags: [] } } };
+    const { EventCatalog } = await import("../dmicher-master-screen/scripts/event-catalog.js");
+    await new EventCatalog(f.scene).saveEvent({ name: "lever.used", subscribers: [] });
     await controller.saveDefinition(definition);
     await controller.transition("calm");
     await controller.events.whenIdle();
-    assert.equal(controller.getInteractions("Tile", "lever").actions.length, 1);
+    assert.equal(controller.getContext().runtime.episode.interactions.length, 1);
     await controller.requestNamedInteraction("lever-use", "guard");
     await controller.events.whenIdle();
     assert.equal(controller.getContext().runtime.episodeId, "alarm");
@@ -285,9 +258,8 @@ test("constructor context menu opens only the chosen object action and writes no
     controller.objectMenu.open = (items) => { entries = items; };
     controller.openObjectInfo = (target) => opened.push(["info", target]);
     controller.openObjectBehavior = (target) => opened.push(["behavior", target]);
-    controller.openToken = (id) => opened.push(["legacy", id]);
     assert.equal(controller.openObjectMenu({ type: "Token", id: "guard" }), true);
-    assert.equal(entries.length, 3); assert.equal(opened.length, 0);
+    assert.equal(entries.length, 2); assert.equal(opened.length, 0);
     await entries[1].action(); assert.deepEqual(opened, [["behavior", { type: "Token", id: "guard" }]]);
     assert.deepEqual(f.scene.updates, []);
     f.scene.tiles = new Map([["console", { id: "console" }]]);
@@ -298,7 +270,7 @@ test("constructor context menu opens only the chosen object action and writes no
 test("entry episode is selected without executing and an ambiguous player selection stays unresolved", async () => {
   const f = fixture(14);
   try {
-    f.scene.flags[MODULE_ID].definition.entryEpisodeId = "alarm";
+    f.scene.flags[MODULE_ID].definitions.main.entryEpisodeId = "alarm";
     const controller = new ScreenController();
     assert.equal(controller.getContext().selectedEpisodeId, "alarm");
     assert.deepEqual(f.scene.updates, []);

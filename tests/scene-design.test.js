@@ -5,9 +5,10 @@ import { EventCatalog, builtinCatalog, getEventCatalog, validateTypedTrigger, no
 import { EpisodeRuntime } from "../dmicher-master-screen/scripts/runtime.js";
 import { SceneEvents } from "../dmicher-master-screen/scripts/events.js";
 import { createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
-import { MODULE_ID, defaultDefinition, defaultTokenBehavior, normalizeDefinition, normalizeSchemeSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID, defaultDefinition, normalizeDefinition, normalizeSchemeSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
 import { getDefinitions, getRuntime, getRuntimes, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { SceneObjects, resolveObjectShop } from "../dmicher-master-screen/scripts/scene-objects.js";
+import { SceneAssets } from "../dmicher-master-screen/scripts/scene-assets.js";
 
 const copy = (value) => structuredClone(value);
 function fixture() {
@@ -41,6 +42,38 @@ async function registered(f, name = "alert", parameters = []) {
   const trigger = await f.catalog.saveTrigger({ name: `${name}.signal`, eventId: event.id, parameters });
   return { event, trigger };
 }
+
+test("explicit object ownership cannot be reassigned until the current scheme is halted", async () => {
+  const f = fixture(), second = await f.editor.createScheme({ name: "North" }), objects = new SceneObjects(f.scene);
+  const target = { type: "Token", id: "npc" }; f.scene.tokens.set(target.id, { id: target.id, parent: f.scene });
+  await objects.save(target, { schemeId: "main" }); await f.runtime.enter(f.scene, "calm");
+  await assert.rejects(objects.save(target, { schemeId: second.schemeId }, { allowReassign: true }));
+  await f.runtime.halt(f.scene);
+  await objects.save(target, { schemeId: second.schemeId }, { allowReassign: true });
+  await f.runtime.enter(f.scene, second.entryEpisodeId, { schemeId: second.schemeId });
+  assert.ok(getRuntime(f.scene, { schemeId: second.schemeId }).episode.tokens.npc);
+  assert.equal(objects.get(target).schemeId, second.schemeId);
+  f.runtime.dispose(); f.bus.dispose();
+});
+
+test("100-character event names survive current catalog, binding, zone and routine references", async () => {
+  const f = fixture(), name = "a".repeat(100), event = await f.catalog.saveEvent({ name, subscribers: [] });
+  const trigger = await f.catalog.saveTrigger({ name: "long.event.signal", eventId: event.id, parameters: [] });
+  const objects = new SceneObjects(f.scene), assets = new SceneAssets(f.scene);
+  f.scene.tokens.set("npc", { id: "npc", parent: f.scene });
+  const dialogue = await assets.saveDialogue({ name: "Greeting", pages: [{ id: "first", name: "First", text: "Hello", responses: [{ id: "done", label: "Bye", eventName: name }] }] });
+  await objects.save({ type: "Token", id: "npc" }, { schemeId: "main", dialogue: { dialogueId: dialogue.id },
+    routines: [{ episodeId: "calm", steps: [{ id: 1, kind: "event", parameters: { eventName: name, triggerId: trigger.id, parameters: {} }, next: [] }] }],
+    features: [{ id: "signal", kind: "trigger", eventName: name, triggerId: trigger.id, parameters: {} }] });
+  await f.editor.updateEpisode("main", "calm", { zones: [{ id: "zone", eventName: name }], interactions: [{ id: "touch", target: { type: "Token", id: "npc" }, eventName: name }] });
+  await f.editor.updateEpisode("main", "tension", { events: [name] });
+  const renamed = name.slice(0, -1) + "b"; await f.catalog.saveEvent({ ...event, name: renamed });
+  const binding = objects.get({ type: "Token", id: "npc" }), definition = f.editor.get("main");
+  assert.equal(binding.features[0].eventName, renamed); assert.equal(binding.routines[0].steps[0].parameters.eventName, renamed);
+  assert.equal(assets.getDialogue(dialogue.id).pages[0].responses[0].eventName, renamed);
+  assert.equal(definition.episodes[0].zones[0].eventName, renamed); assert.equal(definition.episodes[0].interactions[0].eventName, renamed); assert.deepEqual(definition.episodes[1].events, [renamed]);
+  f.runtime.dispose(); f.bus.dispose();
+});
 
 test("schemes are independent ordered groups with unique names and copy/move/import", async () => {
   const f = fixture(), second = await f.editor.createScheme({ name: "North", background: "#aabbcc", textColor: "#123456" });
@@ -150,27 +183,6 @@ test("cyclic typed subscriber dispatch stops visibly at a bounded chain", { time
   f.runtime.dispose(); f.bus.dispose();
 });
 
-test("ambiguous legacy ownership requires an explicit stopped reassignment", async () => {
-  const f = fixture(), second = await f.editor.createScheme({ name: "North" });
-  const token = { id: "npc", parent: f.scene, async update() {} }; f.scene.tokens.set(token.id, token);
-  const config = defaultTokenBehavior();
-  await f.editor.updateEpisode("main", "calm", { tokens: { npc: config } });
-  const episode = await f.editor.createEpisode(second.schemeId, { name: "Watch" });
-  await assert.rejects(f.editor.updateEpisode(second.schemeId, episode.id, { tokens: { npc: config } }));
-  // Simulate genuinely saved old data, before exclusive ownership was introduced.
-  f.scene.flags[MODULE_ID].definitions[second.schemeId].episodes.find((entry) => entry.id === episode.id).tokens.npc = config;
-  await assert.rejects(f.runtime.enter(f.scene, "calm"));
-  const objects = new SceneObjects(f.scene);
-  await assert.rejects(objects.save({ type: "Token", id: token.id }, { schemeId: "main" }));
-  await objects.save({ type: "Token", id: token.id }, { schemeId: "main" }, { allowReassign: true });
-  await f.runtime.enter(f.scene, "calm");
-  await assert.rejects(objects.save({ type: "Token", id: token.id }, { schemeId: second.schemeId }, { allowReassign: true }));
-  await f.runtime.halt(f.scene);
-  await objects.save({ type: "Token", id: token.id }, { schemeId: second.schemeId }, { allowReassign: true });
-  await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
-  assert.ok(getRuntime(f.scene, { schemeId: second.schemeId }).episode.tokens.npc);
-  f.runtime.dispose(); f.bus.dispose();
-});
 
 test("scheme JSON carries event schemas and remaps scheme-gated triggers without copying live runs", async () => {
   const f = fixture(), { event, trigger } = await registered(f);
@@ -185,44 +197,7 @@ test("scheme JSON carries event schemas and remaps scheme-gated triggers without
   assert.equal(getDefinitions(receiver).some((entry) => entry.schemeName === "Conflict"), false);
 });
 
-test("a pending patrol macro does not freeze speech ticks in another scheme", async () => {
-  const f = fixture(), second = await f.editor.createScheme({ name: "North" });
-  for (const id of ["guard", "vendor"]) f.scene.tokens.set(id, { id, parent: f.scene, x: 0, y: 0, width: 1, height: 1, object: {}, async update(changes) { Object.assign(this, changes); } });
-  const guard = defaultTokenBehavior(), vendor = defaultTokenBehavior();
-  guard.patrol = { enabled: true, speed: 5, points: [{ x: 0, y: 0, macroUuid: "Macro.wait" }] };
-  vendor.speech = { interval: 1, phrases: ["Goods"], range: 30 };
-  await f.editor.updateEpisode("main", "calm", { tokens: { guard } });
-  const episode = await f.editor.createEpisode(second.schemeId, { name: "Market", tokens: { vendor } });
-  let release, started; const entered = new Promise((resolve) => { started = resolve; });
-  f.runtime.effects.macro = async () => { started(); return new Promise((resolve) => { release = resolve; }); };
-  await f.runtime.enter(f.scene, "calm"); await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
-  f.advance(1000); const pending = f.runtime.tick(); await entered;
-  const count = f.calls.length; f.advance(1000); await f.runtime.tick();
-  assert.ok(f.calls.length > count); release(false); await pending;
-  f.runtime.dispose(); f.bus.dispose();
-});
 
-test("changing schemes does not replenish a shared NPC shop's previous inventory", async () => {
-  const f = fixture(), second = await f.editor.createScheme({ name: "North" }), config = defaultTokenBehavior();
-  config.shop.enabled = true; config.shop.items = [{ id: "lot", stock: 10, data: { name: "Sword", type: "weapon" } }];
-  f.scene.tokens.set("npc", { id: "npc", parent: f.scene });
-  await f.editor.updateEpisode("main", "calm", { tokens: { npc: config } });
-  const episode = await f.editor.createEpisode(second.schemeId, { name: "Trading" });
-  await f.runtime.enter(f.scene, "calm");
-  const descriptor = { type: "Token", id: "npc" }, objects = new SceneObjects(f.scene);
-  const shopId = resolveObjectShop(f.scene, descriptor, { schemeId: "main", episodeId: "calm" }).asset.id;
-  f.scene.flags[MODULE_ID].runtimes.main.shops[shopId].items[0].stock = 2;
-  await f.runtime.halt(f.scene);
-  await objects.save(descriptor, { schemeId: second.schemeId, shop: { shopId, episodeIds: [episode.id], trigger: { repeat: "always" } } }, { allowReassign: true });
-  await f.runtime.enter(f.scene, episode.id, { schemeId: second.schemeId });
-  assert.equal(getRuntime(f.scene, { schemeId: second.schemeId }).shops[shopId].items[0].stock, 2);
-  await f.scene.setFlag(MODULE_ID, "shopInventories.npc", { items: [{ id: "lot", stock: 1, data: { name: "Sword", type: "weapon" } }] });
-  await f.runtime.halt(f.scene, { schemeId: second.schemeId });
-  await objects.save(descriptor, { schemeId: "main", shop: { shopId, episodeIds: ["calm"], trigger: { repeat: "always" } } }, { allowReassign: true });
-  await f.runtime.enter(f.scene, "calm", { force: true });
-  assert.equal(getRuntime(f.scene).shops[shopId].items[0].stock, 1);
-  f.runtime.dispose(); f.bus.dispose();
-});
 
 test("a standalone trigger import resolves the receiving parent by name and rejects collisions", async () => {
   const f = fixture(), { event, trigger } = await registered(f, "portable", [{ name: "value", type: "integer", min: 0 }]);
@@ -264,16 +239,6 @@ test("event JSON includes nested event and typed trigger dependencies", async ()
   assert.equal(imported.triggers.find((trigger) => trigger.id === entry.subscribers[0].triggerId).name, inner.trigger.name);
 });
 
-test("catalog collection includes events referenced only by NPCs, patrols or zones", async () => {
-  const f = fixture(), config = defaultTokenBehavior();
-  config.interaction.eventName = "npc.only";
-  config.patrol.points = [{ x: 0, y: 0, eventName: "patrol.only" }];
-  await f.editor.updateEpisode("main", "calm", { tokens: { npc: config }, zones: [{ id: "zone", eventName: "zone.only" }] });
-  const envelope = f.editor.exportScheme("main");
-  assert.ok(["npc.only", "patrol.only", "zone.only"].every((name) => envelope.catalog.events.some((event) => event.name === name)));
-  const receiver = f.createScene("receiver"); await new SchemeEditor(receiver).importScheme(envelope, { name: "Imported" });
-  assert.ok(["npc.only", "patrol.only", "zone.only"].every((name) => getEventCatalog(receiver).events.some((event) => event.name === name)));
-});
 
 test("expected revisions reject stale parameter snapshots without deleting newer settings or subscribers", async () => {
   const f = fixture(), definition = f.editor.get("main"), oldEpisode = copy(definition.episodes[0]);
@@ -290,20 +255,6 @@ test("expected revisions reject stale parameter snapshots without deleting newer
   assert.equal(f.catalog.list().macros.length, 0);
 });
 
-test("100-character event names survive each reference and catalogue rename", async () => {
-  const f = fixture(), name = `a${"x".repeat(99)}`, event = await f.catalog.saveEvent({ name, subscribers: [] });
-  const token = defaultTokenBehavior(); token.interaction.eventName = name; token.patrol.points = [{ x: 0, y: 0, eventName: name }];
-  await f.editor.updateEpisode("main", "calm", { events: [name], tokens: { npc: token },
-    subscriptions: [{ id: "sub", kind: "macro", event: name, macroUuid: "Macro.test" }],
-    interactions: [{ id: "interaction", eventName: name }], zones: [{ id: "zone", eventName: name }],
-    dialogues: [{ id: "dialogue", nodes: [{ id: "node", responses: [{ id: "answer", eventName: name }] }] }] });
-  const episode = f.editor.get("main").episodes[0];
-  const refs = [episode.events[0], episode.subscriptions[0].event, episode.interactions[0].eventName, episode.zones[0].eventName,
-    episode.tokens.npc.interaction.eventName, episode.tokens.npc.patrol.points[0].eventName, episode.dialogues[0].nodes[0].responses[0].eventName];
-  assert.equal(refs.every((entry) => entry === name), true);
-  await f.catalog.saveEvent({ ...event, name: `b${"x".repeat(99)}` });
-  assert.equal(f.editor.get("main").episodes[0].dialogues[0].nodes[0].responses[0].eventName.length, 100);
-});
 
 test("halting detaches an unresolved macro wait so a new run drains before the old promise settles", { timeout: 2000 }, async () => {
   const f = fixture(), first = await registered(f, "old.wait"), second = await registered(f, "fresh.run");
@@ -326,27 +277,6 @@ test("halting detaches an unresolved macro wait so a new run drains before the o
   f.runtime.dispose(); f.bus.dispose();
 });
 
-test("patrol native macros receive an origin-bound Invoke function after asynchronous work", async () => {
-  const f = fixture(), { event, trigger } = await registered(f, "patrol.invoke");
-  await f.catalog.saveEvent({ ...event, subscribers: [{ kind: "builtin", action: "pause" }] });
-  const guard = defaultTokenBehavior(); guard.patrol = { enabled: true, speed: 5, points: [{ x: 0, y: 0, macroUuid: "Macro.patrol" }] };
-  f.scene.tokens.set("guard", { id: "guard", parent: f.scene, actor: {}, object: {}, x: 0, y: 0, width: 1, height: 1, async update(changes) { Object.assign(this, changes); } });
-  await f.editor.updateEpisode("main", "calm", { tokens: { guard } });
-  let started, release, rejected = false; const entered = new Promise((resolve) => { started = resolve; });
-  globalThis.fromUuid = async () => ({ documentName: "Macro", type: "script", canExecute: true,
-    async execute({ InvokeDmicherMasterScreenEvent }) {
-      started(); await new Promise((resolve) => { release = resolve; });
-      try { await InvokeDmicherMasterScreenEvent(event.name, { type: trigger.name }); }
-      catch { rejected = true; }
-      return false;
-    } });
-  f.runtime.effects.macro = createFoundryEffects().macro;
-  await f.runtime.enter(f.scene, "calm"); f.advance(1000); const patrol = f.runtime.tick(); await entered;
-  await f.runtime.haltAll(f.scene); await f.runtime.enter(f.scene, "tension", { force: true });
-  release(); await patrol; await f.bus.whenIdle();
-  assert.equal(rejected, true); assert.equal(game.paused, false);
-  f.runtime.dispose(); f.bus.dispose();
-});
 
 test("scheme symbols count Unicode graphemes and reject empty, multiple or invisible characters", () => {
   for (const symbol of ["🎬", "🌦️", "👩🏽‍🚀", "🇷🇺", "1️⃣", "A", "e\u0301", "◈"]) assert.equal(normalizeSchemeSymbol(symbol), symbol);
@@ -377,20 +307,6 @@ test("description normalization preserves authored prose and locale maps without
   for (const input of [false, 7, [], { ru: "Missing English" }, { ru: "Text", en: 3 }, { ru: "Text", en: "Text", code: "alert()" }, "x".repeat(4001)]) assert.throws(() => normalizeDescription(input));
 });
 
-test("reading older scene metadata supplies display defaults without mutating definitions or live state", async () => {
-  const f = fixture(), data = f.scene.flags[MODULE_ID].definitions.main;
-  delete data.symbol; delete data.description; data.episodes.forEach((episode) => { delete episode.description; });
-  await f.runtime.enter(f.scene, "calm");
-  await f.bus.whenIdle();
-  const before = copy(f.scene.flags), resolved = f.editor.get("main");
-  assert.equal(resolved.symbol, "🎬"); assert.ok(resolved.description.en); assert.ok(resolved.episodes[0].description.ru);
-  assert.deepEqual(f.scene.flags, before);
-  const run = copy(getRuntime(f.scene));
-  await f.editor.updateScheme("main", { symbol: "🌦️", description: "Weather-driven gates." });
-  await f.editor.updateEpisode("main", "calm", { description: "The clouds clear." });
-  assert.deepEqual(getRuntime(f.scene), run);
-  f.runtime.dispose(); f.bus.dispose();
-});
 
 test("scheme and episode metadata survives edits, rename, copying, movement and contextual JSON", async () => {
   const f = fixture(), scheme = await f.editor.createScheme({ name: "Weather", symbol: "🌦️", description: { ru: "Погода", en: "Weather" } });
@@ -464,26 +380,4 @@ test("a scheme is created explicitly with one episode and its final episode cann
   assert.deepEqual(f.scene.flags, before);
   await f.editor.transferEpisode(scheme.schemeId, other.schemeId, scheme.episodes[0].id, { copy: true, name: "Copy" });
   assert.equal(f.editor.get(other.schemeId).episodes.length, 2);
-});
-
-test("deleting the last stopped scheme leaves a truly empty scene and never resurrects legacy data", async () => {
-  const f = fixture(), legacy = defaultDefinition();
-  f.scene.flags[MODULE_ID] = { definition: legacy };
-  assert.equal(f.editor.list().length, 1);
-  await f.runtime.enter(f.scene, "calm");
-  await assert.rejects(f.editor.deleteScheme("main"));
-  await f.runtime.haltAll(f.scene); await f.bus.whenIdle(); await f.editor.deleteScheme("main");
-  assert.deepEqual(f.editor.list(), []); assert.deepEqual(getRuntimes(f.scene), []);
-  assert.deepEqual(f.scene.flags[MODULE_ID].definition, legacy);
-  const snapshot = copy(f.scene.flags); assert.deepEqual(new SchemeEditor(f.scene).list(), []); assert.deepEqual(f.scene.flags, snapshot);
-  f.runtime.dispose(); f.bus.dispose();
-});
-
-test("existing empty schemes remain editable without creating a scheme in a new scene", () => {
-  const f = fixture(); f.scene.flags[MODULE_ID].definitions.main.episodes = [];
-  const before = copy(f.scene.flags), read = f.editor.get("main");
-  assert.equal(read.episodes.length, 1); assert.equal(read.episodes[0].id, "initial");
-  assert.deepEqual(f.scene.flags, before); assert.equal(getRuntime(f.scene).runId, "");
-  assert.throws(() => normalizeDefinition({ ...defaultDefinition(), episodes: [] }));
-  for (const missing of [undefined, null, false]) assert.throws(() => normalizeDefinition(missing));
 });
