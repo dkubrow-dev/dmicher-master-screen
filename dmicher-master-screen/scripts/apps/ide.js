@@ -1,10 +1,12 @@
 import { EditorApplication } from "./editor.js";
 import { ScreenLayout, MAIN_TABS, DETAIL_TABS } from "./screen-layout.js";
-import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderEventTree, renderMacroList, renderParameters, renderOtherList, extractLegacyBlock } from "./ide-view.js";
+import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderEventTree, renderMacroList, renderParameters, renderOtherList, extractLegacyBlock, renderMenu, renderMenuSettings, eventSources, renderObjectList } from "./ide-view.js";
+import { menuParent } from "./navigation-tree.js";
+import { renderSchemeBadges, updateSceneNavigationBadges } from "./scheme-badges.js";
 import { SchemeEditor } from "../scheme-editor.js";
 import { EventCatalog } from "../event-catalog.js";
 import { getDefinitions, getRuntimes } from "../store.js";
-import { randomId } from "../model.js";
+import { randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
 
 const esc = generics.utilities.escapeHTML;
@@ -29,20 +31,21 @@ export class MasterScreenApplication extends EditorApplication {
       void this.render({ force: true }).catch(notify);
     } });
     this.layout.presentation = presentation;
-    this.selection = { kind: "scheme", id: "main", schemeId: "main" };
+    this.selection = { kind: null, id: null, schemeId: null };
     this.parameterDraft = null;
     this.parameterRevision = null;
     this.selectionSceneId = null;
-    this.sceneDrafts = new Map();
+    this.tabStates = new Map();
+    this.menuBranch = menuParent(this.layout.preferences.mainTab);
     this.foldedSchemes = new Set();
     this.otherBlock = "tokens";
-    this.tabSettings = new Set();
     this.componentsDisposers = [];
   }
 
   _insertElement(element) { super._insertElement(element); this.layout.attach(element); }
 
   async _onClose(options) {
+    this.menuDialog?.close(); this.menuDialog?.remove(); this.menuObserver?.disconnect();
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.layout.dispose();
     return super._onClose(options);
@@ -58,19 +61,22 @@ export class MasterScreenApplication extends EditorApplication {
 
   async changeMode(mode) {
     if (this.mode === mode) return;
-    if (!(await this.mayDiscard())) return false;
-    this.resetDraft(); this.parameterDraft = null;
+    this.storeTabState();
     this.mode = mode;
     this.otherBlock = mode === "director" ? "playback" : "tokens";
     this.layout.preferences.mainTab = "scene";
     this.layout.preferences.hiddenMain = this.layout.preferences.hiddenMain.filter((id) => id !== "scene");
     this.layout.save();
+    this.restoreTabState("scene"); this.menuBranch = null;
     await this.render({ force: true });
     return true;
   }
 
   refresh() {
-    if (this.rendered && this.selectionSceneId !== this.controller.getContext().scene?.id) return this.render({ force: true });
+    const scene = this.controller.getContext().scene;
+    if (this.rendered && this.selectionSceneId !== scene?.id) return this.render({ force: true });
+    const badges = this.element?.querySelector(".ms-scheme-badges");
+    if (badges) badges.innerHTML = renderSchemeBadges(getDefinitions(scene), getRuntimes(scene));
     return super.refresh();
   }
 
@@ -82,26 +88,66 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   captureParameterDraft() {
-    if (this.element?.querySelector("[data-ide-parameters]")) this.parameterDraft = this.readParameterDraft();
-    else if (this.element?.querySelector("[data-episode-fields]")) this.draft = this.readEpisode();
+    const inputs = this.snapshotInputs();
+    if (inputs.length) this.pendingTabInputs = inputs;
+    try {
+      if (this.element?.querySelector("[data-ide-parameters]")) this.parameterDraft = this.readParameterDraft();
+      else if (this.element?.querySelector("[data-episode-fields]")) this.draft = this.readEpisode();
+    } catch (error) { if (!this.dirty) throw error; }
+  }
+
+  snapshotInputs() { return [...(this.element?.querySelectorAll("[data-detail-content] input[name],[data-detail-content] select[name],[data-detail-content] textarea[name]") ?? [])].map((input) => ({ name: input.name, type: input.type, value: input.value, checked: input.checked })); }
+  stateKey(tab = this.layout.preferences.mainTab, sceneId = this.selectionSceneId) { return `${sceneId}:${this.mode}:${tab}`; }
+  storeTabState() {
+    if (!this.selectionSceneId) return;
+    const context = this.controller.getContext();
+    this.tabStates.set(this.stateKey(), { selection: clone(this.selection), parameterDraft: clone(this.parameterDraft), parameterRevision: this.parameterRevision, dirty: this.dirty,
+      draft: clone(this.draft), draftRevision: this.draftRevision, episodeDirty: this.episodeDirty, otherBlock: this.otherBlock, contextKey: this.contextKey,
+      inputs: this.dirty ? (this.snapshotInputs().length ? this.snapshotInputs() : this.pendingTabInputs) : null, schemeId: context.scene?.id === this.selectionSceneId ? context.schemeId : this.selection.schemeId,
+      episodeId: context.scene?.id === this.selectionSceneId ? context.selectedEpisodeId : this.selection.episodeId });
+  }
+  restoreTabState(tab, sceneId = this.selectionSceneId) {
+    const saved = this.tabStates.get(this.stateKey(tab, sceneId));
+    if (saved?.schemeId) {
+      const context = this.controller.getContext();
+      if (context.definitions?.some((definition) => definition.schemeId === saved.schemeId)) {
+        this.controller.selectScheme(saved.schemeId, { render: false });
+        if (this.controller.getContext().definition.episodes.some((episode) => episode.id === saved.episodeId)) this.controller.selectEpisode(saved.episodeId, { render: false, resetDraft: false });
+      }
+    }
+    this.selection = clone(saved?.selection ?? { kind: null, id: null, schemeId: this.controller.getContext().schemeId });
+    this.parameterDraft = clone(saved?.parameterDraft ?? null); this.parameterRevision = saved?.parameterRevision ?? null;
+    this.draft = clone(saved?.draft ?? null); this.draftRevision = saved?.draftRevision ?? null; this.episodeDirty = saved?.episodeDirty ?? false;
+    this.dirty = saved?.dirty ?? false; this.otherBlock = saved?.otherBlock ?? null; this.contextKey = saved?.contextKey ?? "";
+    this.pendingInputs = null; this.pendingTabInputs = saved?.inputs ?? null;
+  }
+  selectDraftContext(key) { this.contextKey = key; }
+  resetDraft() {
+    super.resetDraft(); this.pendingTabInputs = null;
+    this.tabStates?.delete(this.stateKey());
+  }
+  async switchMainTab(tab) {
+    if (!MAIN_TABS.includes(tab) || this.layout.preferences.mainTab === tab) return;
+    this.storeTabState();
+    this.layout.preferences.mainTab = tab; this.menuBranch = menuParent(tab); this.layout.save();
+    this.restoreTabState(tab);
+    return this.render({ force: true });
+  }
+  hasUnsavedChanges() { return this.dirty || [...this.tabStates.values()].some((state) => state.dirty); }
+  async mayClose() {
+    if (!this.hasUnsavedChanges()) return true;
+    return foundry.applications.api.DialogV2.confirm({ window: { title: "Несохранённые изменения вкладок" }, content: "<p>Закрыть ширму и отменить несохранённые изменения, включая скрытые вкладки?</p>", rejectClose: false });
   }
 
   async _prepareContext(options) {
-    const current = this.controller.getContext();
+    let current = this.controller.getContext();
     if (this.selectionSceneId && this.selectionSceneId !== current.scene?.id) {
-      if (this.dirty) this.captureParameterDraft();
-      if (this.dirty && this.layout.preferences.mainTab === "other") {
-        const inputs = [...(this.element?.querySelectorAll("input[name],select[name],textarea[name]") ?? [])].map((input) => ({ name: input.name, type: input.type, value: input.value, checked: input.checked }));
-        this.drafts.set(this.contextKey, { draft: clone(this.draft), revision: this.draftRevision, dirty: true, episodeDirty: this.episodeDirty, inputs });
-      }
-      this.sceneDrafts.set(this.selectionSceneId, { selection: clone(this.selection), parameterDraft: clone(this.parameterDraft), parameterRevision: this.parameterRevision, dirty: this.dirty, otherBlock: this.otherBlock });
-      const saved = this.sceneDrafts.get(current.scene?.id);
-      this.selection = saved?.selection ?? { kind: "scheme", id: current.definition.schemeId, schemeId: current.definition.schemeId };
-      this.parameterDraft = saved?.parameterDraft ?? null; this.dirty = saved?.dirty ?? false; this.otherBlock = saved?.otherBlock ?? this.otherBlock;
-      this.parameterRevision = saved?.parameterRevision ?? null;
+      this.storeTabState();
+      this.restoreTabState(this.layout.preferences.mainTab, current.scene?.id);
+      current = this.controller.getContext();
     }
     this.selectionSceneId = current.scene?.id;
-    const parameterDirty = this.dirty && this.parameterDraft && this.layout.preferences.mainTab !== "other";
+    const parameterDirty = this.dirty && this.parameterDraft;
     const base = await super._prepareContext(options);
     if (parameterDirty) this.dirty = true;
     const { preferences } = this.layout;
@@ -120,10 +166,12 @@ export class MasterScreenApplication extends EditorApplication {
       this.parameterRevision = ["scheme", "episode"].includes(this.selection.kind) ? selectedDefinition?.revision : catalog.revision;
     }
     const activeMain = preferences.mainTab, activeDetail = preferences.detailTab;
+    this.toolRows = [];
     let mainHTML = "", detailHTML = "", nodeActions = "";
     if (activeMain === "scene") {
       mainHTML = renderSceneTree(definitions, runtimes, this.selection, this.mode);
-      if (this.mode === "constructor") nodeActions = actionButton("addScheme", "+ Схема") + actionButton("addSceneEpisode", "+ Эпизод") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить");
+      if (!definitions.length) mainHTML = '<p class="ms-note">В этой сцене пока нет схем. Создайте схему — в ней появится первый эпизод.</p>';
+      if (this.mode === "constructor") nodeActions = actionButton("addScheme", "Создать схему") + (definitions.length ? actionButton("addSceneEpisode", "+ Эпизод") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить") : "") + generics.components.renderJSONControls({ id: "scheme-list", importLabel: "Импорт схемы", exportLabel: "Экспорт схемы" });
     }
     if (activeMain === "events") {
       mainHTML = renderEventTree(catalog, this.selection, this.mode);
@@ -134,20 +182,36 @@ export class MasterScreenApplication extends EditorApplication {
       if (this.mode === "constructor") nodeActions = actionButton("createMacro", "+ Макрос") + actionButton("deleteSelected", "Убрать из ширмы");
     }
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
+    if (["shops", "dialogues"].includes(activeMain)) {
+      this.toolRows = definitions.flatMap((definition) => definition.episodes.flatMap((episode) => activeMain === "dialogues"
+        ? [{ id: `${definition.schemeId}:${episode.id}`, name: `${definition.schemeName} · ${episode.name}`, schemeId: definition.schemeId, episodeId: episode.id, detail: `${episode.dialogues?.length ?? 0} диал.`, schemeName: definition.schemeName }]
+        : current.tokens.map((token) => ({ id: `${definition.schemeId}:${episode.id}:${token.id}`, name: `${token.name}${episode.tokens[token.id]?.shop?.enabled ? " · магазин" : ""}`, tokenId: token.id, schemeId: definition.schemeId, episodeId: episode.id, episodeName: episode.name, schemeName: definition.schemeName }))));
+      mainHTML = renderObjectList(this.toolRows, this.selection, activeMain);
+      nodeActions = actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
+    }
+    if (activeMain === "sources") { this.toolRows = eventSources(definitions, current.scene); mainHTML = renderObjectList(this.toolRows, this.selection, "sources"); }
     if (activeDetail === "reference") {
-      const page = { scene: "constructor", events: "events", macros: "macros", other: "start" }[activeMain];
+      const page = { scene: "constructor", events: "events", macros: "macros", shops: "shops", dialogues: "dialogues", sources: "events", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.</p>${actionButton("contextHelp", "Открыть справку", `data-page="${page}"`)}`;
+    } else if (["shops", "dialogues", "sources"].includes(activeMain)) {
+      const row = this.toolRows.find((entry) => this.selection.kind === activeMain && entry.id === this.selection.id);
+      detailHTML = '<p class="ms-note">Выберите элемент в основной зоне.</p>';
+      if (row) {
+        detailHTML = `<h3>${esc(row.name)}</h3><p class="ms-note">${esc(row.schemeName)} · ${esc(row.episodeName ?? current.episode?.name ?? "")}</p>`;
+        if (activeMain === "shops") detailHTML += '<p class="ms-note">Каталог, правила подтверждения и доступность магазина настраиваются в поведении НИП для этого эпизода.</p>' + (this.mode === "constructor" ? actionButton("configureTool", "Настроить магазин") : "") + actionButton("shops", "Состояния и участие в торговле");
+        if (activeMain === "dialogues") detailHTML += this.mode === "constructor" ? await this.legacyBlock("dialogues", base) : actionButton("dialogues", "Читать и показывать диалоги игрокам");
+        if (activeMain === "sources") detailHTML += `<p>Порождаемые события: ${esc(row.detail)}</p><p class="ms-note">Список отражает подготовленные источники; открытие списка ничего не запускает.</p>` + (this.mode === "constructor" ? actionButton("configureTool", "Открыть настройку источника") : "");
+      }
+      if (!definitions.length) detailHTML = '<p class="ms-note">Сначала создайте схему во вкладке «Сцена». Настройки инструментов принадлежат её эпизоду.</p>';
     } else if (activeMain === "other") {
       if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.</p>${actionButton("shops", "Магазины")}${actionButton("dialogues", "Диалоги и действия")}`;
       else {
-        const renderTemplate = foundry.applications.handlebars?.renderTemplate ?? globalThis.renderTemplate;
-        const html = await renderTemplate("modules/dmicher-master-screen/templates/editor.hbs", base);
-        detailHTML = extractLegacyBlock(html, this.otherBlock, this.element?.ownerDocument ?? globalThis.document);
+        detailHTML = await this.legacyBlock(this.otherBlock, base);
       }
     } else detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, mode: this.mode });
-    const tabs = (ids, zone) => ids.map((id) => ({ id, label: TAB_LABELS[id], visible: !preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"].includes(id), active: preferences[`${zone}Tab`] === id }));
     return { ...base, mainHTML, detailHTML, nodeActions,
-      mainTabs: tabs(MAIN_TABS, "main"), detailTabs: tabs(DETAIL_TABS, "detail"), mainSettings: this.tabSettings.has("main"), detailSettings: this.tabSettings.has("detail"),
+      badgesHTML: renderSchemeBadges(definitions, runtimes),
+      mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail),
       isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
       presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
       presentationTitle: this.layout.presentation === "panel" ? "Открыть ширму в отдельном окне" : "Вернуть ширму в панель" };
@@ -156,6 +220,15 @@ export class MasterScreenApplication extends EditorApplication {
   async _onRender(context, options) {
     await super._onRender(context, options);
     this.layout.bind();
+    updateSceneNavigationBadges(this.controller);
+    const queues = new Map();
+    for (const item of this.pendingTabInputs ?? []) { if (!queues.has(item.name)) queues.set(item.name, []); queues.get(item.name).push(item); }
+    const detailInputs = this.element.querySelectorAll("[data-detail-content] input[name],[data-detail-content] select[name],[data-detail-content] textarea[name]");
+    for (const input of detailInputs) {
+      const item = queues.get(input.name)?.shift(); if (!item) continue;
+      input.value = item.value; if (["checkbox", "radio"].includes(item.type)) input.checked = item.checked;
+    }
+    if (detailInputs.length) this.pendingTabInputs = null;
     for (const id of this.foldedSchemes) this.applyFold(id);
     const selectionKey = `${this.selectionSceneId}:${this.layout.preferences.mainTab}:${JSON.stringify(this.selection)}`;
     if (selectionKey !== this.revealedSelection) {
@@ -178,6 +251,19 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.bindJSON();
     const listeners = { signal: this.events.signal };
+    this.element.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-select-kind]");
+      if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
+      event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.schemeId).catch(notify);
+    }, listeners);
+    this.menuObserver?.disconnect();
+    const updateOverflow = () => { for (const strip of this.element.querySelectorAll("[data-menu-strip]")) {
+      const overflow = strip.scrollWidth > strip.clientWidth + 1;
+      for (const arrow of strip.parentElement.querySelectorAll(".ms-menu-arrow")) { arrow.hidden = !overflow; arrow.disabled = Number(arrow.dataset.direction) < 0 ? strip.scrollLeft <= 1 : strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1; }
+    } };
+    const Observer = this.element.ownerDocument.defaultView.ResizeObserver;
+    if (Observer) { this.menuObserver = new Observer(updateOverflow); for (const strip of this.element.querySelectorAll("[data-menu-strip]")) this.menuObserver.observe(strip); }
+    this.element.addEventListener("scroll", updateOverflow, { ...listeners, capture: true }); updateOverflow();
     this.element.addEventListener("change", (event) => {
       if (event.target.matches("[data-tab-visibility]")) {
         void this.setTabVisible(event.target.dataset.tabVisibility, event.target.value, event.target.checked).catch(notify);
@@ -203,10 +289,13 @@ export class MasterScreenApplication extends EditorApplication {
     const root = this.element?.querySelector("[data-ide-parameters]");
     const draft = clone(this.parameterDraft);
     if (!root || !draft || draft.builtin) return draft;
+    const description = (input, name, original) => { const text = fieldValue(input, name); return text === localizedDescription(original) ? clone(original ?? "") : text; };
+    if (["scheme", "episode", "event", "trigger"].includes(this.selection.kind)) draft.description = description(root, "description", draft.description);
     if (["scheme", "episode"].includes(this.selection.kind)) {
       const key = this.selection.kind === "scheme" ? "schemeName" : "name";
       draft[key] = fieldValue(root, key).trim();
       draft.background = fieldValue(root, "background"); draft.textColor = fieldValue(root, "textColor");
+      if (this.selection.kind === "scheme") draft.symbol = fieldValue(root, "schemeSymbol");
       if (this.selection.kind === "episode") draft.stop = checkbox(root, "stop");
     }
     if (this.selection.kind === "event") {
@@ -221,7 +310,8 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.selection.kind === "trigger") {
       draft.name = fieldValue(root, "triggerName").trim(); draft.eventId = fieldValue(root, "triggerEventId");
       draft.parameters = [...root.querySelectorAll("[data-parameter-index]")].map((row) => {
-        const result = { name: fieldValue(row, "parameterName").trim(), type: fieldValue(row, "parameterType") };
+        const previous = draft.parameters[Number(row.dataset.parameterIndex)] ?? {};
+        const result = { name: fieldValue(row, "parameterName").trim(), type: fieldValue(row, "parameterType"), required: previous.required, description: description(row, "parameterDescription", previous.description) };
         for (const key of ["min", "max", "minLength", "maxLength", "decimals"]) {
           const value = fieldValue(row, key); if (value !== "") result[key] = Number(value);
         }
@@ -245,7 +335,9 @@ export class MasterScreenApplication extends EditorApplication {
       this.controller.selectScheme(schemeId ?? id, { render: false });
       if (kind === "episode") this.controller.selectEpisode(id, { render: false });
     }
-    this.selection = { kind, id, schemeId: schemeId ?? this.controller.getContext().definition.schemeId };
+    const tool = this.toolRows?.find((entry) => entry.id === id);
+    if (tool) { this.controller.selectScheme(tool.schemeId, { render: false }); this.controller.selectEpisode(tool.episodeId, { render: false }); }
+    this.selection = { kind, id, schemeId: schemeId || this.controller.getContext().schemeId, episodeId: tool?.episodeId };
     this.layout.preferences.detailTab = "parameters";
     this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter((tab) => tab !== "parameters");
     this.layout.save();
@@ -253,10 +345,36 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async setTabVisible(zone, id, visible) {
-    if (this.dirty && !visible && this.layout.preferences[`${zone}Tab`] === id && !(await this.mayDiscard())) { return this.render({ force: true }); }
-    this.captureParameterDraft();
+    if (zone === "main") this.storeTabState(); else this.captureParameterDraft();
+    const active = this.layout.preferences.mainTab;
     if (!this.layout.toggleTab(zone, id, visible)) ui.notifications.warn("Оставьте хотя бы одну вкладку в зоне.");
+    if (zone === "main" && active !== this.layout.preferences.mainTab) this.restoreTabState(this.layout.preferences.mainTab);
+    this.menuBranch = menuParent(this.layout.preferences.mainTab);
     return this.render({ force: true });
+  }
+
+  async legacyBlock(id, base) {
+    if (!this.controller.getContext().definition && id !== "sceneIO") return '<p class="ms-note">Сначала создайте схему во вкладке «Сцена».</p>';
+    if (id === "sceneIO") return `<div>${actionButton("export", "Экспорт сцены")}${actionButton("import", "Импорт сцены")}<input type="file" data-import-file accept=".json,application/json" hidden></div>`;
+    const renderTemplate = foundry.applications.handlebars?.renderTemplate ?? globalThis.renderTemplate;
+    return extractLegacyBlock(await renderTemplate("modules/dmicher-master-screen/templates/editor.hbs", base), id, this.element?.ownerDocument ?? globalThis.document);
+  }
+
+  openMenuSettings(zone) {
+    this.menuDialog?.close(); this.menuDialog?.remove();
+    const doc = this.element.ownerDocument, dialog = doc.createElement("dialog");
+    dialog.className = "dmicher-window dmicher-master-screen ms-menu-settings-dialog";
+    if (this.element.dataset.dmicherTheme) dialog.dataset.dmicherTheme = this.element.dataset.dmicherTheme;
+    dialog.setAttribute("aria-label", zone === "main" ? "Основные вкладки" : "Дополнительные вкладки");
+    const draw = () => {
+      dialog.innerHTML = `<h3>${zone === "main" ? "Основные вкладки" : "Дополнительные вкладки"}</h3>${renderMenuSettings(zone, this.layout.preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"])}<footer><button type="button" data-close-menu>Готово</button></footer>`;
+      for (const input of dialog.querySelectorAll("[data-indeterminate]")) input.indeterminate = true;
+    };
+    draw(); this.menuDialog = dialog; doc.body.append(dialog);
+    dialog.addEventListener("change", (event) => { if (event.target.matches("[data-menu-visible]")) void this.setTabVisible(zone, event.target.dataset.menuVisible, event.target.checked).then(draw).catch(notify); });
+    dialog.addEventListener("click", (event) => { if (event.target.closest("[data-close-menu]")) dialog.close(); });
+    dialog.addEventListener("close", () => { dialog.remove(); if (this.menuDialog === dialog) this.menuDialog = null; }, { once: true });
+    dialog.showModal();
   }
 
   applyFold(id) {
@@ -280,8 +398,8 @@ export class MasterScreenApplication extends EditorApplication {
       try { draft.background = generics.components.normalizeHexColor(draft.background); draft.textColor = generics.components.normalizeHexColor(draft.textColor); }
       catch { throw new Error("Цвет фона и текста указывается в формате #RRGGBB."); }
     }
-    if (this.selection.kind === "scheme") await schemes.updateScheme(this.selection.id, { schemeName: draft.schemeName, background: draft.background, textColor: draft.textColor }, options);
-    if (this.selection.kind === "episode") await schemes.updateEpisode(this.selection.schemeId, this.selection.id, { name: draft.name, background: draft.background, textColor: draft.textColor, events: draft.events, stop: draft.stop }, options);
+    if (this.selection.kind === "scheme") await schemes.updateScheme(this.selection.id, { schemeName: draft.schemeName, symbol: draft.symbol, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
+    if (this.selection.kind === "episode") await schemes.updateEpisode(this.selection.schemeId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor, events: draft.events, stop: draft.stop }, options);
     if (this.selection.kind === "event") await catalog.saveEvent(draft, options);
     if (this.selection.kind === "trigger") await catalog.saveTrigger(draft, options);
     if (this.selection.kind === "macro") await catalog.saveMacro(draft, options);
@@ -296,12 +414,21 @@ export class MasterScreenApplication extends EditorApplication {
       return this.setPresentation(next);
     }
     if (action === "ideSide") { this.captureParameterDraft(); this.layout.setSide(button.dataset.side); return this.render({ force: true }); }
-    if (action === "tabSettings") { this.captureParameterDraft(); const zone = button.dataset.zone; if (this.tabSettings.has(zone)) this.tabSettings.delete(zone); else this.tabSettings.add(zone); return this.render({ force: true }); }
+    if (action === "tabSettings") return this.openMenuSettings(button.dataset.zone);
+    if (action === "menuCategory") { this.captureParameterDraft(); this.menuBranch = this.menuBranch === button.dataset.id ? null : button.dataset.id; return this.render({ force: true }); }
+    if (action === "scrollMenu") { const strip = this.element.querySelector(`[data-menu-strip="${button.dataset.menuId}"]`); strip?.scrollBy({ left: Number(button.dataset.direction) * strip.clientWidth * .75, behavior: "smooth" }); return; }
     if (action === "ideTab") {
-      if (!(await this.mayDiscard())) return;
-      this.resetDraft(); this.parameterDraft = null;
+      if (button.dataset.zone === "main") return this.switchMainTab(button.dataset.id);
+      this.captureParameterDraft();
       this.layout.preferences[`${button.dataset.zone}Tab`] = button.dataset.id; this.layout.save();
       return this.render({ force: true });
+    }
+    if (action === "configureTool") {
+      const row = this.toolRows.find((entry) => entry.id === this.selection.id); if (!row) return;
+      if (row.tokenId) return this.controller.openToken(row.tokenId, { schemeId: row.schemeId, episodeId: row.episodeId });
+      if (["dialogue", "interaction"].includes(row.type)) { await this.switchMainTab("dialogues"); return this.selectNode("dialogues", `${row.schemeId}:${row.episodeId}`, row.schemeId); }
+      if (row.type === "episode") { await this.switchMainTab("scene"); return this.selectNode("episode", row.episodeId, row.schemeId); }
+      await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });
     }
     if (action === "selectNode") return this.selectNode(button.dataset.kind, button.dataset.id, button.dataset.schemeId);
     if (action === "selectOther") {
@@ -352,7 +479,7 @@ export class MasterScreenApplication extends EditorApplication {
     const scene = this.assertScene(), schemes = new SchemeEditor(scene), catalog = new EventCatalog(scene), definitions = schemes.list(), data = catalog.list();
     let selection;
     if (action === "addScheme") { const entry = await schemes.createScheme({ name: nextName(definitions, "Новая схема", "schemeName") }); selection = ["scheme", entry.schemeId, entry.schemeId]; }
-    if (action === "addSceneEpisode") { const definition = definitions.find((item) => item.schemeId === this.selection.schemeId) ?? definitions[0]; const entry = await schemes.createEpisode(definition.schemeId, { name: nextName(definition.episodes, "Новый эпизод") }); selection = ["episode", entry.id, definition.schemeId]; }
+    if (action === "addSceneEpisode") { const definition = definitions.find((item) => item.schemeId === this.selection.schemeId) ?? definitions[0]; if (!definition) throw new Error("Сначала создайте схему."); const entry = await schemes.createEpisode(definition.schemeId, { name: nextName(definition.episodes, "Новый эпизод") }); selection = ["episode", entry.id, definition.schemeId]; }
     if (action === "addEvent") { const entry = await catalog.saveEvent({ name: nextName(data.events, "Новое событие"), subscribers: [] }); selection = ["event", entry.id]; }
     if (action === "addTypedTrigger") {
       const eventId = this.selection.kind === "event" ? this.selection.id : data.triggers.find((entry) => entry.id === this.selection.id)?.eventId;
@@ -399,7 +526,7 @@ export class MasterScreenApplication extends EditorApplication {
   inlineChoice(title, choices) {
     const doc = this.element.ownerDocument, root = doc.createElement("div");
     root.className = "ms-ide-choice"; root.setAttribute("role", "dialog"); root.setAttribute("aria-modal", "true"); root.setAttribute("aria-label", title);
-    root.innerHTML = `<div><p>${esc(title)}</p>${choices.map((choice) => `<button type="button" data-choice="${esc(choice.value)}">${esc(choice.label)}</button>`).join("")}</div>`;
+    root.innerHTML = `<div><p>${esc(title)}</p><div class="ms-ide-choice-actions">${choices.map((choice) => `<button type="button" data-choice="${esc(choice.value)}">${esc(choice.label)}</button>`).join("")}</div></div>`;
     this.element.append(root); root.querySelector("button")?.focus();
     return new Promise((resolve) => {
       const finish = (result) => { root.remove(); resolve(result); };
@@ -446,16 +573,17 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   bindJSON() {
-    for (const id of ["selection", "event-list"]) {
+    for (const id of ["selection", "event-list", "scheme-list"]) {
       if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
       const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);
       const assert = () => { const scene = this.assertScene(); if (scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error("Выбор изменился. Повторите импорт или экспорт."); return scene; };
       const transfer = generics.components.createJSONTransfer({
         filename: () => `master-screen-${originalSelection.kind}-${originalSelection.id}.json`,
-        validate: (value) => { const expected = id === "event-list" ? "event" : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error("JSON не соответствует выбранному виду объекта Ширмы."); return value; },
+        validate: (value) => { const expected = id === "scheme-list" ? "scheme" : id === "event-list" ? "event" : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error("JSON не соответствует выбранному виду объекта Ширмы."); return value; },
         exportValue: () => {
           const scene = assert();
           if (this.dirty) throw new Error("Сначала сохраните изменения, затем экспортируйте.");
+          if (id === "scheme-list") { if (!originalSelection.schemeId) throw new Error("Выберите схему для экспорта."); return new SchemeEditor(scene).exportScheme(originalSelection.schemeId); }
           if (originalSelection.kind === "scheme") return new SchemeEditor(scene).exportScheme(originalSelection.id);
           if (originalSelection.kind === "episode") return new SchemeEditor(scene).exportEpisode(originalSelection.schemeId, originalSelection.id);
           if (originalSelection.kind === "event") return new EventCatalog(scene).exportEvent(originalSelection.id);

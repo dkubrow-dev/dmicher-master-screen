@@ -22,6 +22,7 @@ const server = http.createServer((request, response) => {
   }
   let file;
   if (pathname === "/fixture-client.js") file = path.join(repo, "scripts/ide-browser-fixture.js");
+  else if (pathname === "/scene-navigation.hbs") file = path.join(appRoot(currentVersion), "templates/ui/scene-navigation.hbs");
   else if (pathname === "/handlebars.js") file = path.join(appRoot(currentVersion), "node_modules/handlebars/dist/handlebars.js");
   else if (pathname.startsWith("/foundry/")) file = path.join(appRoot(currentVersion), "public", pathname.slice(9));
   else {
@@ -43,6 +44,11 @@ try {
     page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) console.error(message.text()); });
     await page.goto(`${origin}/?version=${version}`); await page.waitForFunction(() => globalThis.ready);
     const app = page.locator("#dmicher-master-screen-editor");
+    assert.equal(await app.locator("[data-ide-parameters]").count(), 0, "a newly opened tab has no implicit selection");
+    assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-scheme-badge]').count(), 1);
+    assert.equal(await page.locator('#scene-navigation [data-scene-id="scene-empty"] [data-scheme-badge]').count(), 0);
+    assert.equal(await page.locator('#scene-navigation [data-action="viewLevel"] [data-scheme-badge]').count(), 0);
+    await app.locator('[data-select-kind="scheme"] td:last-child').first().click();
     await app.locator('[data-ide-parameters] [name="schemeName"]').waitFor();
     assert.equal(await page.evaluate(() => controller.editor.layout.presentation), "panel");
     const geometry = await page.evaluate(() => ({ panel: controller.editor.element.getBoundingClientRect().left, table: document.getElementById("board").getBoundingClientRect().right }));
@@ -51,15 +57,62 @@ try {
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.schemeName === "Market square");
     const clickAction = (action) => app.locator(`[data-screen-action="${action}"]`).click();
     const saveParameters = () => app.locator('[data-ide-parameters] button[type="submit"]').click();
+    // Categories only navigate. Each leaf owns its selection and incomplete form values.
+    await app.locator('[name="schemeName"]').fill("Retained scheme draft");
+    await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
+    assert.equal(await app.locator('[name="schemeName"]').inputValue(), "Retained scheme draft");
+    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click();
+    assert.equal(await app.locator("[data-ide-parameters]").count(), 0);
+    await app.locator('[data-select-kind="event"] td:last-child').first().click();
+    assert.equal(await app.locator('[name="eventName"]').count(), 1);
+    await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
+    assert.equal(await app.locator('[name="schemeName"]').inputValue(), "Retained scheme draft");
+    await clickAction("discardParameters");
+    await app.locator('[name="description"]').fill("Draft while runtime changes");
+    await page.evaluate(async () => {
+      scene.flags["dmicher-master-screen"].runtimes.main = { ...scene.flags["dmicher-master-screen"].runtimes.main, episodeId: "calm", halted: false };
+      controller.changed(scene);
+    });
+    assert.equal(await app.locator('.ms-scheme-badges [data-scheme-badge="main"]').getAttribute("data-status"), "running");
+    assert.equal(await app.locator('[name="description"]').inputValue(), "Draft while runtime changes");
+    await page.evaluate(() => { scene.flags["dmicher-master-screen"].runtimes.main.episodeId = null; controller.changed(scene); });
+    await clickAction("discardParameters");
+    await app.locator('[name="schemeSymbol"]').fill("A"); await app.locator('[name="description"]').fill("Master description"); await saveParameters();
+    assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.description), "Master description");
+    assert.equal(await page.locator('#scene-navigation [data-scheme-badge="main"]').textContent(), "A");
+    // Gear opens a modal tree. Category checkboxes affect descendants and show an aggregate state.
+    await app.locator('[data-screen-action="tabSettings"][data-zone="main"]').click();
+    await page.locator('dialog [data-menu-visible="automation"]').uncheck();
+    await page.waitForFunction(() => controller.editor.layout.preferences.hiddenMain.includes("events"));
+    assert.equal(await page.locator('dialog [data-menu-visible="macros"]').isChecked(), false);
+    await page.locator('dialog [data-menu-visible="events"]').check();
+    assert.equal(await page.locator('dialog [data-menu-visible="automation"]').evaluate((el) => el.indeterminate), true);
+    await page.locator('dialog [data-menu-visible="automation"]').check();
+    await page.screenshot({ path: path.join(output, `${version}-menu-settings.png`) });
+    await page.locator('dialog [data-close-menu]').click();
+    // Opening a truly empty map creates no definitions; an explicit creation supplies one episode.
+    await page.evaluate(async () => { canvas.scene = emptyScene; await controller.editor.refresh(); });
+    assert.equal(await app.locator('[data-select-kind="scheme"]').count(), 0);
+    assert.equal(await app.locator('[data-scheme-badge]').count(), 0);
+    assert.equal(await page.evaluate(() => controller.getContext().definition), null);
+    await clickAction("addScheme");
+    assert.equal(await page.evaluate(() => Object.values(emptyScene.flags["dmicher-master-screen"].definitions)[0].episodes.length), 1);
+    await clickAction("deleteSelected");
+    const del = await app.locator('[data-choice="delete"]').boundingBox(), cancel = await app.locator('[data-choice="cancel"]').boundingBox();
+    assert.equal(del.y, cancel.y); assert.ok(cancel.x > del.x + del.width);
+    await app.locator('[data-choice="delete"]').click();
+    await page.waitForFunction(() => controller.getContext().definition === null);
+    await page.evaluate(async () => { canvas.scene = scene; await controller.editor.refresh(); });
+    await app.locator('[name="schemeName"]').waitFor();
     // Real tree editing, cross-scheme copy/move and the prompt are exercised through DOM events.
     await clickAction("addScheme"); await app.locator('[name="schemeName"]').fill("Back alley"); await saveParameters();
     const alley = await page.evaluate(() => Object.values(scene.flags["dmicher-master-screen"].definitions).find((entry) => entry.schemeName === "Back alley").schemeId);
     await app.locator('[data-ide-kind="episode"][data-ide-id="calm"][data-scheme-id="main"]').dragTo(app.locator(`[data-ide-kind="scheme"][data-ide-id="${alley}"]`));
     await app.locator('[data-choice="copy"]').click();
-    await page.waitForFunction((id) => scene.flags["dmicher-master-screen"].definitions[id].episodes.length === 1, alley);
+    await page.waitForFunction((id) => scene.flags["dmicher-master-screen"].definitions[id].episodes.length === 2, alley);
     await app.locator('[data-ide-kind="episode"][data-ide-id="tension"][data-scheme-id="main"]').dragTo(app.locator(`[data-ide-kind="scheme"][data-ide-id="${alley}"]`));
     await app.locator('[data-choice="move"]').click();
-    await page.waitForFunction((id) => scene.flags["dmicher-master-screen"].definitions[id].episodes.length === 2, alley);
+    await page.waitForFunction((id) => scene.flags["dmicher-master-screen"].definitions[id].episodes.length === 3, alley);
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes.some((entry) => entry.id === "tension")), false);
     await app.locator('[data-screen-action="selectNode"][data-id="calm"][data-scheme-id="main"]').click();
     await app.locator('[name="name"]').fill("Unsaved local draft");
@@ -75,6 +128,7 @@ try {
     await app.locator('[name="background"]').fill("#123456"); await saveParameters();
     await app.locator('[data-screen-action="ideSide"][data-side="right"]').click();
     // A typed event with ordered built-in subscribers and a macro binding.
+    await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
     await app.locator('[data-screen-action="ideTab"][data-id="events"]').click(); await clickAction("addEvent");
     await app.locator('[name="eventName"]').fill("bell.rang"); await clickAction("addSubscriber"); await clickAction("addSubscriber");
     await app.locator('[data-subscriber-index="1"] [name="subscriberAction"]').selectOption("unpause");
@@ -85,6 +139,9 @@ try {
     await app.locator('[name="parameterName"]').fill("volume"); await app.locator('[name="parameterType"]').selectOption("integer");
     await app.locator('[name="min"]').fill("0"); await app.locator('[name="max"]').fill("10"); await saveParameters();
     const triggerId = await page.evaluate(() => controller.editor.selection.id);
+    await page.evaluate(async () => { const { EventCatalog } = await import("/modules/dmicher-master-screen/scripts/event-catalog.js"); const catalog = new EventCatalog(scene), trigger = catalog.list().triggers.find((entry) => entry.id === controller.editor.selection.id); trigger.parameters[0].required = false; await catalog.saveTrigger(trigger); await controller.editor.refresh(); });
+    await app.locator('[name="parameterDescription"]').fill("Optional loudness"); await saveParameters();
+    assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].eventCatalog.triggers.find((entry) => entry.id === controller.editor.selection.id).parameters[0].required), false);
     await app.locator('[data-screen-action="ideTab"][data-id="macros"]').click();
     await app.locator('[data-macro-drop]').evaluate((element) => { const dataTransfer = new DataTransfer(); dataTransfer.setData("text/plain", JSON.stringify({ type: "Macro", uuid: "Macro.demo" })); element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer })); });
     await app.locator(`[name="macroTrigger"][value="${triggerId}"]`).check(); await saveParameters();
@@ -94,10 +151,20 @@ try {
     await clickAction("addSubscriber");
     await app.locator('[data-subscriber-index="2"]').evaluate((element) => { const dataTransfer = new DataTransfer(); dataTransfer.setData("text/plain", JSON.stringify({ type: "Macro", uuid: "Macro.demo" })); element.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer })); });
     await app.locator('[data-subscriber-index="2"] [name="subscriberMacro"]').waitFor(); await saveParameters();
+    await clickAction("addSubscriber");
+    await app.locator('[data-subscriber-index="3"] [name="subscriberKind"]').selectOption("trigger");
+    await app.locator('[name="subscriberParameters"]').fill("{ incomplete");
+    await app.locator('[data-screen-action="ideTab"][data-zone="detail"][data-id="reference"]').click();
+    await app.locator('[data-screen-action="ideTab"][data-id="macros"]').click();
+    await app.locator('[data-screen-action="ideTab"][data-id="events"]').click();
+    await app.locator('[data-screen-action="ideTab"][data-zone="detail"][data-id="parameters"]').click();
+    assert.equal(await app.locator('[name="subscriberParameters"]').inputValue(), "{ incomplete");
+    await clickAction("discardParameters");
     await page.screenshot({ path: path.join(output, `${version}-events.png`) });
     // A hidden Parameters tab can always be restored by selecting a tree node.
     await app.locator('[data-screen-action="tabSettings"][data-zone="detail"]').click();
-    await app.locator('[data-tab-visibility="detail"][value="parameters"]').uncheck();
+    await page.locator('dialog [data-menu-visible="parameters"]').uncheck();
+    await page.locator('dialog [data-close-menu]').click();
     await app.locator(`[data-screen-action="selectNode"][data-id="${triggerId}"]`).click();
     await app.locator('[name="triggerName"]').waitFor();
     await app.locator('[data-screen-action="ideTab"][data-id="scene"]').click();
@@ -111,8 +178,31 @@ try {
     await page.waitForFunction(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].sound === "audio/bell.ogg");
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].workspace.gm.length), 1);
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].definitions.main.episodes[0].dialogues.length), 1);
+    // Dedicated tools retain the existing episode editor and manual catalog access.
+    await app.locator('[data-screen-action="menuCategory"][data-id="tools"]').click();
+    await app.locator('[data-screen-action="ideTab"][data-id="dialogues"]').click();
+    await app.locator('[data-select-kind="dialogues"] td:last-child').first().click();
+    assert.equal(await app.locator('[data-legacy-block="dialogues"]').count(), 2);
+    assert.equal(await app.locator('[data-screen-action="addDialogue"]').count(), 1);
+    await app.locator('[data-screen-action="ideTab"][data-id="shops"]').click();
+    await app.locator('[data-select-kind="shops"] td:last-child').first().click();
+    assert.equal(await app.locator('[data-screen-action="configureTool"]').count(), 1);
+    await app.locator('[data-screen-action="menuCategory"][data-id="automation"]').click();
+    await app.locator('[data-screen-action="ideTab"][data-id="sources"]').click();
+    await app.locator('[data-select-kind="sources"] td:last-child').first().click();
+    assert.equal(await app.locator('[data-screen-action="configureTool"]').count(), 1);
     // Switch both orientations and resize both boundaries.
     await app.locator('[data-screen-action="ideSide"][data-side="bottom"]').click();
+    // A narrow main zone exposes real horizontal overflow buttons while keeping the gear reachable.
+    await page.setViewportSize({ width: 1000, height: 1000 });
+    await page.evaluate(async () => { controller.editor.layout.preferences.horizontal = .2; await controller.editor.render({ force: true }); });
+    await app.locator('[data-menu-id="main-0"][data-direction="1"]').waitFor({ state: "visible" });
+    await app.locator('[data-menu-id="main-0"][data-direction="1"]').click();
+    await page.waitForFunction(() => controller.editor.element.querySelector('[data-menu-strip="main-0"]').scrollLeft > 0);
+    assert.equal(await app.locator('[data-screen-action="tabSettings"][data-zone="main"]').isVisible(), true);
+    await page.screenshot({ path: path.join(output, `${version}-menu-overflow.png`) });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(async () => { controller.editor.layout.preferences.horizontal = .36; await controller.editor.render({ force: true }); });
     const split = await app.locator("[data-ide-divider]").boundingBox();
     await page.mouse.move(split.x + 3, split.y + split.height / 2); await page.mouse.down(); await page.mouse.move(split.x + 150, split.y + split.height / 2); await page.mouse.up();
     const ratio = await page.evaluate(() => controller.editor.layout.preferences.horizontal); assert.ok(ratio > 0.4);
@@ -152,7 +242,7 @@ try {
     assert.equal(await page.evaluate(() => controller.editor.layout.preferences.horizontal), ratio);
     assert.equal(await page.evaluate(() => controller.editor.dock.preferences.bottom), bottomSize);
     assert.deepEqual(errors, []); assert.deepEqual(await page.evaluate(() => globalThis.errors), []);
-    reports.push({ version, layout: "right/bottom/split/outer-resize/popup/return/native-popup-close/reopen/reload", drafts: "single legacy block preserves siblings; stale save rejected; incomplete color and popup draft preserved", editing: "scheme create; episode copy/move prompt; typed event fields; ordered subscribers; macro drops; hidden tab recovery", errors });
+    reports.push({ version, layout: "right/bottom/split/outer-resize/popup/return/native-popup-close/reopen/reload/menu-overflow-scroll", drafts: "independent leaf/mode drafts; invalid JSON retained through reference and tab switches; stale save rejected; incomplete color and popup draft preserved", editing: "whole-row selection; category-only navigation; checkbox tree aggregate; descriptions retain optional fields; dedicated tools; source list; empty scene explicit create-one and delete-last", badges: "native 13/14 scene navigation templates; levels excluded; dirty draft survives live badge refresh", errors });
     await context.close();
   }
   fs.writeFileSync(path.join(output, "result.json"), JSON.stringify(reports, null, 2));

@@ -1,4 +1,4 @@
-# dmicher ▥ Master screen — 0.0.1
+# dmicher 🎬 Master screen — 0.0.1
 
 Первая разработка для локальной проверки на Foundry VTT 13 и 14. Обязательная зависимость — dmicher-generics 1.0.0. Удалённый релиз не опубликован.
 
@@ -21,6 +21,15 @@
 
 Ограничения: обмен целыми документами Item без разделения стопок и денег; ограниченный предпросмотр Актёра; отдельное окно Ширмы требует разрешённых всплывающих окон браузера. Произвольный визуальный редактор макросов и сторонние адаптеры относятся к следующим этапам. Старые средства подготовки видны в «Иное» и будут постепенно распределены по отдельным вкладкам. Полный пример проверки описан в `docs/first-scene.md`.
 
+## Обновление подготовки и навигации
+
+- Новые сцены остаются без схем. Явное создание схемы добавляет один эпизод; удалить последнюю схему можно, последний эпизод существующей схемы — нельзя.
+- Вкладки организованы деревом «Сцена», «Инструменты», «Автоматизация», «Иное», с прокруткой и отдельным диалогом видимости. Выбор и ввод каждой вкладки независимы; строка выбирается в любом свободном месте.
+- Добавлены описания объектов и полей триггеров, локализованные пояснения встроенных определений, символы схем и значки текущих эпизодов в Ширме и навигации сцен Foundry.
+- Подтверждение удаления располагает кнопки одной строкой. Экспорт JSON использует исправленный общий загрузчик Generics.
+
 ## English — interface update
+
+New scenes have no schemes. Explicitly creating a scheme adds one episode; the final scheme can be deleted, but every existing scheme keeps at least one episode. Hierarchical tabs offer overflow scrolling and a separate visibility dialog. Each tab keeps independent selection and edits; entire rows are selectable. Descriptions explain preparation and built-in definitions, while scheme symbols indicate current episodes in Master screen and Foundry scene navigation. Deletion buttons share one row, and JSON export uses the corrected Generics downloader.
 
 Constructor and Director share a compact two-area interface in a dock or separate browser window. Scene, Events, Macros and Other tabs separate navigation from parameters. Multiple schemes run independently; manual transitions are unrestricted, while automatic transitions use explicit event routes. Typed triggers validate invocation data before ordered subscribers run. RU/EN operational help uses Generics navigation and provides a neutral overview of all dmicher modules.

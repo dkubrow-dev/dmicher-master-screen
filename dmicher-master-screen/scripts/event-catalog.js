@@ -1,11 +1,12 @@
-import { MODULE_ID, randomId } from "./model.js";
+import { MODULE_ID, randomId, normalizeDescription } from "./model.js";
 import { getDefinitions, requireGM, withSceneLock } from "./store.js";
+import { BUILTIN_EVENT_DESCRIPTIONS, BUILTIN_FIELD_DESCRIPTIONS } from "./object-descriptions.js";
 
 const clone = (value) => structuredClone(value);
 export const EVENT_NAME = /^[a-zA-Z\p{L}][\p{L}\p{N}_. -]{0,99}$/u;
 const idPattern = /^[a-zA-Z0-9_-]{1,64}$/;
 const identifier = (value, label) => { if (typeof value !== "string" || !EVENT_NAME.test(value.trim())) throw new Error(`${label}: требуется имя длиной до 100 символов.`); return value.trim(); };
-const fields = (names) => names.map(([name, type]) => ({ name, type, required: false }));
+const fields = (names) => names.map(([name, type]) => ({ name, type, required: false, description: clone(BUILTIN_FIELD_DESCRIPTIONS[name]) }));
 const builtinSpecs = [
   ["episode.entered", fields([["episodeId", "string"], ["previousEpisodeId", "string"], ["schemeId", "string"]])],
   ["automation.changed", fields([["tokenId", "string"], ["enabled", "boolean"]])],
@@ -16,15 +17,19 @@ const builtinSpecs = [
   ["dialogue.finished", fields([["dialogueId", "string"], ["responseId", "string"], ["userId", "string"]])]
 ];
 export function builtinCatalog() {
-  return { events: builtinSpecs.map(([name]) => ({ id: `builtin-${name.replaceAll(".", "-")}`, name, builtin: true, subscribers: [] })),
-    triggers: builtinSpecs.map(([name, parameters]) => ({ id: `trigger-${name.replaceAll(".", "-")}`, name, eventId: `builtin-${name.replaceAll(".", "-")}`, builtin: true, parameters: clone(parameters) })) };
+  // Return independent snapshots: callers may prepare UI drafts but cannot mutate the
+  // module's authored contracts, descriptions or another reader's localized fields.
+  return { events: builtinSpecs.map(([name]) => ({ id: `builtin-${name.replaceAll(".", "-")}`, name, builtin: true, description: clone(BUILTIN_EVENT_DESCRIPTIONS[name]), subscribers: [] })),
+    triggers: builtinSpecs.map(([name, parameters]) => ({ id: `trigger-${name.replaceAll(".", "-")}`, name, eventId: `builtin-${name.replaceAll(".", "-")}`, builtin: true,
+      description: { ru: `Типизированные данные события «${name}». ${BUILTIN_EVENT_DESCRIPTIONS[name].ru}`,
+        en: `Typed data for the "${name}" event. ${BUILTIN_EVENT_DESCRIPTIONS[name].en}` }, parameters: clone(parameters) })) };
 }
 function normalizeParameter(raw) {
   const name = String(raw.name ?? "").trim();
   if (!/^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/.test(name) || ["type", "__proto__", "constructor", "prototype"].includes(name)) throw new Error("Имя параметра: латиница, цифры и подчёркивание; поле type занято именем триггера.");
   const type = ({ text: "string", int: "integer", float: "number", bool: "boolean" })[raw.type] ?? raw.type;
   if (!["string", "integer", "number", "boolean"].includes(type)) throw new Error("Неизвестный тип параметра.");
-  const result = { name, type, required: raw.required !== false };
+  const result = { name, type, description: normalizeDescription(raw.description), required: raw.required !== false };
   for (const key of type === "string" ? ["minLength", "maxLength"] : type === "integer" || type === "number" ? ["min", "max", ...(type === "number" ? ["decimals"] : [])] : []) {
     if (raw[key] === undefined || raw[key] === null || raw[key] === "") continue;
     const value = Number(raw[key]);
@@ -65,7 +70,7 @@ export function normalizeCatalog(raw = {}) {
   if ((raw.events?.length ?? 0) > 200 || (raw.triggers?.length ?? 0) > 500 || (raw.macros?.length ?? 0) > 500) throw new Error("Превышен размер каталога сцены.");
   const events = (raw.events ?? []).map((entry) => {
     if (entry.builtin || builtin.events.some((item) => item.id === entry.id || item.name === entry.name)) throw new Error("Встроенные события нельзя изменять.");
-    return { id: entry.id || randomId(), name: identifier(entry.name, "Событие"), builtin: false,
+    return { id: entry.id || randomId(), name: identifier(entry.name, "Событие"), builtin: false, description: normalizeDescription(entry.description),
       subscribers: (entry.subscribers ?? []).map((subscriber) => {
         if (!["macro", "builtin", "trigger"].includes(subscriber.kind)) throw new Error("Неизвестный вид подписанта.");
         if (subscriber.kind === "builtin" && !["pause", "unpause", "halt-scheme", "halt-all", "chat"].includes(subscriber.action)) throw new Error("Неизвестное встроенное действие. Переходы задаются в таблице событий эпизода.");
@@ -79,7 +84,7 @@ export function normalizeCatalog(raw = {}) {
     const parameters = (entry.parameters ?? []).map(normalizeParameter);
     if (parameters.length > 50) throw new Error("Допустимо до 50 параметров триггера.");
     assertUnique(parameters, "name", "Параметр");
-    return { id: entry.id || randomId(), name: identifier(entry.name, "Триггер"), eventId: String(entry.eventId ?? ""), builtin: false, parameters };
+    return { id: entry.id || randomId(), name: identifier(entry.name, "Триггер"), eventId: String(entry.eventId ?? ""), builtin: false, description: normalizeDescription(entry.description), parameters };
   });
   const allEvents = [...builtin.events, ...events], allTriggers = [...builtin.triggers, ...triggers];
   for (const [entries, label] of [[allEvents, "Событие"], [allTriggers, "Триггер"]]) {
@@ -113,8 +118,12 @@ export function getEventCatalog(scene) {
   const hash = (value) => { let sum = 2166136261; for (const char of value) sum = Math.imul(sum ^ char.codePointAt(0), 16777619); return (sum >>> 0).toString(16); };
   for (const name of names) if (!result.events.some((entry) => entry.name === name)) {
     const suffix = hash(name), eventId = `legacy-event-${suffix}`;
-    result.events.push({ id: eventId, name, builtin: false, subscribers: [] });
+    result.events.push({ id: eventId, name, builtin: false, subscribers: [], description: {
+      ru: "Событие, указанное в подготовленных взаимодействиях или переходах сцены. Уточните его назначение и настройте подписчиков перед использованием.",
+      en: "An event referenced by prepared scene interactions or transitions. Clarify its purpose and configure subscribers before using it." } });
     result.triggers.push({ id: `legacy-trigger-${suffix}`, name, eventId, builtin: false,
+      description: { ru: "Совместимый набор данных существующего события сцены. Поля необязательны; их наличие зависит от источника события.",
+        en: "A compatible data set for an existing scene event. Fields are optional; their presence depends on the event source." },
       parameters: fields([["tokenId", "string"], ["userId", "string"], ["dialogueId", "string"], ["responseId", "string"], ["interactionId", "string"]]) });
   }
   return result;
@@ -160,7 +169,10 @@ export function mergeCatalogDependencies(scene, source = {}) {
   for (const trigger of incoming.triggers) {
     const next = { ...trigger, id: mapping.get(trigger.id), eventId: mapping.get(trigger.eventId) ?? trigger.eventId };
     const match = current.triggers.find((entry) => entry.id === next.id);
-    if (match && (match.eventId !== next.eventId || JSON.stringify(match.parameters) !== JSON.stringify(next.parameters))) throw new Error(`Конфликт типа триггера «${next.name}» в принимающей сцене.`);
+    // Descriptive prose may differ between campaigns without changing the data contract.
+    // Reusing a local contract keeps that campaign's own descriptions intact.
+    const contract = (parameters) => parameters.map(({ description, ...parameter }) => parameter);
+    if (match && (match.eventId !== next.eventId || JSON.stringify(contract(match.parameters)) !== JSON.stringify(contract(next.parameters)))) throw new Error(`Конфликт типа триггера «${next.name}» в принимающей сцене.`);
     if (!match) triggers.push(next);
   }
   for (const event of incoming.events) {

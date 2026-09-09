@@ -1,9 +1,10 @@
 import { ConstructorDock } from "./constructor-dock.js";
+import { MAIN_MENU, DETAIL_MENU, leaves, toggleMenuNode } from "./navigation-tree.js";
 
 const STORAGE_KEY = "dmicher-master-screen.ide-layout";
 const DEFAULTS = Object.freeze({ vertical: 0.43, horizontal: 0.36, hiddenMain: [], hiddenDetail: [], mainTab: "scene", detailTab: "parameters" });
-export const MAIN_TABS = Object.freeze(["scene", "events", "macros", "other"]);
-export const DETAIL_TABS = Object.freeze(["parameters", "reference"]);
+export const MAIN_TABS = Object.freeze(leaves(MAIN_MENU));
+export const DETAIL_TABS = Object.freeze(leaves(DETAIL_MENU));
 export const clampRatio = (value) => Math.max(0.2, Math.min(0.8, Number(value) || 0.43));
 
 export function normalizeIDEPreferences(raw = {}) {
@@ -33,7 +34,7 @@ export class ScreenLayout {
     if (!popup) throw new Error("Браузер заблокировал окно. Разрешите всплывающие окна для Foundry и повторите «Ширма (окно)».");
     this.popup = popup;
     const doc = popup.document;
-    doc.title = "dmicher ▥ Ширма мастера";
+    doc.title = "dmicher 🎬 Ширма мастера";
     doc.documentElement.lang = this.view.document.documentElement.lang;
     doc.documentElement.className = this.view.document.documentElement.className;
     doc.body.className = this.view.document.body.className;
@@ -140,12 +141,10 @@ export class ScreenLayout {
   }
 
   toggleTab(zone, tab, visible) {
-    const tabs = zone === "main" ? MAIN_TABS : DETAIL_TABS, key = zone === "main" ? "hiddenMain" : "hiddenDetail";
-    if (!tabs.includes(tab)) return false;
-    const next = new Set(this.preferences[key]);
-    if (visible) next.delete(tab); else next.add(tab);
-    if (next.size === tabs.length) return false;
-    this.preferences = normalizeIDEPreferences({ ...this.preferences, [key]: [...next] }); this.save(); return true;
+    const nodes = zone === "main" ? MAIN_MENU : DETAIL_MENU, key = zone === "main" ? "hiddenMain" : "hiddenDetail";
+    const next = toggleMenuNode(nodes, this.preferences[key], tab, visible);
+    if (!next) return false;
+    this.preferences = normalizeIDEPreferences({ ...this.preferences, [key]: next }); this.save(); return true;
   }
 
   dispose() {

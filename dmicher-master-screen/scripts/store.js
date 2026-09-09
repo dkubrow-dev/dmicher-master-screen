@@ -18,8 +18,12 @@ export function scheme(id = DEFAULT_SCHEME_ID) {
 }
 export const getDefinitions = (scene) => {
   const stored = scene?.getFlag(MODULE_ID, "definitions");
-  if (stored && Object.values(stored).some((value) => value?.schemaVersion === 1)) return Object.entries(stored).filter(([, value]) => value?.schemaVersion === 1).map(([id, value]) => normalizeDefinition({ ...value, schemeId: scheme(id) })).sort((a, b) => a.order - b.order);
-  return [normalizeDefinition(scene?.getFlag(MODULE_ID, "definition"))];
+  // An explicit empty collection is intentional, including after deleting the final
+  // scheme. Do not resurrect an old single-definition flag behind that collection.
+  if (stored !== undefined && stored !== null) return Object.entries(stored).filter(([, value]) => value?.schemaVersion === 1)
+    .map(([id, value]) => normalizeDefinition({ ...value, schemeId: scheme(id) }, { allowEmptyLegacy: true })).sort((a, b) => a.order - b.order);
+  const legacy = scene?.getFlag(MODULE_ID, "definition");
+  return legacy ? [normalizeDefinition(legacy, { allowEmptyLegacy: true })] : [];
 };
 export const getDefinition = (scene, { schemeId = DEFAULT_SCHEME_ID } = {}) => {
   const id = scheme(schemeId), found = getDefinitions(scene).find((entry) => entry.schemeId === id);
@@ -57,10 +61,10 @@ export function withSceneLock(scene, task) {
 export function saveDefinition(scene, definition, { expectedRevision } = {}) {
   return withSceneLock(scene, async () => {
     requireGM();
-    const current = getDefinition(scene, { schemeId: definition.schemeId });
-    if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new Error("Настройки изменены другим окном. Обновите их перед сохранением.");
+    const current = getDefinitions(scene).find((entry) => entry.schemeId === (definition.schemeId ?? DEFAULT_SCHEME_ID));
+    if (expectedRevision !== undefined && (current?.revision ?? 0) !== expectedRevision) throw new Error("Настройки изменены другим окном. Обновите их перед сохранением.");
     const next = normalizeDefinition(definition);
-    next.revision = current.revision + 1;
+    next.revision = (current?.revision ?? 0) + 1;
     await scene.setFlag(MODULE_ID, `definitions.${scheme(next.schemeId)}`, next);
     return next;
   });
@@ -70,6 +74,7 @@ export async function saveRuntime(scene, state) {
   requireGM();
   if (!isAuthority()) throw new Error("Исполнение доступно первому подключённому полному мастеру");
   const next = normalizeRuntime(state);
+  getDefinition(scene, { schemeId: next.schemeId });
   await scene.setFlag(MODULE_ID, `runtimes.${scheme(next.schemeId)}`, next);
   return next;
 }

@@ -235,7 +235,7 @@ test("scene object tags are normalized independently of episode definitions and 
   await saveObjectTags(scene, { type: "Tile", id: "door" }, "Door, locked");
   assert.deepEqual(getObjectTags(scene, { type: "Token", id: "hero" }), ["hero", "invited"]);
   assert.deepEqual(getObjectTags(scene, { type: "Tile", id: "door" }), ["door", "locked"]);
-  assert.equal(getDefinition(scene).revision, 0);
+  assert.throws(() => getDefinition(scene));
   await assert.rejects(saveObjectTags(scene, { type: "Token", id: "absent" }, ["hero"]));
   game.user = { isGM: false };
   await assert.rejects(saveObjectTags(scene, { type: "Token", id: "hero" }, ["forged"]));

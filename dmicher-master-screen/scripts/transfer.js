@@ -15,13 +15,16 @@ export function remapReferences(value, mapping) {
     return value;
   }
   if (Array.isArray(value)) return value.map((entry) => remapReferences(entry, mapping));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, remapReferences(entry, mapping)]));
+  // Author descriptions and display symbols are prose, even when their text happens
+  // to equal a document UUID. Only reference-bearing data participates in remapping.
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+    ["description", "symbol"].includes(key) ? copy(entry) : remapReferences(entry, mapping)]));
   return value;
 }
 export async function exportBundle(scene) {
   requireGM();
   if (!scene) throw new Error("Сначала откройте сцену");
-  const definitions = getDefinitions(scene), definition = definitions[0], actors = [], macros = [], journals = [];
+  const definitions = getDefinitions(scene), definition = definitions[0] ?? null, actors = [], macros = [], journals = [];
   const allEvents = getEventCatalog(scene);
   const eventCatalog = normalizeCatalog({ ...allEvents, events: allEvents.events.filter((entry) => !entry.builtin), triggers: allEvents.triggers.filter((entry) => !entry.builtin) });
   const seen = new Set();
@@ -60,11 +63,11 @@ export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
   const name = (entry) => typeof entry === "string" && entry.trim().length > 0;
   if (value?.format !== MODULE_ID || value.schemaVersion !== 1 || !object(value.scene) || !name(value.scene.name)
-    || !object(value.definition)) throw new Error("Это не JSON сцены Ширмы версии 1");
+    || (!Array.isArray(value.definitions) && !object(value.definition))) throw new Error("Это не JSON сцены Ширмы версии 1");
   if (value.systemId !== game.system.id) throw new Error("Предметы и персонажи требуют той же игровой системы");
-  normalizeDefinition(value.definition);
+  if (value.definition) normalizeDefinition(value.definition);
   if (value.definitions) {
-    if (!Array.isArray(value.definitions) || value.definitions.length > 100 || !value.definitions.length) throw new Error("Некорректный список схем.");
+    if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error("Некорректный список схем.");
     const schemes = value.definitions.map(normalizeDefinition);
     if (new Set(schemes.map((entry) => entry.schemeId)).size !== schemes.length || new Set(schemes.map((entry) => entry.schemeName.toLocaleLowerCase())).size !== schemes.length) throw new Error("Схемы должны иметь уникальные названия и идентификаторы.");
   }

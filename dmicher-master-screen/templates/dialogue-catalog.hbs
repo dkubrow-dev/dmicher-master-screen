@@ -1,5 +1,5 @@
 <section class="ms-body">
-  {{#if missing}}<p class="ms-note">Откройте сцену под учётной записью мастера.</p>{{else}}
+  {{#if missing}}<p class="ms-note">{{#if missingScheme}}Создайте схему во вкладке «Сцена» и подготовьте диалоги в её эпизоде.{{else}}Откройте сцену под учётной записью мастера.{{/if}}</p>{{else}}
   <header class="ms-toolbar"><h2>Диалоги и действия</h2><span class="ms-note">{{sceneName}}</span></header>
   <p class="ms-status">Ручной показ: ответы не выполняют события и не запускают автоматизацию. Каталог доступен даже после полной остановки сцены.</p>
   <label class="ms-field">Схема<select name="catalogScheme">{{selectOptions schemes selected=schemeId valueAttr="schemeId" labelAttr="schemeName"}}</select></label>

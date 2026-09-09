@@ -1,12 +1,42 @@
+import { DEFAULT_DESCRIPTIONS } from "./object-descriptions.js";
+
 export const MODULE_ID = "dmicher-master-screen";
 export const VERSION = "0.0.1";
 export const DEFAULT_SCHEME_ID = "main";
+export const DEFAULT_SCHEME_SYMBOL = "🎬";
 export const normalizeColor = (value, fallback = "#36404A") => /^#[0-9a-f]{6}$/i.test(String(value)) ? String(value).toUpperCase() : fallback;
 export const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
 const clone = (value) => structuredClone(value);
 const list = (value) => Array.isArray(value) ? value : [];
 const text = (value, max = 2000) => String(value ?? "").slice(0, max);
 const number = (value, fallback = 0, min = -1000000, max = 1000000) => Number.isFinite(Number(value)) ? Math.min(max, Math.max(min, Number(value))) : fallback;
+
+/** Author text is preserved independently of the viewer's language and never evaluated. */
+export function normalizeDescription(value) {
+  if (value === undefined || value === null) return "";
+  const prose = (entry) => {
+    if (typeof entry !== "string" || [...entry].length > 4000) throw new Error("Описание должно быть текстом длиной до 4000 символов.");
+    return entry;
+  };
+  if (typeof value === "string") return prose(value);
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["ru", "en"].includes(key))
+    || typeof value.ru !== "string" || typeof value.en !== "string") throw new Error("Локализованное описание должно содержать текстовые поля ru и en.");
+  return { ru: prose(value.ru), en: prose(value.en) };
+}
+export function localizedDescription(value, language = globalThis.game?.i18n?.lang ?? "ru") {
+  if (typeof value === "string") return value;
+  const locale = String(language).toLowerCase().startsWith("ru") ? "ru" : "en";
+  return value?.[locale] || value?.en || value?.ru || "";
+}
+/** Unicode display characters are grapheme clusters, not UTF-16 units or code points. */
+export function normalizeSchemeSymbol(value = DEFAULT_SCHEME_SYMBOL) {
+  if (typeof value !== "string" || !value || value.length > 64 || /[\p{White_Space}\p{Cc}\p{Cs}]/u.test(value)
+    || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(value) || /\p{Cf}/u.test(value.replace(/[\u200D\u{E0020}-\u{E007F}]/gu, ""))) throw new Error("Значок схемы должен содержать один видимый символ Unicode.");
+  if (typeof Intl.Segmenter !== "function") throw new Error("Браузер не поддерживает проверку символов Unicode.");
+  const segments = [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(value)];
+  if (segments.length !== 1) throw new Error("Для значка схемы требуется ровно один символ, включая составной эмодзи.");
+  return value;
+}
 
 export function normalizeTags(value) {
   const entries = Array.isArray(value) ? value : String(value ?? "").split(",");
@@ -37,7 +67,7 @@ export function defaultTokenBehavior() {
 }
 
 export function defaultEpisode(name = "Новый эпизод", id = randomId()) {
-  return { id, name, background: "#36404A", textColor: "#FFFFFF", events: [], allowFromAll: true, from: [], stop: false, pause: false, sound: "",
+  return { id, name, description: clone(DEFAULT_DESCRIPTIONS.episode), background: "#36404A", textColor: "#FFFFFF", events: [], allowFromAll: true, from: [], stop: false, pause: false, sound: "",
     spawns: [], tokens: {}, zones: [], dialogues: [], interactions: [], subscriptions: [], workspace: { gm: [], players: [] } };
 }
 
@@ -96,7 +126,9 @@ function normalizeInteractions(entries) {
 export function defaultDefinition() {
   const episodes = [defaultEpisode("Спокойствие", "calm"), defaultEpisode("Напряжение", "tension"),
     defaultEpisode("Тревога", "alarm"), { ...defaultEpisode("Остановка", "stop"), stop: true }];
-  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: "Основная схема", background: "#36404A", textColor: "#FFFFFF", order: 0, revision: 0, episodes };
+  for (const episode of episodes) episode.description = clone(DEFAULT_DESCRIPTIONS[episode.id]);
+  return { schemaVersion: 1, schemeId: DEFAULT_SCHEME_ID, schemeName: "Основная схема", symbol: DEFAULT_SCHEME_SYMBOL,
+    description: clone(DEFAULT_DESCRIPTIONS.scheme), background: "#36404A", textColor: "#FFFFFF", order: 0, revision: 0, episodes };
 }
 
 export function normalizeTokenBehavior(value = {}) {
@@ -122,13 +154,16 @@ export function normalizeTokenBehavior(value = {}) {
     interaction: { ...base.interaction, label: text(value.interaction?.label, 80), targetEpisodeId: text(value.interaction?.targetEpisodeId, 64), eventName: text(value.interaction?.eventName, 100), trigger: normalizeTrigger(value.interaction?.trigger) } };
 }
 
-export function normalizeDefinition(value) {
-  if (!value) return defaultDefinition();
+export function normalizeDefinition(value, { allowEmptyLegacy = false } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Ожидается сохранённое определение схемы.");
   if (value.schemaVersion !== 1) throw new Error("Неподдерживаемая версия определения Ширмы");
   if (value.schemeId && !/^[a-zA-Z0-9_-]+$/.test(value.schemeId)) throw new Error("Некорректный идентификатор схемы");
-  if (!Array.isArray(value.episodes) || value.episodes.length > 100) throw new Error("Допустимо до 100 эпизодов");
+  if (!Array.isArray(value.episodes) || value.episodes.length > 100 || (!value.episodes.length && !allowEmptyLegacy)) throw new Error("Схема должна содержать от 1 до 100 эпизодов");
   const ids = new Set();
-  const episodes = value.episodes.map((raw) => {
+  // Previously saved empty schemes remain editable. Only this read-time compatibility
+  // path supplies an inactive initial episode; imports and new writes stay strict.
+  const episodeSource = value.episodes.length ? value.episodes : [defaultEpisode("Новый эпизод", "initial")];
+  const episodes = episodeSource.map((raw) => {
     const id = text(raw.id || randomId(), 64);
     if (ids.has(id) || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Идентификаторы эпизодов должны быть уникальными");
     ids.add(id);
@@ -136,7 +171,7 @@ export function normalizeDefinition(value) {
       uuid: text(entry.uuid, 256), x: number(entry.x), y: number(entry.y),
       width: number(entry.width, 500, 150, 4000), height: number(entry.height, 450, 100, 4000)
     })).filter((entry) => entry.uuid);
-    return { id, name: text(raw.name, 100).trim() || "Эпизод", background: normalizeColor(raw.background), textColor: normalizeColor(raw.textColor, "#FFFFFF"),
+    return { id, name: text(raw.name, 100).trim() || "Эпизод", description: normalizeDescription(raw.description === undefined ? DEFAULT_DESCRIPTIONS.episode : raw.description), background: normalizeColor(raw.background), textColor: normalizeColor(raw.textColor, "#FFFFFF"),
       events: [...new Set(list(raw.events).map((entry) => text(entry, 100).trim()).filter(Boolean))], allowFromAll: raw.allowFromAll !== false,
       from: [...new Set(list(raw.from).map((entry) => text(entry, 64)))], stop: raw.stop === true,
       pause: raw.pause === true, sound: text(raw.sound, 1024),
@@ -192,6 +227,7 @@ export function normalizeDefinition(value) {
     if (references.some((id) => id && !ids.has(id))) throw new Error("Переход ссылается на отсутствующий эпизод");
   }
   return { schemaVersion: 1, schemeId: value.schemeId || DEFAULT_SCHEME_ID, schemeName: text(value.schemeName, 100).trim() || "Основная схема",
+    symbol: normalizeSchemeSymbol(value.symbol), description: normalizeDescription(value.description === undefined ? DEFAULT_DESCRIPTIONS.scheme : value.description),
     background: normalizeColor(value.background), textColor: normalizeColor(value.textColor, "#FFFFFF"), order: number(value.order, 0, 0, 10000),
     revision: Math.floor(number(value.revision, 0, 0, Number.MAX_SAFE_INTEGER)), episodes };
 }

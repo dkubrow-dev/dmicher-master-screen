@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { SchemeEditor } from "../dmicher-master-screen/scripts/scheme-editor.js";
-import { EventCatalog, getEventCatalog, validateTypedTrigger, normalizeCatalog } from "../dmicher-master-screen/scripts/event-catalog.js";
+import { EventCatalog, builtinCatalog, getEventCatalog, validateTypedTrigger, normalizeCatalog } from "../dmicher-master-screen/scripts/event-catalog.js";
 import { EpisodeRuntime } from "../dmicher-master-screen/scripts/runtime.js";
 import { SceneEvents } from "../dmicher-master-screen/scripts/events.js";
 import { createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
-import { MODULE_ID, defaultDefinition, defaultTokenBehavior } from "../dmicher-master-screen/scripts/model.js";
-import { getDefinitions, getRuntime } from "../dmicher-master-screen/scripts/store.js";
+import { MODULE_ID, defaultDefinition, defaultTokenBehavior, normalizeDefinition, normalizeSchemeSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
+import { getDefinitions, getRuntime, getRuntimes, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
 
 const copy = (value) => structuredClone(value);
 function fixture() {
@@ -53,7 +53,7 @@ test("schemes are independent ordered groups with unique names and copy/move/imp
   assert.notEqual(copied.id, "calm"); assert.equal(f.editor.get("main").episodes.length, 4);
   await f.editor.transferEpisode("main", second.schemeId, "tension", { copy: false });
   assert.equal(f.editor.get("main").episodes.length, 3);
-  await f.editor.reorderEpisodes(second.schemeId, ["tension", copied.id, added.id]);
+  await f.editor.reorderEpisodes(second.schemeId, ["tension", copied.id, added.id, second.episodes[0].id]);
   const receiver = new SchemeEditor(f.createScene("receiver"));
   const imported = await receiver.importScheme(f.editor.exportScheme(second.schemeId));
   assert.notEqual(imported.schemeId, second.schemeId); assert.equal(receiver.get(imported.schemeId).episodes[0].id, "tension");
@@ -330,4 +330,144 @@ test("patrol native macros receive an origin-bound Invoke function after asynchr
   release(); await patrol; await f.bus.whenIdle();
   assert.equal(rejected, true); assert.equal(game.paused, false);
   f.runtime.dispose(); f.bus.dispose();
+});
+
+test("scheme symbols count Unicode graphemes and reject empty, multiple or invisible characters", () => {
+  for (const symbol of ["🎬", "🌦️", "👩🏽‍🚀", "🇷🇺", "1️⃣", "A", "e\u0301", "◈"]) assert.equal(normalizeSchemeSymbol(symbol), symbol);
+  assert.equal(normalizeSchemeSymbol(), "🎬");
+  for (const symbol of ["", " ", "🎬🎥", "AB", "A ", "\n", "\u200D", "\uFE0F", "\u0301", "\u200B", "A\u202E", "\ud800", 5, null]) assert.throws(() => normalizeSchemeSymbol(symbol));
+});
+
+test("every built-in and default object has independent Russian and English descriptions", () => {
+  const defaults = defaultDefinition(), catalog = builtinCatalog();
+  const entries = [defaults, ...defaults.episodes, ...catalog.events, ...catalog.triggers, ...catalog.triggers.flatMap((entry) => entry.parameters)];
+  for (const entry of entries) {
+    assert.equal(typeof entry.description.ru, "string"); assert.equal(typeof entry.description.en, "string");
+    assert.ok(entry.description.ru.trim().length > 10); assert.ok(entry.description.en.trim().length > 10);
+    assert.equal(localizedDescription(entry.description, "ru"), entry.description.ru);
+    assert.equal(localizedDescription(entry.description, "en"), entry.description.en);
+  }
+  catalog.events[0].description.ru = "changed"; catalog.triggers[0].parameters[0].description.en = "changed";
+  assert.notEqual(builtinCatalog().events[0].description.ru, "changed"); assert.notEqual(builtinCatalog().triggers[0].parameters[0].description.en, "changed");
+  defaults.description.ru = "changed"; assert.notEqual(defaultDefinition().description.ru, "changed");
+});
+
+test("description normalization preserves authored prose and locale maps without implicit object conversion", () => {
+  const text = "  A <b>literal</b> description\nwith a second line.  ";
+  assert.equal(normalizeDescription(text), text); assert.equal(localizedDescription(text, "en"), text);
+  const locales = { ru: "Описание", en: "Description" }, normalized = normalizeDescription(locales);
+  assert.deepEqual(normalized, locales); assert.notEqual(normalized, locales);
+  assert.equal(localizedDescription(locales, "ru-RU"), "Описание"); assert.equal(localizedDescription(locales, "de"), "Description");
+  for (const input of [false, 7, [], { ru: "Missing English" }, { ru: "Text", en: 3 }, { ru: "Text", en: "Text", code: "alert()" }, "x".repeat(4001)]) assert.throws(() => normalizeDescription(input));
+});
+
+test("reading older scene metadata supplies display defaults without mutating definitions or live state", async () => {
+  const f = fixture(), data = f.scene.flags[MODULE_ID].definitions.main;
+  delete data.symbol; delete data.description; data.episodes.forEach((episode) => { delete episode.description; });
+  await f.runtime.enter(f.scene, "calm");
+  await f.bus.whenIdle();
+  const before = copy(f.scene.flags), resolved = f.editor.get("main");
+  assert.equal(resolved.symbol, "🎬"); assert.ok(resolved.description.en); assert.ok(resolved.episodes[0].description.ru);
+  assert.deepEqual(f.scene.flags, before);
+  const run = copy(getRuntime(f.scene));
+  await f.editor.updateScheme("main", { symbol: "🌦️", description: "Weather-driven gates." });
+  await f.editor.updateEpisode("main", "calm", { description: "The clouds clear." });
+  assert.deepEqual(getRuntime(f.scene), run);
+  f.runtime.dispose(); f.bus.dispose();
+});
+
+test("scheme and episode metadata survives edits, rename, copying, movement and contextual JSON", async () => {
+  const f = fixture(), scheme = await f.editor.createScheme({ name: "Weather", symbol: "🌦️", description: { ru: "Погода", en: "Weather" } });
+  const episode = await f.editor.createEpisode(scheme.schemeId, { name: "Clear", description: "Clear conditions for this location." });
+  await f.editor.updateScheme(scheme.schemeId, { name: "Sky", symbol: "☀️" });
+  await f.editor.updateEpisode(scheme.schemeId, episode.id, { name: "Sun" });
+  const stored = f.editor.get(scheme.schemeId);
+  assert.deepEqual(stored.description, { ru: "Погода", en: "Weather" }); assert.equal(stored.symbol, "☀️");
+  const copied = await f.editor.transferEpisode(scheme.schemeId, "main", episode.id, { copy: true });
+  assert.equal(copied.description, episode.description);
+  const envelope = f.editor.exportScheme(scheme.schemeId), receiver = new SchemeEditor(f.createScene("receiver"));
+  const imported = await receiver.importScheme(envelope);
+  assert.equal(receiver.get(imported.schemeId).symbol, "☀️"); assert.deepEqual(receiver.get(imported.schemeId).description, stored.description);
+  assert.equal(receiver.get(imported.schemeId).episodes.find((entry) => entry.id === episode.id).description, episode.description);
+  const another = await f.editor.createScheme({ name: "Elsewhere" });
+  const moved = await f.editor.transferEpisode(scheme.schemeId, another.schemeId, episode.id, { copy: false });
+  assert.equal(moved.description, episode.description);
+  const standalone = await receiver.importEpisode("main", f.editor.exportEpisode(another.schemeId, moved.id), { name: "Imported Episode" });
+  assert.equal(standalone.description, episode.description);
+  const previous = copy(f.scene.flags); await assert.rejects(f.editor.updateScheme("main", { symbol: "AB" })); assert.deepEqual(f.scene.flags, previous);
+});
+
+test("event, trigger and parameter descriptions survive catalog editing and all contextual transfers", async () => {
+  const f = fixture(), event = await f.catalog.saveEvent({ name: "typed.description", description: "Raised when a watch post reports danger.", subscribers: [] });
+  const trigger = await f.catalog.saveTrigger({ name: "watch.report", eventId: event.id, description: { ru: "Донесение", en: "Report" },
+    parameters: [{ name: "count", type: "integer", min: 1, max: 10, description: "Number of observed creatures." }] });
+  await f.catalog.saveEvent({ ...event, name: "watch.danger" });
+  const catalog = f.catalog.list(), storedEvent = catalog.events.find((entry) => entry.id === event.id), storedTrigger = catalog.triggers.find((entry) => entry.id === trigger.id);
+  assert.equal(storedEvent.description, event.description); assert.deepEqual(storedTrigger.description, trigger.description);
+  assert.equal(storedTrigger.parameters[0].description, trigger.parameters[0].description);
+  const receiver = new EventCatalog(f.createScene("receiver")); await receiver.importEvent(f.catalog.exportEvent(event.id));
+  const imported = receiver.list();
+  assert.equal(imported.events.find((entry) => entry.name === "watch.danger").description, event.description);
+  assert.deepEqual(imported.triggers.find((entry) => entry.name === trigger.name).description, trigger.description);
+  assert.equal(imported.triggers.find((entry) => entry.name === trigger.name).parameters[0].description, trigger.parameters[0].description);
+  const separate = new EventCatalog(f.createScene("separate")); await separate.saveEvent({ name: "watch.danger", subscribers: [] });
+  await separate.importTrigger(f.catalog.exportTrigger(trigger.id));
+  assert.equal(separate.list().triggers.find((entry) => entry.name === trigger.name).parameters[0].description, trigger.parameters[0].description);
+});
+
+test("built-in description edits remain rejected and prose does not alter typed validation", async () => {
+  const f = fixture(), catalog = f.catalog.list(), event = catalog.events[0], trigger = catalog.triggers[0];
+  await assert.rejects(f.catalog.saveEvent({ ...event, description: "changed" }));
+  await assert.rejects(f.catalog.saveTrigger({ ...trigger, description: "changed", parameters: trigger.parameters.map((field) => ({ ...field, description: "changed" })) }));
+  const custom = await registered(f, "constraint", [{ name: "value", type: "integer", min: 1, max: 3, description: "Documentation does not widen the range." }]);
+  assert.throws(() => validateTypedTrigger(f.catalog.list(), custom.event, { type: custom.trigger.name, value: 4 }));
+  assert.deepEqual(validateTypedTrigger(f.catalog.list(), custom.event, { type: custom.trigger.name, value: 2 }), { type: custom.trigger.name, value: 2 });
+});
+
+test("an untouched scene stays empty during reads, event catalog inspection and runtime ticks", async () => {
+  const f = fixture(); f.scene.flags = {};
+  const before = copy(f.scene.flags);
+  assert.deepEqual(getDefinitions(f.scene), []); assert.deepEqual(f.editor.list(), []); assert.deepEqual(getRuntimes(f.scene), []);
+  assert.ok(f.catalog.list().events.every((event) => event.builtin));
+  await f.runtime.refresh(f.scene); await f.runtime.tick(); await f.runtime.haltAll(f.scene);
+  assert.deepEqual(f.scene.flags, before);
+  await assert.rejects(f.runtime.enter(f.scene, "calm")); await assert.rejects(saveRuntime(f.scene, { ...getRuntime(f.scene), runId: "invented" }));
+  assert.deepEqual(f.scene.flags, before);
+  f.runtime.dispose(); f.bus.dispose();
+});
+
+test("a scheme is created explicitly with one episode and its final episode cannot be removed or moved", async () => {
+  const f = fixture(); f.scene.flags = {};
+  const scheme = await f.editor.createScheme({ name: "Explicit" });
+  assert.equal(f.editor.list().length, 1); assert.equal(scheme.episodes.length, 1);
+  assert.equal(getRuntime(f.scene, { schemeId: scheme.schemeId }).runId, "");
+  const other = await f.editor.createScheme({ name: "Other" });
+  const before = copy(f.scene.flags);
+  await assert.rejects(f.editor.deleteEpisode(scheme.schemeId, scheme.episodes[0].id));
+  await assert.rejects(f.editor.transferEpisode(scheme.schemeId, other.schemeId, scheme.episodes[0].id, { copy: false }));
+  assert.deepEqual(f.scene.flags, before);
+  await f.editor.transferEpisode(scheme.schemeId, other.schemeId, scheme.episodes[0].id, { copy: true, name: "Copy" });
+  assert.equal(f.editor.get(other.schemeId).episodes.length, 2);
+});
+
+test("deleting the last stopped scheme leaves a truly empty scene and never resurrects legacy data", async () => {
+  const f = fixture(), legacy = defaultDefinition();
+  f.scene.flags[MODULE_ID] = { definition: legacy };
+  assert.equal(f.editor.list().length, 1);
+  await f.runtime.enter(f.scene, "calm");
+  await assert.rejects(f.editor.deleteScheme("main"));
+  await f.runtime.haltAll(f.scene); await f.bus.whenIdle(); await f.editor.deleteScheme("main");
+  assert.deepEqual(f.editor.list(), []); assert.deepEqual(getRuntimes(f.scene), []);
+  assert.deepEqual(f.scene.flags[MODULE_ID].definition, legacy);
+  const snapshot = copy(f.scene.flags); assert.deepEqual(new SchemeEditor(f.scene).list(), []); assert.deepEqual(f.scene.flags, snapshot);
+  f.runtime.dispose(); f.bus.dispose();
+});
+
+test("existing empty schemes remain editable without creating a scheme in a new scene", () => {
+  const f = fixture(); f.scene.flags[MODULE_ID].definitions.main.episodes = [];
+  const before = copy(f.scene.flags), read = f.editor.get("main");
+  assert.equal(read.episodes.length, 1); assert.equal(read.episodes[0].id, "initial");
+  assert.deepEqual(f.scene.flags, before); assert.equal(getRuntime(f.scene).runId, "");
+  assert.throws(() => normalizeDefinition({ ...defaultDefinition(), episodes: [] }));
+  for (const missing of [undefined, null, false]) assert.throws(() => normalizeDefinition(missing));
 });

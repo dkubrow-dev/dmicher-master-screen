@@ -31,7 +31,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
 
   async _prepareContext(options) {
     const parent = await super._prepareContext(options), context = this.controller.getContext();
-    if (!context.isGM || !context.scene) return { ...parent, missing: true };
+    if (!context.isGM || !context.scene || !context.definition) return { ...parent, missing: true, missingScheme: context.isGM && Boolean(context.scene) && !context.definition };
     if (context.scene.id !== this.sceneId) {
       this.sceneId = context.scene.id;
       this.schemeId = context.definition.schemeId;

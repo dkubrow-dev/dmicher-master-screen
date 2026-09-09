@@ -69,7 +69,6 @@ export class SchemeEditor {
         normalized.revision = (previous.find((entry) => entry.schemeId === normalized.schemeId)?.revision ?? 0) + 1;
         return normalized;
       });
-      if (!next.length) throw new Error("В сцене должна оставаться хотя бы одна схема.");
       const data = { ...(this.scene.getFlag(MODULE_ID, "definitions") ?? {}), ...Object.fromEntries(next.map((entry) => [entry.schemeId, entry])) };
       for (const entry of previous) if (!next.some((value) => value.schemeId === entry.schemeId)) data[`-=${entry.schemeId}`] = null;
       if (definitions.eventCatalog && this.scene.update) await this.scene.update({ [`flags.${MODULE_ID}.definitions`]: data, [`flags.${MODULE_ID}.eventCatalog`]: definitions.eventCatalog });
@@ -80,9 +79,10 @@ export class SchemeEditor {
       return clone(result ?? next);
     });
   }
-  createScheme({ name = "Новая схема", background, textColor } = {}) {
+  createScheme({ name = "Новая схема", background, textColor, description, symbol } = {}) {
     return this.change((definitions) => {
-      const entry = { ...defaultDefinition(), schemeId: randomId(), schemeName: unique(definitions, name, null, "schemeName"), episodes: [], background, textColor };
+      const entry = { ...defaultDefinition(), schemeId: randomId(), schemeName: unique(definitions, name, null, "schemeName"), episodes: [defaultEpisode()], background, textColor,
+        ...(description !== undefined ? { description } : {}), ...(symbol !== undefined ? { symbol } : {}) };
       definitions.push(entry); return entry;
     });
   }
@@ -90,7 +90,7 @@ export class SchemeEditor {
     const entry = definitions.find((value) => value.schemeId === id);
     if (!entry) throw new Error("Схема не найдена.");
     if (patch.name !== undefined || patch.schemeName !== undefined) entry.schemeName = unique(definitions, patch.name ?? patch.schemeName, id, "schemeName");
-    for (const key of ["background", "textColor"]) if (patch[key] !== undefined) entry[key] = patch[key];
+    for (const key of ["background", "textColor", "description", "symbol"]) if (patch[key] !== undefined) entry[key] = patch[key];
     return entry;
   }, { ...options, schemeId: id }); }
   deleteScheme(id) { return this.change((definitions) => {
@@ -114,6 +114,7 @@ export class SchemeEditor {
   deleteEpisode(schemeId, episodeId) { return this.change((definitions) => {
     const definition = definitions.find((entry) => entry.schemeId === schemeId);
     if (!definition?.episodes.some((entry) => entry.id === episodeId)) throw new Error("Эпизод не найден.");
+    if (definition.episodes.length === 1) throw new Error("В схеме должен оставаться хотя бы один эпизод.");
     definition.episodes = definition.episodes.filter((entry) => entry.id !== episodeId);
     removeEpisodeLinks(definition, episodeId);
   }); }
@@ -126,6 +127,7 @@ export class SchemeEditor {
     const source = definitions.find((entry) => entry.schemeId === from), destination = definitions.find((entry) => entry.schemeId === to);
     const episode = source?.episodes.find((entry) => entry.id === episodeId);
     if (!episode || !destination || from === to) throw new Error("Выберите эпизод и другую схему.");
+    if (!copy && source.episodes.length === 1) throw new Error("Последний эпизод схемы можно скопировать, но нельзя переместить.");
     const next = standaloneEpisode(episode);
     next.name = unique(destination.episodes, name ?? episode.name);
     next.id = copy || destination.episodes.some((entry) => entry.id === next.id) ? randomId() : next.id;

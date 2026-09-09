@@ -1,12 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeIDEPreferences, clampRatio } from "../dmicher-master-screen/scripts/apps/screen-layout.js";
-import { renderSceneTree, renderEventTree, renderParameters } from "../dmicher-master-screen/scripts/apps/ide-view.js";
+import { renderSceneTree, renderEventTree, renderParameters, eventSources } from "../dmicher-master-screen/scripts/apps/ide-view.js";
+import { MAIN_MENU, menuRows, menuPath, menuParent, toggleMenuNode } from "../dmicher-master-screen/scripts/apps/navigation-tree.js";
+import { schemeBadges } from "../dmicher-master-screen/scripts/apps/scheme-badges.js";
+
+test("menu categories aggregate descendants and remain navigation-only across three levels", () => {
+  const nodes = [{ id: "root", children: [{ id: "nested", children: [{ id: "a" }, { id: "b" }] }, { id: "c" }] }, { id: "other" }];
+  assert.deepEqual(menuPath(nodes, "a").map((node) => node.id), ["root", "nested", "a"]);
+  assert.equal(menuParent("a", nodes), "nested");
+  const hidden = toggleMenuNode(nodes, [], "nested", false);
+  assert.deepEqual(hidden, ["a", "b"]);
+  assert.equal(menuRows(nodes, hidden)[0].partial, true);
+  assert.equal(menuRows(nodes, hidden)[1].visible, false);
+  assert.equal(menuRows(nodes, hidden)[2].depth, 2);
+  assert.deepEqual(toggleMenuNode(nodes, hidden, "root", true), []);
+  assert.equal(toggleMenuNode([{ id: "only" }], [], "only", false), null);
+  assert.deepEqual(MAIN_MENU.map((node) => node.id), ["scene", "tools", "automation", "other"]);
+});
+
+test("scheme badges report the actual run colours and distinguish an unstarted or stopped scheme", () => {
+  const definition = { schemeId: "a", symbol: "A", schemeName: "Scheme", episodes: [{ id: "one", name: "One", background: "#123456", textColor: "#ABCDEF" }] };
+  assert.equal(schemeBadges([definition], [])[0].status, "unstarted");
+  const badge = schemeBadges([definition], [{ schemeId: "a", episodeId: "one", halted: true }])[0];
+  assert.equal(badge.background, "#123456"); assert.equal(badge.textColor, "#ABCDEF");
+  assert.equal(badge.status, "halted"); assert.match(badge.title, /Scheme.*One/);
+  assert.deepEqual(schemeBadges([], []), []);
+});
+
+test("source inventory names built-in and configured events without creating definitions", () => {
+  const definitions = [{ schemeId: "s", schemeName: "S", episodes: [{ id: "e", name: "E", zones: [{ id: "z", eventName: "door.opened" }], tokens: { guard: { interaction: { eventName: "guard.asked" }, patrol: { points: [{ eventName: "guard.arrived" }] } } } }] }];
+  const before = structuredClone(definitions), sources = eventSources(definitions, { tokens: new Map() });
+  assert.equal(sources.find((row) => row.type === "zone").detail, "zone.entered, door.opened");
+  assert.equal(sources.find((row) => row.type === "npc").detail, "npc.interacted, guard.asked");
+  assert.equal(sources.find((row) => row.type === "patrol").detail, "patrol.arrived, guard.arrived");
+  assert.deepEqual(definitions, before);
+});
 
 test("IDE preferences retain usable areas and at least one recoverable tab per zone", () => {
   const value = normalizeIDEPreferences({ vertical: -100, horizontal: 100, hiddenMain: ["scene", "events", "macros", "other", "foreign"], hiddenDetail: ["parameters", "reference"], mainTab: "foreign", detailTab: "parameters" });
   assert.equal(value.vertical, 0.2); assert.equal(value.horizontal, 0.8);
-  assert.equal(value.hiddenMain.length, 3); assert.equal(value.hiddenDetail.length, 1);
+  assert.equal(value.hiddenMain.length, 4); assert.equal(value.hiddenDetail.length, 1);
   assert.ok(!value.hiddenMain.includes(value.mainTab)); assert.ok(!value.hiddenDetail.includes(value.detailTab));
   assert.equal(clampRatio(NaN), 0.43);
 });

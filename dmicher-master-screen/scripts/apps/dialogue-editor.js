@@ -34,7 +34,7 @@ export class DialogueEditorApplication extends ScreenFormApplication {
 
   async _prepareContext(options) {
     const parent = await super._prepareContext(options), context = this.controller.getContext({ schemeId: this.schemeId });
-    const episode = context.definition.episodes.find((entry) => entry.id === this.episodeId);
+    const episode = context.definition?.episodes.find((entry) => entry.id === this.episodeId);
     const dialogue = episode?.dialogues?.find((entry) => entry.id === this.dialogueId);
     if (!context.isGM || context.scene?.id !== this.sceneId || !dialogue) return { ...parent, missing: true };
     if (!this.draft || !this.dirty) {

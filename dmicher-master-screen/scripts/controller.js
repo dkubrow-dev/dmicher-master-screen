@@ -17,6 +17,7 @@ import { DialogueEditorApplication } from "./apps/dialogue-editor.js";
 import { DialogueApplication } from "./apps/dialogue-window.js";
 import { DialogueCatalogApplication } from "./apps/dialogue-catalog.js";
 import { HelpApplication, InteractionApplication } from "./apps/help.js";
+import { updateSceneNavigationBadges } from "./apps/scheme-badges.js";
 
 export class ScreenController {
   constructor() {
@@ -41,17 +42,18 @@ export class ScreenController {
   getContext({ schemeId } = {}) {
     const scene = currentScene();
     const definitions = getDefinitions(scene);
-    schemeId ??= this.selectedSchemes.get(scene?.id) ?? definitions[0]?.schemeId ?? "main";
-    if (!definitions.some((definition) => definition.schemeId === schemeId)) schemeId = definitions[0]?.schemeId ?? "main";
-    const definition = getDefinition(scene, { schemeId }), runtime = getRuntime(scene, { schemeId });
+    const explicitScheme = schemeId !== undefined;
+    schemeId ??= this.selectedSchemes.get(scene?.id) ?? definitions[0]?.schemeId ?? null;
+    if (!definitions.some((definition) => definition.schemeId === schemeId)) schemeId = explicitScheme ? null : definitions[0]?.schemeId ?? null;
+    const definition = schemeId ? getDefinition(scene, { schemeId }) : null, runtime = definition ? getRuntime(scene, { schemeId }) : null;
     const candidateEpisodeId = this.selected.get(`${scene?.id}:${schemeId}`) ?? this.selected.get(scene?.id);
-    const selectedEpisodeId = definition.episodes.some((episode) => episode.id === candidateEpisodeId) ? candidateEpisodeId : definition.episodes[0]?.id;
+    const selectedEpisodeId = definition?.episodes.some((episode) => episode.id === candidateEpisodeId) ? candidateEpisodeId : definition?.episodes[0]?.id;
     const objects = [
       ...asArray(scene?.tokens).map((token) => ({ type: "Token", id: token.id, name: token.name })),
       ...asArray(scene?.tiles).map((tile) => ({ type: "Tile", id: tile.id, name: tile.name || tile.texture?.src?.split("/").pop() || tile.id }))
     ].map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
     return { scene, definition, runtime, definitions, objects, mode: this.mode, schemeId, selectedEpisodeId,
-      episode: getEpisode(definition, selectedEpisodeId), tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
+      episode: definition ? getEpisode(definition, selectedEpisodeId) : null, tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
   }
   getPlayerTokens() {
     const users = asArray(game.users).filter((user) => [1, 2].includes(Number(user.role)) && !generics.chat.isManagedIdentityUser(user));
@@ -109,11 +111,11 @@ export class ScreenController {
     this.dialogueCatalog = generics.windows.openSingletonApplication(this.dialogueCatalog, () => new DialogueCatalogApplication(this), { moduleId: MODULE_ID });
     return this.dialogueCatalog;
   }
-  selectEpisode(id, { render = true } = {}) {
+  selectEpisode(id, { render = true, resetDraft = true } = {}) {
     const { scene, definition } = this.getContext();
     if (!getEpisode(definition, id)) throw new Error("Эпизод не найден");
     this.selected.set(`${scene.id}:${definition.schemeId}`, id);
-    this.editor?.resetDraft();
+    if (resetDraft) this.editor?.resetDraft();
     if (render) return this.editor?.refresh();
   }
   async saveDefinition(definition, expectedRevision = definition.revision, { sceneId } = {}) {
@@ -161,13 +163,15 @@ export class ScreenController {
     await this.saveDefinition(definition);
     if (definition.episodes.length) this.selectEpisode(definition.episodes[0].id);
   }
-  openToken(tokenId, { schemeId } = {}) {
+  openToken(tokenId, { schemeId, episodeId } = {}) {
     requireGM();
     const { scene, selectedEpisodeId, definition } = this.getContext({ schemeId });
     if (!scene?.tokens.get(tokenId)) return;
-    const key = `${scene.id}:${definition.schemeId}:${selectedEpisodeId}:${tokenId}`;
+    if (!definition) { ui.notifications.warn("Сначала создайте схему и выберите эпизод."); return; }
+    episodeId ??= selectedEpisodeId;
+    const key = `${scene.id}:${definition.schemeId}:${episodeId}:${tokenId}`;
     const app = generics.windows.openSingletonApplication(this.tokenWindows.get(key),
-      () => new TokenEditorApplication(this, tokenId, { episodeId: selectedEpisodeId, schemeId: definition.schemeId }), { moduleId: MODULE_ID });
+      () => new TokenEditorApplication(this, tokenId, { episodeId, schemeId: definition.schemeId }), { moduleId: MODULE_ID });
     this.tokenWindows.set(key, app);
     return app;
   }
@@ -341,6 +345,7 @@ export class ScreenController {
     });
   }
   changed(scene) {
+    updateSceneNavigationBadges(this);
     if (scene?.id !== currentScene()?.id) return;
     for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.tokenWindows.values(), ...this.shopWindows.values(), ...this.dialogueEditors.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) void Promise.resolve(app.refresh?.()).catch(notifyError);
@@ -349,7 +354,8 @@ export class ScreenController {
   }
   async closeScreen() {
     this.cancelPick?.();
-    const dirty = [this.editor, ...this.tokenWindows.values(), ...this.dialogueEditors.values()]
+    if (this.editor?.rendered && !(await this.editor.mayClose())) return;
+    const dirty = [...this.tokenWindows.values(), ...this.dialogueEditors.values()]
       .find((app) => app?.rendered && app.dirty);
     if (dirty && !(await dirty.mayDiscard())) return;
     this.mode = null;
@@ -357,6 +363,7 @@ export class ScreenController {
       if (app?.rendered) await app.close();
     }
     await this.workspace.close();
+    updateSceneNavigationBadges(this);
   }
   async dispose() { this.runtime.dispose(); this.events.dispose(); this.dialogues.dispose?.(); this.cancelPick?.(); await this.closeScreen(); }
 }

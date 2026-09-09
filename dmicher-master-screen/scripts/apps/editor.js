@@ -172,6 +172,7 @@ export class EditorApplication extends ScreenFormApplication {
       this.selectDraftContext("unavailable");
       return { ...parent, missing: true, isGM: context.isGM, isConstructor: this.mode === "constructor" };
     }
+    if (!context.definition) return { ...parent, missingScheme: true, sceneName: context.scene.name, isGM: true, isConstructor: this.mode === "constructor", isDirector: this.mode === "director" };
     const episode = context.episode ?? context.definition.episodes[0];
     const key = editorContextKey(context, episode?.id);
     this.selectDraftContext(key);
@@ -539,7 +540,7 @@ export class TokenEditorApplication extends ScreenFormApplication {
     const parent = await super._prepareContext(options);
     const context = this.controller.getContext({ schemeId: this.schemeId });
     const token = context.tokens.find((entry) => entry.id === this.tokenId);
-    const episode = context.definition.episodes.find((entry) => entry.id === this.episodeId);
+    const episode = context.definition?.episodes.find((entry) => entry.id === this.episodeId);
     if (!token || !episode || context.scene?.id !== this.sceneId || !context.isGM) return { ...parent, missing: true };
     if (!this.draft || !this.dirty) {
       this.draft = clone(episode.tokens[this.tokenId] ?? defaultTokenBehavior());

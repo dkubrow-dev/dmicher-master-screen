@@ -44,6 +44,9 @@ function fixture() {
 
 test("scene export/import round trip keeps embedded IDs and remaps actors, macros and journal pages", async () => {
   const f = fixture();
+  f.definition.symbol = "🌦️";
+  f.definition.description = { ru: f.actor.uuid, en: "Imported weather scheme." };
+  f.definition.episodes[0].description = "A quiet market before the storm.";
   const bundle = await exportBundle(f.scene);
   assert.equal(bundle.scene._id, undefined);
   assert.equal(bundle.scene.flags[MODULE_ID], undefined);
@@ -62,6 +65,8 @@ test("scene export/import round trip keeps embedded IDs and remaps actors, macro
   assert.equal(actorCall.data.items[0]._id, "itemOriginal");
   for (const call of f.calls) assert.equal(call.options.keepEmbeddedIds, true);
   const imported = sceneCall.data.flags[MODULE_ID].definitions.main;
+  assert.equal(imported.symbol, "🌦️"); assert.deepEqual(imported.description, f.definition.description);
+  assert.equal(imported.episodes[0].description, f.definition.episodes[0].description);
   assert.ok(imported.episodes[0].tokens.oldToken);
   assert.equal(imported.episodes[0].tokens.oldToken.patrol.points[0].macroUuid, newMacro.uuid);
   assert.equal(imported.episodes[0].workspace.gm[0].uuid, `${newJournal.uuid}.JournalEntryPage.oldPage`);
@@ -92,7 +97,8 @@ test("wrong format, version, system and malformed definitions produce no writes"
   const good = await exportBundle(f.scene);
   for (const modify of [
     (b) => { b.format = "other"; }, (b) => { b.schemaVersion = 2; }, (b) => { b.systemId = "other"; },
-    (b) => { delete b.definition; }, (b) => { b.definition.schemaVersion = 99; },
+    (b) => { delete b.definition; delete b.definitions; }, (b) => { b.definition.schemaVersion = 99; },
+    (b) => { b.definitions = [null]; },
     (b) => { b.scene.name = {}; }, (b) => { b.scene.tokens = {}; }, (b) => { b.scene.notes = {}; },
     (b) => { b.actors[0].uuid = 123; }, (b) => { b.macros[0].data.name = {}; },
     (b) => { b.scene.tokens.push(copy(b.scene.tokens[0])); },
@@ -104,6 +110,16 @@ test("wrong format, version, system and malformed definitions produce no writes"
   }
   await assert.rejects(importBundle("{broken json"));
   assert.equal(f.calls.length, 0);
+});
+
+test("an empty scene exports and imports with zero schemes and no synthetic running state", async () => {
+  const f = fixture(); f.sceneData.flags[MODULE_ID] = { definitions: {} };
+  const before = copy(f.sceneData.flags), bundle = await exportBundle(f.scene);
+  assert.deepEqual(bundle.definitions, []); assert.equal(bundle.definition, null); assert.deepEqual(f.sceneData.flags, before);
+  await importBundle(bundle);
+  const scene = f.calls.find((call) => call.type === "Scene").data;
+  assert.deepEqual(scene.flags[MODULE_ID].definitions, {});
+  assert.equal(scene.flags[MODULE_ID].runtimes, undefined); assert.equal(scene.flags[MODULE_ID].runtime, undefined);
 });
 
 test("non-GM cannot export or import even a valid bundle", async () => {
@@ -139,13 +155,15 @@ test("failed compensation reports the newly created documents still present", as
   assert.equal(f.deleted.length, 2);
 });
 
-test("reference remapping keeps IDs and unrelated paths intact", () => {
-  const remapped = remapReferences({ raw: "oldToken", page: "JournalEntry.old.Page.page", media: "images/Actor.old.webp" }, new Map([
+test("reference remapping keeps IDs, descriptions and unrelated paths intact", () => {
+  const remapped = remapReferences({ raw: "oldToken", page: "JournalEntry.old.Page.page", media: "images/Actor.old.webp",
+    description: { ru: "Actor.old", en: "JournalEntry.old.Page.page" } }, new Map([
     ["Actor.old", "Actor.new"], ["JournalEntry.old", "JournalEntry.new"]
   ]));
   assert.equal(remapped.raw, "oldToken");
   assert.equal(remapped.page, "JournalEntry.new.Page.page");
   assert.equal(remapped.media, "images/Actor.old.webp");
+  assert.deepEqual(remapped.description, { ru: "Actor.old", en: "JournalEntry.old.Page.page" });
 });
 
 test("validating a bundle does not mutate the original export", async () => {

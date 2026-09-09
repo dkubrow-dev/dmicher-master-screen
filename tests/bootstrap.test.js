@@ -58,7 +58,7 @@ function fixture(generation, isGM = true) {
   const settings = new Map(), pagehide = [], intervals = new Map(), errors = [], hookBus = createHooks();
   let timerId = 0;
   const makeScene = (id) => {
-    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: {}, updates: [],
+    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: { [MODULE_ID]: { definition: defaultDefinition() } }, updates: [],
       getFlag(scope, key) { return structuredClone(this.flags[scope]?.[key]); },
       async setFlag(scope, key, value) {
         this.flags[scope] ??= {};
@@ -198,7 +198,7 @@ test("token window IDs distinguish the same imported token across scenes and epi
   } finally { await f.dispose(); }
 });
 
-test("switching editor mode requests one discard decision; actor observation preserves the editor", async () => {
+test("switching editor modes retains independent drafts; actor observation preserves the editor", async () => {
   const f = fixture(14);
   try {
     const controller = new ScreenController();
@@ -220,10 +220,37 @@ test("switching editor mode requests one discard decision; actor observation pre
     assert.deepEqual(visibility, []);
     assert.equal(editor.dirty, true);
     await editor.handleAction("director");
-    assert.equal(confirmations, 1);
+    assert.equal(confirmations, 0);
+    assert.equal(editor.hasUnsavedChanges(), true);
     assert.equal(controller.editor.mode, "director");
     assert.equal(controller.editor, editor, "director reuses the same IDE application");
     assert.equal(controller.editor.options.window.frame, false);
+    await controller.setMode("constructor");
+    assert.equal(editor.dirty, true);
+  } finally { await f.dispose(); }
+});
+
+test("an empty scene stays empty through constructor, director and tool windows", async () => {
+  const f = fixture(14);
+  try {
+    f.scene.flags = {};
+    const controller = new ScreenController();
+    assert.equal(controller.getContext().definition, null);
+    await controller.setMode("constructor");
+    assert.equal(controller.editor.context.missingScheme, true);
+    assert.match(controller.editor.context.nodeActions, /addScheme/);
+    assert.equal(controller.editor.context.badgesHTML, "");
+    assert.equal(controller.openToken("guard"), undefined);
+    await controller.setMode("director");
+    await controller.openDialogues().render();
+    assert.equal(controller.dialogueCatalog.context.missing, true);
+    assert.deepEqual(f.scene.flags, {});
+    canvas.scene = f.other; await controller.editor.refresh();
+    assert.equal(controller.getContext().definition.episodes.length, 4);
+    assert.equal(controller.getContext({ schemeId: "deleted-scheme" }).definition, null, "a stale tool must not silently edit the first remaining scheme");
+    canvas.scene = f.scene; await controller.editor.refresh();
+    assert.equal(controller.getContext().definition, null);
+    assert.deepEqual(f.errors, []);
   } finally { await f.dispose(); }
 });
 

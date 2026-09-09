@@ -7,6 +7,7 @@ globalThis.errors = [];
 globalThis.ui = { windows: {}, notifications: { error(message) { errors.push(message); }, warn(message) { globalThis.lastWarning = message; }, info(message) { globalThis.lastInfo = message; } }, hotbar: { _onResize() {} } };
 const escape = Handlebars.escapeExpression;
 Handlebars.registerHelper("checked", (flag) => flag ? "checked" : "");
+Handlebars.registerHelper("localize", (value) => value);
 Handlebars.registerHelper("selectOptions", (entries, { hash }) => new Handlebars.SafeString((hash.blank !== undefined ? `<option value="">${escape(hash.blank)}</option>` : "") + (entries ?? []).map((entry) => {
   const value = entry[hash.valueAttr ?? "value"], label = entry[hash.labelAttr ?? "label"];
   return `<option value="${escape(value)}" ${value === hash.selected ? "selected" : ""}>${escape(label)}</option>`;
@@ -72,6 +73,10 @@ const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: 
  } };
 const token = { id: "guard", name: "Guard", x: 100, y: 100, texture: { src: "" }, getFlag() {}, actor: { testUserPermission: () => false } };
 scene.tokens.set(token.id, token); game.scenes.set(scene.id, scene);
+globalThis.emptyScene = { ...scene, id: "scene-empty", name: "Empty scene", flags: {}, tokens: new Map(), tiles: new Map() };
+game.scenes.set(emptyScene.id, emptyScene);
+const navigation = Handlebars.compile(await (await fetch("/scene-navigation.hbs")).text());
+document.getElementById("interface").insertAdjacentHTML("beforeend", navigation({ scenes: { active: [{ id: scene.id, name: scene.name, users: [{ name: "Player", letter: "P", color: "#999", border: "#222" }] }, { id: emptyScene.id, name: emptyScene.name }], levels: Number(version.split(".")[0]) === 14 ? [{ id: "level-a", sceneId: scene.id, name: "Ground floor" }] : [] } }));
 const renderer = { screen: { width: innerWidth, height: innerHeight }, resize(width, height) { Object.assign(this.screen, { width, height }); } };
 globalThis.canvas = { scene, ready: true, app: { renderer }, screenDimensions: [innerWidth, innerHeight], stage: { pivot: { x: 0, y: 0 }, position: { x: innerWidth / 2, y: innerHeight / 2, set(x, y) { this.x = x; this.y = y; } }, on() {}, off() {} }, pan() {}, tokens: { activate() {}, placeables: [], controlled: [] } };
 const { ScreenController } = await import("/modules/dmicher-master-screen/scripts/controller.js");

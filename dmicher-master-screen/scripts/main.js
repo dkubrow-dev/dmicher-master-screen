@@ -5,6 +5,7 @@ import { getRuntime, isAuthority } from "./store.js";
 import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
 import { installScreenSettingHelp } from "./setting-help.js";
+import { updateSceneNavigationBadges } from "./apps/scheme-badges.js";
 
 let controller, removeControls, unregister, removeSettingHelp;
 const hooks = [];
@@ -70,6 +71,8 @@ Hooks.once("init", () => {
 Hooks.once("ready", () => {
   controller.runtime.start();
   on("canvasReady", attachCanvas);
+  on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
+  on("updateScene", () => updateSceneNavigationBadges(controller));
   on("canvasTearDown", () => { controller.cancelPick?.(); if (stage && tap) stage.off("pointertap", tap); });
   on("createChatMessage", (message, _options, userId) => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
