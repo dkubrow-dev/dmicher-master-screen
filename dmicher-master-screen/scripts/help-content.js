@@ -1,5 +1,6 @@
 // Content belongs to Master screen; Generics supplies the help viewer.
 import { OBJECT_HELP_PAGES, OBJECT_HELP_SETTINGS } from "./object-help-content.js";
+import { languageCode } from "./localization.js";
 const section = (id, ru, en, bodyRu, bodyEn) => ({ id, ru, en, bodyRu, bodyEn });
 const page = (id, ru, en, sections) => ({ id, ru, en, sections });
 export const SCREEN_HELP_PAGES = [
@@ -29,7 +30,8 @@ export const SCREEN_HELP_PAGES = [
   page("director", "Вести сцену", "Run the scene", [
     section("start", "Запустить подготовку", "Start preparation", "Кнопка «Старт» в категории Ширмы заново запускает все группы из выбранных состояний. Для ещё не запущенной группы выбирается её состояние входа. Отдельную группу можно запустить в Режиссёре. Открытие карты и переподключение не запускают подготовку.", "Start in the Master screen category restarts all groups from their selected states. An unstarted group uses its entry state. Individual groups can be started in Director. Opening a map or reconnecting does not start preparation."),
     section("change", "Выбрать состояния групп", "Choose group states", "«Сменить состояние» показывает все группы и их текущий выбор. Выберите состояния и нажмите «Сохранить»: изменятся только затронутые группы. Работавшие группы продолжат работу; остановленные и не запущенные останутся такими. «Отмена» не меняет ничего.", "Change state lists all groups and current selections. Choose states and Save: only changed groups are updated. Running groups continue; stopped and unstarted groups keep their status. Cancel changes nothing."),
-    section("manual", "Вмешаться в происходящее", "Intervene during play", "Перемещайте объекты и меняйте доступные состояния вручную. Отключение автоматизации объекта сохраняется до вашего прямого включения. При новом явном входе скрипты состояния выполняются заново; переподключение не повторяет уже выполненные действия.", "Move objects and choose states manually. Disabling an object's automation persists until you enable it explicitly. A new explicit state entry runs its state scripts again; reconnecting does not repeat completed actions.")
+    section("manual", "Вмешаться в происходящее", "Intervene during play", "Перемещайте объекты и меняйте доступные состояния вручную. Отключение автоматизации объекта сохраняется до вашего прямого включения. При новом явном входе скрипты состояния выполняются заново; переподключение не повторяет уже выполненные действия.", "Move objects and choose states manually. Disabling an object's automation persists until you enable it explicitly. A new explicit state entry runs its state scripts again; reconnecting does not repeat completed actions."),
+    section("journal", "Проверить последние реакции", "Review recent reactions", "В «Иное → Журнал сигналов» проверьте последние сигналы и результаты их обработки. Журнал показывает до 100 записей текущего подключения мастера; после перезагрузки список начинается заново.", "In Other → Signal log, review recent signals and their handling results. The log shows up to 100 entries from the GM's current connection; reloading starts a new list.")
   ]),
   page("stop", "Остановить автоматизацию", "Stop automation", [section("halt", "Вернуть ручное управление", "Return to manual control", "Нажмите «Стоп», чтобы остановить все группы, или остановите одну группу в Режиссёре. Выполненные действия и запасы магазинов сохраняются. Для продолжения явно выберите состояние и запустите нужную группу. Диалоги можно просматривать, зачитывать и показывать игрокам вручную даже после остановки.", "Press Stop to halt all groups, or stop one group in Director. Completed actions and shop stock remain. To resume, explicitly choose a state and start the desired group. Dialogues can still be previewed, read aloud or shown manually to players while automation is stopped.")]),
   page("trade", "Провести обмен", "Trade items", [section("exchange", "Подготовить и подтвердить сделку", "Prepare and confirm a trade", "Выберите своего персонажа или поставьте таргет на него, подойдите к объекту и выберите «Торг» с нужным магазином. Перенесите товары и предметы персонажа в две стороны предложения. До подтверждения инвентарь не меняется. Один магазин обслуживает одну пару игрок–персонаж. Если требуется мастер, отправьте сделку ему; мастер подключается через «Магазины». Денежный блок появится только при поддержке системы.", "Select or target your character, approach an object and choose Trade with the desired shop. Add shop goods and character items to the two offer areas. Inventory changes only on confirmation. One shop serves one player–character pair at a time. If GM approval is required, submit the trade; the GM joins through Shops. Currency controls appear only with system support.")]),
@@ -67,7 +69,7 @@ export const SCREEN_HELP_PAGES = [
         "ru": "Участникам игр и проверки",
         "en": "Players and testers",
         "bodyRu": "Спасибо мастерам и игрокам, которые проверяют Ширму в своих играх и делятся конкретными примерами. Такие наблюдения помогают уменьшать рутину за столом.",
-        "bodyEn": "Thank you to GMs and players who test Master screen in their games and share concrete examples. Your observations help reduce script work at the table."
+        "bodyEn": "Thank you to GMs and players who test Master screen in their games and share concrete examples. Your observations help reduce routine work at the table."
       }
     ]
   },
@@ -81,7 +83,7 @@ export const SCREEN_HELP_PAGES = [
         "ru": "🎬 Master screen — Ширма мастера",
         "en": "🎬 Master screen",
         "bodyRu": "Готовьте состояния и реакции объектов, затем ведите сцену и вмешивайтесь в её события. Ширма берёт на себя подготовленную рутину, сохраняя решения за мастером.",
-        "bodyEn": "Prepare states and object reactions, then run the scene and intervene in its events. Master screen handles the prepared script while decisions remain with the GM."
+        "bodyEn": "Prepare states and object reactions, then run the scene and intervene in its events. Master screen handles prepared routines while decisions remain with the GM."
       },
       {
         "id": "spotlight",
@@ -180,14 +182,6 @@ export const SCREEN_HELP_SETTINGS = [
         "The state's name in the Scene tree and Director, unique within its group."
       ],
       [
-        "newStateEvent",
-        "event",
-        "Событие перехода",
-        "Transition event",
-        "Добавьте событие, которое автоматически переводит группу в выбранный состояние. Одно событие не может вести в два состояния одной группы. Ручной выбор мастера не ограничивается.",
-        "Add an event that automatically moves the group to this state. One event cannot target two states in the same group. Manual GM selection is unrestricted."
-      ],
-      [
         "stop",
         "stop",
         "Остановка автоматизации",
@@ -219,22 +213,6 @@ export const SCREEN_HELP_SETTINGS = [
     "en": "Shop settings",
     "fields": [
       [
-        "shopEnabled",
-        "enabled",
-        "Предложить игроку обмен предметами",
-        "Offer item trading to players",
-        "Показывает магазин при взаимодействии с НИП в этом состоянии.",
-        "Makes the shop available when interacting with this NPC in the state."
-      ],
-      [
-        "shopRange",
-        "range",
-        "Дальность взаимодействия, единицы сцены",
-        "Interaction range, scene units",
-        "Персонаж должен находиться не дальше этого расстояния от НИП.",
-        "The character must be within this distance of the NPC."
-      ],
-      [
         "shopApproval",
         "approval",
         "Обмен требует подтверждения мастера",
@@ -250,20 +228,12 @@ export const SCREEN_HELP_SETTINGS = [
         "Список группирует товары по типу; плитки показывают миниатюры.",
         "List groups items by type; tiles display thumbnails."
       ],
-      [
-        "[name^=\"stock-\"]",
-        "stock",
-        "Запас",
-        "Stock",
-        "Количество доступных целых предметов данного образца. Это не число единиц внутри системного предмета; потраченный запас не восстанавливается сменой состояния.",
-        "Number of complete items available from this entry. This is not the quantity inside a system item; changing states does not restore spent stock."
-      ]
     ]
   },
   {
     "id": "settings-conditions",
     "ru": "Условия запуска",
-    "en": "Condition conditions",
+    "en": "Activation conditions",
     "fields": [
       [
         "[data-conditions-fields] [name$=\"-enabled\"]",
@@ -271,7 +241,7 @@ export const SCREEN_HELP_SETTINGS = [
         "Разрешать запуск",
         "Allow activation",
         "Разрешает проверять допуск к действию. Ручное отключение в Режиссёре действует до вашего включения.",
-        "Enables the condition's condition checks. A manual disable in Director persists until you enable it."
+        "Enables admission checks for the action. A manual disable in Director persists until you enable it."
       ],
       [
         "[data-conditions-fields] [name$=\"-group\"]",
@@ -337,38 +307,6 @@ export const SCREEN_HELP_SETTINGS = [
     "en": "Dialogue settings",
     "fields": [
       [
-        "dialogueName",
-        "name",
-        "Название",
-        "Name",
-        "Название диалога в списках мастера и взаимодействиях.",
-        "The dialogue's name in GM lists and interactions."
-      ],
-      [
-        "dialogueStart",
-        "start",
-        "Начальная страница",
-        "Starting page",
-        "С этой страницы начинается новый разговор.",
-        "A new conversation starts at this page."
-      ],
-      [
-        "nodeText",
-        "text",
-        "Реплика",
-        "Line",
-        "Текст НИП или описание предмета на текущей странице; вводите обычный текст.",
-        "The NPC's line or object description on this page; enter plain text."
-      ],
-      [
-        "nodeArt",
-        "art",
-        "Иллюстрация страницы",
-        "Page illustration",
-        "Путь к изображению; пустое поле использует изображение объекта.",
-        "Image path; an empty field uses the object's image."
-      ],
-      [
         "responseLabel",
         "reply",
         "Текст ответа",
@@ -376,14 +314,6 @@ export const SCREEN_HELP_SETTINGS = [
         "Название кнопки, которую выбирает игрок.",
         "The label of the reply button the player chooses."
       ],
-      [
-        "responseNext",
-        "next",
-        "Следующая страница",
-        "Next page",
-        "Открывает выбранную страницу или завершает диалог.",
-        "Opens the selected page or ends the conversation."
-      ]
     ]
   },
   {
@@ -420,8 +350,8 @@ export const SCREEN_HELP_SETTINGS = [
         "target",
         "Объект",
         "Object",
-        "НИП или тайл, на котором доступно действие.",
-        "The NPC or tile that offers the action."
+        "Объект сцены, на котором доступно действие.",
+        "The scene object that offers the action."
       ],
       [
         "actionRange",
@@ -590,7 +520,7 @@ export const SCREEN_HELP_SETTINGS = [
 ];
 
 export function getScreenHelpContent(language = globalThis.game?.i18n?.lang) {
-  const ru = String(language ?? "en").toLowerCase().startsWith("ru"), title = value => value[ru ? "ru" : "en"];
+  const ru = languageCode(language ?? "en") === "ru", title = value => value[ru ? "ru" : "en"];
   const pages = SCREEN_HELP_PAGES.map(value => ({ id: value.id, title: title(value), html: value.sections.map(s => `<section><h3 id="${s.id}">${title(s)}</h3><p>${s[ru ? "bodyRu" : "bodyEn"]}</p></section>`).join("") }));
   pages.push(...SCREEN_HELP_SETTINGS.map(value => ({ id: value.id, title: title(value), html: value.fields.map(f => `<section><h3 id="${f[1]}">${f[ru ? 2 : 3]}</h3><p>${f[ru ? 4 : 5]}</p></section>`).join("") })));
   const entry = id => ({ id, pageId: id, title: pages.find(p => p.id === id).title });
@@ -601,6 +531,6 @@ export function getScreenHelpContent(language = globalThis.game?.i18n?.lang) {
   ] };
 }
 export function getScreenSettingHelp(language = globalThis.game?.i18n?.lang) {
-  const ru = String(language ?? "en").toLowerCase().startsWith("ru");
+  const ru = languageCode(language ?? "en") === "ru";
   return SCREEN_HELP_SETTINGS.flatMap(p => p.fields.map(f => ({ selector: f[0].startsWith("[") ? f[0] : `[name="${f[0]}"]`, pageId: p.id, anchor: f[1], hint: f[ru ? 4 : 5], label: ru ? `Справка: ${f[2]}` : `Help: ${f[3]}` })));
 }

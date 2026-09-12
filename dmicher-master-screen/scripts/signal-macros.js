@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { assertSignalInterface, normalizeSignalFields, validateSignalValues, fieldInitialValue, isRecord } from "./signal-types.js";
 
@@ -14,7 +15,7 @@ export function signalMacroSnippet(signal) {
   return `/* dmicher-signal-interface\n${encodedContract}\n*/\nreturn {\n  parameters: {\n${members(signal.parameters)}\n  },\n  returns: {\n${members(signal.returns)}\n  },\n  async execute(context) {\n    // this.parameters[field].value -> this.returns[field].value\n  }\n};`;
 }
 function requireMacro(macro) {
-  if (macro?.documentName !== "Macro" || macro.type !== "script" || macro.canExecute === false) throw new Error("Нужен доступный скриптовый макрос Foundry.");
+  if (macro?.documentName !== "Macro" || macro.type !== "script" || macro.canExecute === false) throw new Error(localizedMessage("Нужен доступный скриптовый макрос Foundry."));
   // Compiling validates syntax only; it does not execute the player's factory or body.
   new AsyncFunction(String(macro.command ?? ""));
   return macro;
@@ -24,7 +25,7 @@ export function inspectSignalMacro(macro, signal) {
   try {
     requireMacro(macro);
     const match = String(macro.command ?? "").match(annotation);
-    if (!match) throw new Error("Добавьте объявление интерфейса и фабрику обработчика сигнала.");
+    if (!match) throw new Error(localizedMessage("Добавьте объявление интерфейса и фабрику обработчика сигнала."));
     const contract = assertSignalInterface(signal, JSON.parse(match[1]));
     return { valid: true, contract, snippet };
   } catch (error) { return { valid: false, error: error.message ?? String(error), snippet }; }
@@ -38,7 +39,7 @@ export async function validateStandaloneMacro(uuid, { resolveMacro = globalThis.
   catch (error) { return { valid: false, error: error.message ?? String(error) }; }
 }
 function instanceFields(source) {
-  if (!isRecord(source)) throw new Error("Фабрика должна вернуть объекты parameters и returns.");
+  if (!isRecord(source)) throw new Error(localizedMessage("Фабрика должна вернуть объекты parameters и returns."));
   return normalizeSignalFields(Object.entries(source).map(([name, field]) => ({ ...field, name })));
 }
 /** The saved annotation is checked without running code. The live factory is checked
@@ -48,7 +49,7 @@ export async function executeSignalMacro(macro, signal, parameters, context = {}
   const inspection = inspectSignalMacro(macro, signal);
   if (!inspection.valid) throw new Error(inspection.error);
   const instance = await macro.execute({ signalContext: context });
-  if (!isRecord(instance) || typeof instance.execute !== "function") throw new Error("Макрос должен вернуть объект с методом execute.");
+  if (!isRecord(instance) || typeof instance.execute !== "function") throw new Error(localizedMessage("Макрос должен вернуть объект с методом execute."));
   const contract = assertSignalInterface(signal, { parameters: instanceFields(instance.parameters), returns: instanceFields(instance.returns) });
   const values = validateSignalValues(signal.parameters, parameters);
   for (const field of contract.parameters) instance.parameters[field.name].value = structuredClone(values[field.name]);
@@ -59,7 +60,7 @@ export async function executeSignalMacro(macro, signal, parameters, context = {}
   return validateSignalValues(signal.returns, output, { allowExtra: true, defaults: false });
 }
 export function reportMacroError(error, { name = "", signalName = "", notify = false } = {}) {
-  const message = `Макрос «${name}»${signalName ? `, сигнал «${signalName}»` : ""}: ${error.message ?? String(error)}`;
+  const message = localizedMessage("Макрос «{0}»{1}: {2}", [name, signalName ? localizedMessage(", сигнал «{0}»", [signalName]) : "", error.message ?? String(error)]);
   console.error(MODULE_ID, message, error);
   if (notify) globalThis.ui?.notifications?.error(message);
   return message;

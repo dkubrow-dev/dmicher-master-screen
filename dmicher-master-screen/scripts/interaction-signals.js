@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { sceneUuid, virtualUuid } from "./builtin-signals.js";
 
 /** Runtime interaction IDs become stable public UUID values at the signal boundary. */
@@ -15,6 +16,6 @@ export function deniedMessage(outcome, fallback) {
   return outcome?.messages?.map((entry) => `${entry.name}: ${entry.message}`).join("; ") || fallback;
 }
 export async function notifyInteractionSignal(emit, scene, input) {
-  try { if (typeof emit !== "function") throw new Error("Исполнитель сигналов Ширмы не подключён."); return await emit(scene, input); }
+  try { if (typeof emit !== "function") throw new Error(localizedMessage("Исполнитель сигналов Ширмы не подключён.")); return await emit(scene, input); }
   catch (error) { globalThis.ui?.notifications?.error(error.message); console.error("dmicher-master-screen", input.name, error); return { status: "failed", allowed: false, error: error.message }; }
 }

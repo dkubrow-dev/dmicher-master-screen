@@ -1,10 +1,12 @@
+import { message as localizedMessage, text } from "./localization.js";
+import { shopSessionIsLive } from "./interaction-session-model.js";
 import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntime, getRuntimes, saveRuntime, withSceneLock, isAuthority, asArray } from "./store.js";
 import { getObjectBindings, resolveObjectShop } from "./scene-objects.js";
 import { getInteractionCatalog } from "./scene-assets.js";
 import { objectDescriptor, objectKey, sceneObject, validateObjectAccess } from "./interaction-access.js";
 import { generics } from "./generics.js";
-import { createShopSessions, requireShopSession, sessionIsLive, shopKey } from "./shop-sessions.js";
+import { createShopSessions, requireShopSession, shopKey } from "./shop-sessions.js";
 import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
 import { isSceneObjectType } from "./scene-object-types.js";
 export { shopKey } from "./shop-sessions.js";
@@ -17,27 +19,27 @@ const escape = (text) => generics.utilities.escapeHTML(String(text ?? ""));
 /** One transferable lot is a whole Item document. Quantities and currencies remain opaque. */
 export function itemTransferData(item) {
   const data = copy(typeof item?.toObject === "function" ? item.toObject() : item);
-  if (!data || typeof data.name !== "string" || typeof data.type !== "string") fail("Нужен предмет Foundry.");
+  if (!data || typeof data.name !== "string" || typeof data.type !== "string") fail(localizedMessage("Нужен предмет Foundry."));
   for (const key of ["_id", "folder", "sort", "ownership", "_stats"]) delete data[key];
   return data;
 }
 export async function importShopEntry(uuid, { stock = 1 } = {}) {
-  if (!game.user?.isGM) fail("Настройка магазина доступна мастеру.");
+  if (!game.user?.isGM) fail(localizedMessage("Настройка магазина доступна мастеру."));
   const item = await fromUuid(String(uuid));
-  if (item?.documentName !== "Item") fail("Перенесите предмет из каталога или листа персонажа.");
-  if (!Number.isInteger(Number(stock)) || Number(stock) < 0 || Number(stock) > 9999) fail("Остаток: целое число от 0 до 9999.");
+  if (item?.documentName !== "Item") fail(localizedMessage("Перенесите предмет из каталога или листа персонажа."));
+  if (!Number.isInteger(Number(stock)) || Number(stock) < 0 || Number(stock) > 9999) fail(localizedMessage("Остаток: целое число от 0 до 9999."));
   return { id: id(), data: itemTransferData(item), stock: Number(stock) };
 }
 export function getShopContext(sceneId, source, groupId = "main", selectedShopId) {
   const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
   const target = objectDescriptor(source), resolved = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;
-  const shopId = resolved?.asset.id, token = sceneObject(scene, target);
+  const shopId = resolved?.asset.id, object = sceneObject(scene, target);
   const inventories = scene?.getFlag?.(MODULE_ID, "shopInventories");
   const inventory = shopId && (inventories?.[shopId]
     ?? getRuntimes(scene).filter((state) => state.shops?.[shopId])
       .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId])[0]);
   if (runtime && inventory) { runtime.shops ??= {}; runtime.shops[shopId] = copy(inventory); }
-  return { scene, runtime, token, target, shopId, asset: resolved?.asset,
+  return { scene, runtime, object, target, shopId, asset: resolved?.asset,
     behavior: resolved ? { enabled: !runtime.disabledObjects?.includes(objectKey(target)), shop: resolved.config } : null };
 }
 async function saveInventory(current, inventory) {
@@ -54,31 +56,31 @@ export function shopEntries(context) {
   return entries;
 }
 export function validateTradeContext(context, intent, user) {
-  const { scene, runtime, token, behavior } = context;
-  if ((intent.groupId ?? "main") !== (runtime?.groupId ?? "main")) fail("Запрос относится к другой группе магазина.");
-  if (!intent.shopId || intent.shopId !== shopKey(context)) fail("Назначение магазина изменилось. Откройте взаимодействие заново.");
-  if (context.target && objectKey(intent.target ?? intent.tokenId) !== objectKey(context.target)) fail("Объект магазина изменился.");
-  if (!behavior?.enabled || !behavior.shop?.enabled) fail("Этот магазин сейчас недоступен.");
-  const descriptor = { ...behavior.shop, id: token?.id, target: context.target ?? { type: "Token", id: token?.id } };
-  return validateObjectAccess({ scene, runtime, descriptor, target: token, conditionType: "shop" }, intent.actorTokenId, user, intent.runId).actor;
+  const { scene, runtime, object, behavior } = context;
+  if ((intent.groupId ?? "main") !== (runtime?.groupId ?? "main")) fail(localizedMessage("Запрос относится к другой группе магазина."));
+  if (!intent.shopId || intent.shopId !== shopKey(context)) fail(localizedMessage("Назначение магазина изменилось. Откройте взаимодействие заново."));
+  if (context.target && objectKey(intent.target ?? intent.tokenId) !== objectKey(context.target)) fail(localizedMessage("Объект магазина изменился."));
+  if (!behavior?.enabled || !behavior.shop?.enabled) fail(localizedMessage("Этот магазин сейчас недоступен."));
+  const descriptor = { ...behavior.shop, id: object?.id, target: context.target ?? { type: "Token", id: object?.id } };
+  return validateObjectAccess({ scene, runtime, descriptor, target: object, conditionType: "shop" }, intent.actorTokenId, user, intent.runId).actor;
 }
 export function normalizeExchange(intent) {
   const string = (value) => {
-    if (typeof value !== "string" || !value.length || value.length > 128) fail("Некорректный идентификатор обмена.");
+    if (typeof value !== "string" || !value.length || value.length > 128) fail(localizedMessage("Некорректный идентификатор обмена."));
     return value;
   };
   if (intent?.kind !== "exchange" || !Array.isArray(intent.giveItemIds) || !Array.isArray(intent.take)
-    || intent.giveItemIds.length > 100 || intent.take.length > 100) fail("Нужен единый список обмена, не более 100 предметов с каждой стороны.");
+    || intent.giveItemIds.length > 100 || intent.take.length > 100) fail(localizedMessage("Нужен единый список обмена, не более 100 предметов с каждой стороны."));
   const giveItemIds = [...new Set(intent.giveItemIds.map(string))];
-  if (giveItemIds.length !== intent.giveItemIds.length) fail("Предмет персонажа повторяется в предложении.");
+  if (giveItemIds.length !== intent.giveItemIds.length) fail(localizedMessage("Предмет персонажа повторяется в предложении."));
   const take = intent.take.map((entry) => {
-    if (!Number.isInteger(entry?.count) || entry.count < 1 || entry.count > 100) fail("Количество: целое число от 1 до 100.");
+    if (!Number.isInteger(entry?.count) || entry.count < 1 || entry.count > 100) fail(localizedMessage("Количество: целое число от 1 до 100."));
     return { entryId: string(entry.entryId), count: entry.count };
   });
-  if (new Set(take.map((entry) => entry.entryId)).size !== take.length || take.reduce((sum, entry) => sum + entry.count, 0) > 100) fail("Предметы магазина повторяются или превышен предел количества.");
-  if (!giveItemIds.length && !take.length) fail("Предложение обмена пусто.");
+  if (new Set(take.map((entry) => entry.entryId)).size !== take.length || take.reduce((sum, entry) => sum + entry.count, 0) > 100) fail(localizedMessage("Предметы магазина повторяются или превышен предел количества."));
+  if (!giveItemIds.length && !take.length) fail(localizedMessage("Предложение обмена пусто."));
   const target = objectDescriptor(intent.target ?? intent.tokenId);
-  if (!isSceneObjectType(target?.type)) fail("Неизвестный тип объекта магазина.");
+  if (!isSceneObjectType(target?.type)) fail(localizedMessage("Неизвестный тип объекта магазина."));
   const tokenId = string(target.id);
   return { kind: "exchange", requestId: string(intent.requestId), sceneId: string(intent.sceneId), tokenId,
     target: { type: target.type, id: tokenId }, shopId: string(intent.shopId),
@@ -86,10 +88,10 @@ export function normalizeExchange(intent) {
 }
 function prepare(current, intent, user, validate) {
   const actor = validate(current, intent, user), entries = shopEntries(current);
-  const sources = intent.giveItemIds.map((itemId) => actor.items.get(itemId) ?? fail("Один из предложенных предметов уже отсутствует у персонажа."));
+  const sources = intent.giveItemIds.map((itemId) => actor.items.get(itemId) ?? fail(localizedMessage("Один из предложенных предметов уже отсутствует у персонажа.")));
   const takes = intent.take.map(({ entryId, count }) => {
     const entry = entries.find((item) => item.id === entryId);
-    if (!entry || !Number.isInteger(entry.stock) || entry.stock < count) fail("В магазине уже недостаточно одного из выбранных предметов.");
+    if (!entry || !Number.isInteger(entry.stock) || entry.stock < count) fail(localizedMessage("В магазине уже недостаточно одного из выбранных предметов."));
     return { entry, count };
   });
   return { actor, entries, sources, takes };
@@ -114,16 +116,16 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
   const receiptKey = (userId, intent) => `${userId}:${intent.requestId}`;
   const publish = async (message, receipt) => {
     if (!message?.update) return;
-    const labels = { pending: "Предложение ожидает решения мастера.", validating: "Проверяются условия покупки.", processing: "Обмен выполняется.", done: "Обмен выполнен.",
-      rejected: "Предложение отклонено.", failed: "Обмен отменён.", uncertain: "Нужна сверка мастером; автоматическое повторение запрещено." };
+    const labels = { pending: localizedMessage("Предложение ожидает решения мастера."), validating: localizedMessage("Проверяются условия покупки."), processing: localizedMessage("Обмен выполняется."), done: localizedMessage("Обмен выполнен."),
+      rejected: localizedMessage("Предложение отклонено."), failed: localizedMessage("Обмен отменён."), uncertain: localizedMessage("Нужна сверка мастером; автоматическое повторение запрещено.") };
     let content = `<section class="ms-trade-card"><p>${escape(labels[receipt.status] ?? receipt.status)}</p>`;
-    if (receipt.summary) content += `<p>Персонаж отдаёт: ${escape(receipt.summary.give || "ничего")}.<br>Получает: ${escape(receipt.summary.take || "ничего")}.</p>`;
+    if (receipt.summary) content += `<p>${text("Персонаж отдаёт", "Character gives")}: ${escape(receipt.summary.give || localizedMessage("ничего"))}.<br>${text("Получает", "Receives")}: ${escape(receipt.summary.take || localizedMessage("ничего"))}.</p>`;
     if (receipt.error) content += `<p>${escape(receipt.error)}</p>`;
-    if (receipt.status === "pending") content += `<div data-ms-gm-trade>${generics.chat.renderActionButton({ id: "approve-exchange", label: "Подтвердить обмен" })}${generics.chat.renderActionButton({ id: "reject-exchange", label: "Отклонить" })}</div>`;
+    if (receipt.status === "pending") content += `<div data-ms-gm-trade>${generics.chat.renderActionButton({ id: "approve-exchange", label: localizedMessage("Подтвердить обмен") })}${generics.chat.renderActionButton({ id: "reject-exchange", label: localizedMessage("Отклонить") })}</div>`;
     await message.update({ content: `${content}</section>`, [`flags.${MODULE_ID}.tradeResult`]: receipt.status });
   };
   const execute = async (current, intent, user, key, receipt) => {
-    if (!authority()) fail("Исполняющий мастер изменился. Откройте взаимодействие заново.");
+    if (!authority()) fail(localizedMessage("Исполняющий мастер изменился. Откройте взаимодействие заново."));
     requireShopSession(current, intent, user);
     const { actor, entries, sources, takes } = prepare(current, intent, user, validate);
     const sourceSnapshots = sources.map((source) => ({ id: source.id, data: source.toObject(),
@@ -131,7 +133,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     const checkSources = () => {
       for (const source of sourceSnapshots) {
         const item = actor.items.get(source.id);
-        if (!item || JSON.stringify(itemTransferData(item)) !== source.fingerprint) fail("Один из исходных предметов изменён другим действием. Подготовьте предложение заново.");
+        if (!item || JSON.stringify(itemTransferData(item)) !== source.fingerprint) fail(localizedMessage("Один из исходных предметов изменён другим действием. Подготовьте предложение заново."));
       }
     };
     const runtime = copy(current.runtime);
@@ -146,7 +148,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     try {
       for (const { entry, count } of takes) {
         for (let index = 0; index < count; index++) {
-          if (!authority()) fail("Исполняющий мастер изменился.");
+          if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
           validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
           const data = itemTransferData(entry.data);
           data.flags ??= {};
@@ -155,7 +157,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
           try { documents = await actor.createEmbeddedDocuments("Item", [data]); }
           catch (error) { creationUncertain = true; throw error; }
           const item = documents?.[0];
-          if (!item?.id) { creationUncertain = true; fail("Система не создала предмет поддерживаемого типа."); }
+          if (!item?.id) { creationUncertain = true; fail(localizedMessage("Система не создала предмет поддерживаемого типа.")); }
           created.push(item.id);
           receipt.createdItemIds = [...created];
         }
@@ -167,7 +169,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       runtime.shops ??= {};
       runtime.shops[shopKey(current)] = { items: entries };
       await save(current.scene, runtime);
-      if (!authority()) fail("Исполняющий мастер изменился.");
+      if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
       validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
       if (sources.length) {
         // Foundry does not offer a cross-document transaction. Recheck immediately before
@@ -175,7 +177,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
         checkSources();
         deletionStarted = true;
         await actor.deleteEmbeddedDocuments("Item", sources.map((source) => source.id));
-        if (sources.some((source) => actor.items.has(source.id))) fail("Система не удалила часть исходных предметов.");
+        if (sources.some((source) => actor.items.has(source.id))) fail(localizedMessage("Система не удалила часть исходных предметов."));
       }
       validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
       await saveInventory(current, runtime.shops[shopKey(current)]);
@@ -193,13 +195,13 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       const createdIds = [...new Set([...created, ...marked])];
       if (createdIds.length) {
         try { await actor.deleteEmbeddedDocuments("Item", createdIds);
-          if (createdIds.some((itemId) => actor.items.has(itemId))) fail("Полученные предметы остались у персонажа."); }
+          if (createdIds.some((itemId) => actor.items.has(itemId))) fail(localizedMessage("Полученные предметы остались у персонажа.")); }
         catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       const missingSources = deletionStarted ? sourceSnapshots.filter((source) => !actor.items.has(source.id)) : [];
       if (missingSources.length) {
         try { await actor.createEmbeddedDocuments("Item", missingSources.map((source) => copy(source.data)), { keepId: true });
-          if (missingSources.some((source) => !actor.items.has(source.id))) fail("Часть исходных предметов не восстановлена."); }
+          if (missingSources.some((source) => !actor.items.has(source.id))) fail(localizedMessage("Часть исходных предметов не восстановлена.")); }
         catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
       }
       if (!rollbackErrors.length && !creationUncertain) {
@@ -228,11 +230,11 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     try { outcome = await notifyInteractionSignal(emitSignal, scene, interactionSignal(scene, "Shop", intent.shopId, session, "beforePurchase", { suffix: `${intent.requestId}.beforePurchase`, validation: true })); }
     catch (error) { outcome = { allowed: false, error: error.message }; }
     const result = await lock(scene, async () => {
-      if (!authority()) fail("Исполняющий мастер изменился.");
+      if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
       const current = context(intent.sceneId, intent.target, intent.groupId, intent.shopId), receipt = current.runtime.tradeRequests?.[key];
-      if (!receipt || receipt.status !== "validating") return copy(receipt ?? { status: "failed", error: "Состояние обмена изменилось во время проверки." });
+      if (!receipt || receipt.status !== "validating") return copy(receipt ?? { status: "failed", error: localizedMessage("Состояние обмена изменилось во время проверки.") });
       try {
-        if (outcome?.allowed !== true || ["failed", "stale"].includes(outcome?.status)) fail(deniedMessage(outcome, outcome?.error ?? "Подписчик не разрешил покупку."));
+        if (outcome?.allowed !== true || ["failed", "stale"].includes(outcome?.status)) fail(deniedMessage(outcome, outcome?.error ?? localizedMessage("Подписчик не разрешил покупку.")));
         requireShopSession(current, intent, user);
         prepare(current, intent, user, validate);
         return await execute(current, intent, user, key, receipt);
@@ -253,21 +255,21 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
   const receive = async (intent, user, message = null) => {
     intent = normalizeExchange(intent);
     const initial = context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId);
-    if (!initial.scene) fail("Сцена магазина не найдена.");
+    if (!initial.scene) fail(localizedMessage("Сцена магазина не найдена."));
     const staged = await lock(initial.scene, async () => {
-      if (!authority()) fail("Исполняющий мастер изменился.");
+      if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
       const current = context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), key = receiptKey(user.id, intent);
       const previous = current.runtime.tradeRequests?.[key];
       if (previous) return copy(previous);
       const plan = prepare(current, intent, user, validate);
       const session = requireShopSession(current, intent, user);
       intent = { ...intent, ...(current.shopId ? { shopId: current.shopId, target: copy(current.target) } : {}) };
-      if (session.status !== "editing") fail("Предыдущее предложение этой сессии ещё не завершено.");
+      if (session.status !== "editing") fail(localizedMessage("Предыдущее предложение этой сессии ещё не завершено."));
       const receipt = { status: "pending", userId: user.id, messageId: message?.id ?? null, intent,
         summary: { give: plan.sources.map((item) => item.name).join(", "), take: plan.takes.map(({ entry, count }) => `${entry.data.name} × ${count}`).join(", ") } };
       const approvalRequired = current.behavior.shop.requireGMApproval !== false && !user.isGM;
       const runtime = copy(current.runtime); runtime.tradeRequests ??= {};
-      if (Object.values(runtime.tradeRequests).filter((item) => item.status === "pending" && item.userId === user.id).length >= 10) fail("Сначала дождитесь решения мастера по предыдущим предложениям.");
+      if (Object.values(runtime.tradeRequests).filter((item) => item.status === "pending" && item.userId === user.id).length >= 10) fail(localizedMessage("Сначала дождитесь решения мастера по предыдущим предложениям."));
       receipt.status = approvalRequired ? "pending" : "validating";
       runtime.tradeRequests[key] = receipt;
       runtime.shopSessions[shopKey(current)].status = "pending";
@@ -278,17 +280,17 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     return staged.receipt ? completeApproval(initial.scene, intent, user, staged.key, staged.session) : staged;
   };
   const decideOnce = async (messageId, approved) => {
-    if (!authority() || !game.user?.isGM) fail("Решение доступно ведущему мастеру.");
+    if (!authority() || !game.user?.isGM) fail(localizedMessage("Решение доступно ведущему мастеру."));
     const message = game.messages.get(messageId), claimed = message?.getFlag?.(MODULE_ID, "trade");
-    if (!claimed) fail("Запрос обмена не найден.");
+    if (!claimed) fail(localizedMessage("Запрос обмена не найден."));
     const authorId = typeof message.author === "string" ? message.author : message.author?.id;
     const initial = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.groupId ?? "main", claimed.shopId);
-    if (!initial.scene) fail("Сцена обмена не найдена.");
+    if (!initial.scene) fail(localizedMessage("Сцена обмена не найдена."));
     let closed;
     const staged = await lock(initial.scene, async () => {
       const current = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.groupId ?? "main", claimed.shopId), key = receiptKey(authorId, claimed);
       const receipt = current.runtime.tradeRequests?.[key];
-      if (!receipt || receipt.userId !== authorId || receipt.messageId !== messageId) fail("Нет подтверждённого сервером запроса обмена для этого сообщения.");
+      if (!receipt || receipt.userId !== authorId || receipt.messageId !== messageId) fail(localizedMessage("Нет подтверждённого сервером запроса обмена для этого сообщения."));
       if (receipt.status !== "pending") return copy(receipt);
       const persistedShopId = receipt.intent.shopId ?? shopKey(current);
       if (!approved) {
@@ -322,7 +324,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       const definitions = getDefinitions(scene), states = getRuntimes(scene), bindings = Object.values(getObjectBindings(scene).bindings);
       return getInteractionCatalog(scene).shops.map((asset) => {
         const owners = bindings.filter((binding) => binding.shops?.some((reference) => reference.shopId === asset.id));
-        const occupiedState = states.find((state) => sessionIsLive(state.shopSessions?.[asset.id]));
+        const occupiedState = states.find((state) => shopSessionIsLive(state.shopSessions?.[asset.id]));
         const fallbackState = states.find((state) => state.shopSessions?.[asset.id]);
         const source = occupiedState ?? fallbackState;
         const session = source?.shopSessions?.[asset.id];
@@ -340,7 +342,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
           npcName: asset.name, img: asset.img || sceneObject(scene, target)?.texture?.src, enabled: Boolean(availableOwner),
           sources: owners.map((binding) => ({ type: binding.type, id: binding.id, name: sceneObject(scene, binding)?.name ?? binding.id })),
           session: session ? { ...copy(session), id: session.sessionId, userName: game.users.get(session.userId)?.name,
-            actorName: scene.tokens.get(session.actorTokenId)?.name, expired: !sessionIsLive(session) } : null,
+            actorName: scene.tokens.get(session.actorTokenId)?.name, expired: !shopSessionIsLive(session) } : null,
           pending: receipts.filter((receipt) => receipt.status === "pending").map((receipt) => ({ ...copy(receipt), requestId: receipt.intent.requestId })),
           issues: receipts.filter((receipt) => ["processing", "uncertain"].includes(receipt.status)).map(copy) };
       });
@@ -354,10 +356,10 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
         if (authority() && game.user.isGM) return receive(intent, game.user);
         validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, game.user);
         const gms = asArray(game.users).filter((user) => user.active && Number(user.role) === 4).map((user) => user.id);
-        if (!gms.length) fail("Для обмена нужен подключённый мастер.");
-        const messages = await chat.create({ author: game.user.id, content: "<p>Ширма: предложение обмена отправлено мастеру.</p>",
+        if (!gms.length) fail(localizedMessage("Для обмена нужен подключённый мастер."));
+        const messages = await chat.create({ author: game.user.id, content: `<p>${text("Ширма: предложение обмена отправлено мастеру.", "Master screen: trade offer submitted to the GM.")}</p>`,
           flags: { [MODULE_ID]: { trade: intent } } }, { audience: { type: "users", userIds: [...new Set([...gms, game.user.id])] }, kind: "trade-request", technical: true });
-        if (!messages[0]) fail("Запрос не отправлен.");
+        if (!messages[0]) fail(localizedMessage("Запрос не отправлен."));
         sent.set(key, messages[0].id); return messages[0];
       })();
       submitted.set(key, task);

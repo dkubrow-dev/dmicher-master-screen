@@ -56,6 +56,8 @@ npm run deploy
 npm run release:build
 npm run release:verify
 node --import ./scripts/esm-loader.mjs scripts/ide-browser-check.mjs
+node --import ./scripts/esm-loader.mjs scripts/ide-browser-check.mjs --english
+npm run audit:localization
 ```
 
 Перед деплоем проверяется точный план. Допустимы только каталоги модуля в AppData и двух установках Foundry 13/14. ZIP и отчёты находятся в `../artifacts/dmicher-master-screen/0.0.1/`. Манифест отдельного артефакта и ZIP идентичен и ссылается на точный предполагаемый релиз.

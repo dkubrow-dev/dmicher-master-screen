@@ -1,13 +1,10 @@
-import { generics } from "../generics.js";
+import { text as t } from "../localization.js";
+import { escapeHTML as e, formValue as value, parameterRow as cell } from "./form-fields.js";
 import { localizedDescription } from "../model.js";
 import { normalizeSignalFields } from "../signal-types.js";
 
-const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
-const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
-const value = (root, name) => root.querySelector(`[name="${name}"]`)?.value ?? "";
 const types = () => [["string", t("Текст", "Text")], ["integer", t("Целое число", "Integer")], ["number", t("Дробное число", "Number")], ["boolean", t("Логическое", "Boolean")]];
 const options = (items, selected) => items.map(([id, label]) => `<option value="${e(id)}"${id === selected ? " selected" : ""}>${e(label)}</option>`).join("");
-const cell = (label, html) => `<tr><th scope="row">${e(label)}</th><td>${html}</td></tr>`;
 const control = (field, name, current, extra = "") => `<input name="field-${name}" value="${e(current)}" ${extra}${field.builtin ? " disabled" : ""}>`;
 const description = (text, original) => text === localizedDescription(original) ? original : text;
 const fieldDrafts = new WeakMap();
@@ -31,7 +28,7 @@ export function renderSignalSchemaField(field, direction, index, { open = false,
     : ["integer", "number"].includes(field.type) ? number("min", t("Минимум", "Minimum"), `type="number" step="${field.type === "integer" ? "1" : "any"}"`) + number("max", t("Максимум", "Maximum"), `type="number" step="${field.type === "integer" ? "1" : "any"}"`) + (field.type === "number" ? number("decimals", t("Точность", "Decimals"), 'type="number" min="0" max="12" step="1"') : "") : "";
   return `<details class="ms-signal-field" data-signal-field="${direction}" data-index="${index}"${open ? " open" : ""}>
     <summary><span>${t("Имя", "Name")}</span>${control(field, "name", field.name, `required aria-label="${t("Имя", "Name")}"`)}</summary>
-    <table class="ms-signal-field-table"><tbody>
+    <table class="ms-parameter-table ms-signal-field-table"><tbody>
       ${cell(t("Статус", "Status"), field.builtin ? t("Системное", "System") : t("Кастомное", "Custom"))}
       ${cell(t("Тип", "Type"), `<select name="field-type"${disabled}>${options(types(), field.type)}</select>`)}
       ${cell(t("Может быть null", "May be null"), `<input type="checkbox" name="field-nullable"${field.nullable ? " checked" : ""}${disabled}>`)}

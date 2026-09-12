@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "../localization.js";
 import { ConstructorDock } from "./constructor-dock.js";
 import { MAIN_MENU, DETAIL_MENU, leaves, toggleMenuNode } from "./navigation-tree.js";
 
@@ -31,10 +32,10 @@ export class ScreenLayout {
   reservePopup() {
     if (this.popup && !this.popup.closed) { this.popup.focus(); return this.popup; }
     const popup = this.view.open("about:blank", "dmicher-master-screen", "popup,width=1080,height=780,resizable=yes,scrollbars=no");
-    if (!popup) throw new Error("Браузер заблокировал окно. Разрешите всплывающие окна для Foundry и повторите «Ширма (окно)».");
+    if (!popup) throw new Error(localizedMessage("Браузер заблокировал окно. Разрешите всплывающие окна для Foundry и повторите «Ширма (окно)»."));
     this.popup = popup;
     const doc = popup.document;
-    doc.title = "dmicher 🎬 Ширма мастера";
+    doc.title = localizedMessage("dmicher 🎬 Ширма мастера");
     doc.documentElement.lang = this.view.document.documentElement.lang;
     doc.documentElement.className = this.view.document.documentElement.className;
     doc.body.className = this.view.document.body.className;

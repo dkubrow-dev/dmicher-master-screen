@@ -1,10 +1,10 @@
 <section class="ms-dialogue-content">
-  <header><h2>{{targetName}}</h2><p>{{title}}</p><p class="ms-note">Мастер ведёт сцену вручную. Ответы здесь помогают вести разговор; дальнейшие события определяет мастер.</p></header>
+  <header><h2>{{targetName}}</h2><p>{{title}}</p><p class="ms-note">{{dmicherScreenText "Мастер ведёт сцену вручную. Ответы здесь помогают вести разговор; дальнейшие события определяет мастер." "The GM is running the scene manually. Responses guide the conversation; the GM decides what happens next."}}</p></header>
   {{#if art}}<img class="ms-dialogue-art" src="{{art}}" alt="">{{/if}}
   {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
-  {{#if gmPreview}}<p class="ms-note">Ручной просмотр: сигналы и скрипты не запускаются; состояние автоматизации не меняется.</p>{{/if}}
-  {{#if signalId}}<p class="ms-note">Справка мастеру: в автоматическом режиме этот ответ вызывает <code>{{signalId}}</code>.</p>{{/if}}
-  {{#if finished}}<p class="ms-note">Обсудите результат с мастером.</p>{{/if}}
-  <div class="ms-dialogue-responses">{{#each responses}}<button type="button" data-action="answer" data-response-id="{{id}}" data-node-id="{{nodeId}}">{{label}}</button>{{/each}}</div>
-  <footer><button type="button" data-action="leave">Уйти</button></footer>
+  {{#if gmPreview}}<p class="ms-note">{{dmicherScreenText "Ручной просмотр: сигналы и скрипты не запускаются; состояние автоматизации не меняется." "Manual preview: no signals or scripts run; automation state remains unchanged."}}</p>{{/if}}
+  {{#if signalId}}<p class="ms-note">{{dmicherScreenText "Справка мастеру: в автоматическом режиме этот ответ вызывает" "GM reference: in automated play this response emits"}} <code>{{signalId}}</code>.</p>{{/if}}
+  {{#if finished}}<p class="ms-note">{{dmicherScreenText "Обсудите результат с мастером." "Discuss the outcome with the GM."}}</p>{{/if}}
+  <div class="ms-dialogue-responses">{{#each responses}}<button type="button" data-action="answer" data-response-id="{{id}}" data-page-id="{{pageId}}">{{label}}</button>{{/each}}</div>
+  <footer><button type="button" data-action="leave">{{dmicherScreenText "Уйти" "Leave"}}</button></footer>
 </section>

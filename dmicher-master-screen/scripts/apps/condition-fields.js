@@ -1,8 +1,10 @@
+import { text as t } from "../localization.js";
+import { message as localizedMessage } from "../localization.js";
 import { generics } from "../generics.js";
 import { normalizeConditions } from "../model.js";
 
 const escape = (value) => generics.utilities.escapeHTML(String(value ?? ""));
-const t = (ru, en) => (globalThis.game?.i18n?.lang ?? "ru").startsWith("ru") ? ru : en;
+
 const defaults = () => normalizeConditions();
 const prefixOf = (prefix) => {
   if (!/^[a-z][a-z0-9-]*$/.test(prefix)) throw new Error(t("Некорректное пространство полей условий.", "Invalid condition field namespace."));
@@ -11,7 +13,7 @@ const prefixOf = (prefix) => {
 export const splitTags = (value) => [...new Set(String(value ?? "").split(",").map((tag) => tag.trim()).filter(Boolean))];
 
 /** The only raw HTML used by these forms: every variable is escaped here, never supplied as markup. */
-export function buildConditionFields(policy, states = [], { prefix = "conditions", groupId = "main", groupName = "Основная группа" } = {}) {
+export function buildConditionFields(policy, states = [], { prefix = "conditions", groupId = "main", groupName = localizedMessage("Основная группа") } = {}) {
   prefixOf(prefix);
   const conditions = { ...defaults(), ...policy };
   const check = (name, label, active, val = "") => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}" value="${escape(val)}"${active ? " checked" : ""}> ${escape(label)}</label>`;

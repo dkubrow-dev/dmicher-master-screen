@@ -1,4 +1,5 @@
-import { MODULE_ID, defaultDefinition, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { SignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
 import { SceneSignals } from "../dmicher-master-screen/scripts/signals.js";
 import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";

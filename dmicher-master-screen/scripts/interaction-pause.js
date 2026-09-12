@@ -1,15 +1,13 @@
 import { getRuntimes } from "./store.js";
+import { objectReferenceKey } from "./object-reference.js";
+import { shopSessionIsLive, dialogueSessionIsLive } from "./interaction-session-model.js";
 
 const pending = new WeakMap();
-export const INTERACTION_LEASE_MS = 120_000;
-const keyOf = (target) => typeof target === "string" ? (target.includes(":") ? target : `Token:${target}`) : target?.id ? `${target.type}:${target.id}` : null;
-export const dialogueSessionIsLive = (session, now = Date.now()) => ["active", "processing", "finished"].includes(session?.status)
-  && session.expiresAt > now;
 
 /** An authenticated admission claims this before joining the scene queue. An old
  * movement may finish, but no following movement may race the geometry check. */
 export function beginInteractionPause(scene, target) {
-  const key = keyOf(target);
+  const key = objectReferenceKey(target);
   if (!scene || !key) return () => {};
   let counts = pending.get(scene); if (!counts) pending.set(scene, counts = new Map());
   counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -21,21 +19,20 @@ export function beginInteractionPause(scene, target) {
   };
 }
 
-export function isInteractionPaused(scene, tokenId, now = Date.now()) {
-  tokenId = keyOf(tokenId);
-  if (pending.get(scene)?.get(tokenId)) return true;
-  return getRuntimes(scene).some((state) => {
-    const targetsToken = (session) => keyOf(session.target) === tokenId;
-    return Object.values(state.shopSessions ?? {}).some((session) => session && session.runId === state.runId && targetsToken(session)
-      && (session.status === "pending" || session.expiresAt > now))
-      || Object.values(state.dialogueSessions ?? {}).some((session) => session && session.runId === state.runId && targetsToken(session)
-        && session.expiresAt > now && dialogueSessionIsLive(session, now));
+export function isInteractionPaused(scene, target, now = Date.now()) {
+  const objectKey = objectReferenceKey(target);
+  if (!objectKey) return false;
+  if (pending.get(scene)?.get(objectKey)) return true;
+  return getRuntimes(scene).some((runtime) => {
+    const ownsSession = (session) => session?.runId === runtime.runId && objectReferenceKey(session.target) === objectKey;
+    return Object.values(runtime.shopSessions ?? {}).some((session) => shopSessionIsLive(session, now) && ownsSession(session))
+      || Object.values(runtime.dialogueSessions ?? {}).some((session) => dialogueSessionIsLive(session, now) && ownsSession(session));
   });
 }
 
 /** Caller owns the scene lock. Mark the first pause so the resume tick consumes no elapsed time. */
 export function freezeInteractionClock(state, target, now = Date.now()) {
-  const key = keyOf(target);
+  const key = objectReferenceKey(target);
   if (!key) return;
   state.interactionClocks ??= {};
   state.interactionClocks[key] ??= { pausedAt: now };

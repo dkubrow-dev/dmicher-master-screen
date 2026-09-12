@@ -6,7 +6,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const repo = fileURLToPath(new URL("../", import.meta.url)), workspace = path.dirname(repo);
-const output = path.join(workspace, "artifacts/dmicher-master-screen/0.0.1/ide-review"); fs.mkdirSync(output, { recursive: true });
+const language = process.argv.includes("--english") ? "en" : "ru";
+const output = path.join(workspace, "artifacts/dmicher-master-screen/0.0.1/ide-review", language); fs.mkdirSync(output, { recursive: true });
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || "C:/Users/dscherkasov/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
 const appRoot = (version) => `E:/Foundry Portable/Foundry VTT ${version}/App/resources/app`;
@@ -44,7 +45,7 @@ try {
     page.on("response", (response) => { if (response.status() >= 400) console.error(`HTTP ${response.status()} ${response.url()}`); });
     page.on("pageerror", (error) => { errors.push(error.message); console.error(error.stack); });
     page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) console.error(message.text()); });
-    await page.goto(`${origin}/?version=${version}`); await page.waitForFunction(() => globalThis.ready);
+    await page.goto(`${origin}/?version=${version}&lang=${language}`); await page.waitForFunction(() => globalThis.ready);
     const app = page.locator("#dmicher-master-screen-editor");
     assert.equal(await app.locator("[data-ide-parameters]").count(), 0, "a newly opened tab has no implicit selection");
     assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-group-badge]').count(), 1);
@@ -242,7 +243,7 @@ try {
     await page.screenshot({path:path.join(output,`${version}-bottom.png`)});
     errors.push(...await page.evaluate(()=>globalThis.errors));
     assert.deepEqual(errors,[]);
-    reports.push({version,checks:'layout, category overlays, native item forms, object info clipboard and native settings, native object layer/focus/frame, one-line initial actions, script table and JSON synchronization, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, FilePicker, cancelled state chooser',errors});
+    reports.push({version,language,checks:'layout, category overlays, native item forms, object info clipboard and native settings, native object layer/focus/frame, one-line initial actions, script table and JSON synchronization, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, FilePicker, cancelled state chooser',errors});
     await context.close();
   }
   fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(reports,null,2));

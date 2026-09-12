@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendScriptStep, removeScriptStep, moveScriptStep, readScriptFields, buildScriptFields } from "../dmicher-master-screen/scripts/apps/script-fields.js";
+import { readScriptFields, buildScriptFields } from "../dmicher-master-screen/scripts/apps/script-fields.js";
+import { appendScriptStep, removeScriptStep, moveScriptStep } from "../dmicher-master-screen/scripts/script-editing.js";
 import { normalizeScript, scriptStepTemplate, SCRIPT_STEP_KINDS } from "../dmicher-master-screen/scripts/script-model.js";
 import { completeScriptParameters, renderScriptParameters, setScriptParameter } from "../dmicher-master-screen/scripts/apps/script-parameters.js";
 

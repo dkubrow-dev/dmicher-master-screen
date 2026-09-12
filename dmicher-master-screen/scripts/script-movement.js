@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { sceneObjectBounds, sceneObjectCenter, translateRegionShapes } from "./scene-object-geometry.js";
 
 const objectType = (object) => object?.documentName ?? object?.constructor?.documentName;
@@ -31,19 +32,19 @@ export function planScriptMovement(scene, object, parameters) {
   const capabilities = scriptObjectCapabilities(object), geometry = readObjectGeometry(object, scene), target = {}, durations = [], type = objectType(object);
   const { position, rotation, size } = parameters;
   if (position) {
-    if (!capabilities.position) throw new Error("Этот объект не поддерживает перемещение.");
+    if (!capabilities.position) throw new Error(localizedMessage("Этот объект не поддерживает перемещение."));
     target.x = position.x; target.y = position.y;
     durations.push(Math.hypot(target.x - geometry.position.x, target.y - geometry.position.y) / gridSize(scene) * Number(scene.grid?.distance || 1) / position.speed);
   }
   if (rotation) {
-    if (!capabilities.rotation) throw new Error("Этот объект не поддерживает поворот.");
+    if (!capabilities.rotation) throw new Error(localizedMessage("Этот объект не поддерживает поворот."));
     const key = type === "MeasuredTemplate" ? "direction" : "rotation";
     target[key] = rotation.mode === "relative" ? geometry.rotation + rotation.angle : rotation.angle;
     durations.push(Math.abs(target[key] - geometry.rotation) / rotation.speed);
   }
   if (size) {
-    if (!capabilities.size) throw new Error("Изменение размеров этого объекта не поддерживается.");
-    if (size.z !== null && size.z !== undefined && !capabilities.sizeZ) throw new Error("Размер Z доступен только токенам Foundry 14 с полем depth.");
+    if (!capabilities.size) throw new Error(localizedMessage("Изменение размеров этого объекта не поддерживается."));
+    if (size.z !== null && size.z !== undefined && !capabilities.sizeZ) throw new Error(localizedMessage("Размер Z доступен только токенам Foundry 14 с полем depth."));
     const scale = ["Tile", "Drawing"].includes(type) ? gridSize(scene) : 1;
     for (const [axis, key] of [["x", "width"], ["y", "height"], ["z", "depth"]]) {
       if (size[axis] === null || size[axis] === undefined) continue;
@@ -96,7 +97,7 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
   if (object.documentName === "Token" && ("x" in changes || "y" in changes)) {
     const origin = object.getCenterPoint?.() ?? { x: field(object, "x") + field(object, "width") * gridSize(scene) / 2, y: field(object, "y") + field(object, "height") * gridSize(scene) / 2 };
     const destination = { x: origin.x + (changes.x ?? object.x) - object.x, y: origin.y + (changes.y ?? object.y) - object.y };
-    if (object.object?.checkCollision?.(destination, { origin, type: "move", mode: "any" })) throw new Error("Путь скрипта пересекает стену.");
+    if (object.object?.checkCollision?.(destination, { origin, type: "move", mode: "any" })) throw new Error(localizedMessage("Путь скрипта пересекает стену."));
   }
   if (Object.keys(changes).length) await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
   movement.remainingMs = Math.max(0, movement.remainingMs - spent);

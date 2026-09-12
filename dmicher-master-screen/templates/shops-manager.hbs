@@ -1,28 +1,28 @@
 <section class="ms-body ms-shops-manager-content">
-  {{#if unavailable}}<p class="ms-note">Откройте сцену под учётной записью мастера.</p>{{else}}
-  <header class="ms-toolbar"><div><h2>Магазины сцены</h2><span class="ms-note">{{sceneName}}</span></div><button type="button" data-shop-manager-action="refresh"><i class="fa-solid fa-rotate"></i> Обновить</button></header>
-  <p class="ms-note">Один магазин обслуживает одного участника за раз. Мастер может присоединиться к его сессии, рассмотреть обмен или освободить магазин.</p>
+  {{#if unavailable}}<p class="ms-note">{{dmicherScreenText "Откройте сцену под учётной записью мастера." "Open a scene as a GM."}}</p>{{else}}
+  <header class="ms-toolbar"><div><h2>{{dmicherScreenText "Магазины сцены" "Scene shops"}}</h2><span class="ms-note">{{sceneName}}</span></div><button type="button" data-shop-manager-action="refresh"><i class="fa-solid fa-rotate"></i> {{dmicherScreenText "Обновить" "Refresh"}}</button></header>
+  <p class="ms-note">{{dmicherScreenText "Один магазин обслуживает одного участника за раз. Мастер может присоединиться к его сессии, рассмотреть обмен или освободить магазин." "A shop serves one participant at a time. The GM can join the session, review the trade or release the shop."}}</p>
   <div class="ms-shops-cards">
     {{#each shops}}
     <article class="ms-shop-manager-card">
       <div class="ms-toolbar">
         <div class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" class="ms-shop-portrait">{{/if}}<div><strong>{{npcName}}</strong><small class="ms-note">{{groupName}} · {{status}}</small></div></div>
-        <span class="ms-shop-badge {{#if occupied}}is-occupied{{/if}}">{{#unless enabled}}Недоступен{{else}}{{#if occupied}}Занят{{else}}Свободен{{/if}}{{/unless}}</span>
+        <span class="ms-shop-badge {{#if occupied}}is-occupied{{/if}}">{{#unless enabled}}{{dmicherScreenText "Недоступен" "Unavailable"}}{{else}}{{#if occupied}}{{dmicherScreenText "Занят" "Busy"}}{{else}}{{dmicherScreenText "Свободен" "Available"}}{{/if}}{{/unless}}</span>
       </div>
       {{#if session}}
-      <div class="ms-session-info"><span>Игрок: <strong>{{session.userName}}</strong></span><span>Персонаж: <strong>{{session.actorName}}</strong></span>{{#if expiresText}}<span class="ms-note">Сессия до {{expiresText}}</span>{{/if}}</div>
-      <div class="ms-actions"><button type="button" data-shop-manager-action="join" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-group-id="{{groupId}}" data-session-id="{{session.id}}" {{#if expired}}disabled{{/if}}><i class="fa-solid fa-eye"></i> Присоединиться</button><button type="button" data-shop-manager-action="release" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-group-id="{{groupId}}" data-session-id="{{session.id}}">Освободить магазин</button></div>
+      <div class="ms-session-info"><span>{{dmicherScreenText "Игрок" "Player"}}: <strong>{{session.userName}}</strong></span><span>{{dmicherScreenText "Персонаж" "Character"}}: <strong>{{session.actorName}}</strong></span>{{#if expiresText}}<span class="ms-note">{{dmicherScreenText "Сессия до" "Session expires at"}} {{expiresText}}</span>{{/if}}</div>
+      <div class="ms-actions"><button type="button" data-shop-manager-action="join" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-group-id="{{groupId}}" data-session-id="{{session.id}}" {{#if expired}}disabled{{/if}}><i class="fa-solid fa-eye"></i> {{dmicherScreenText "Присоединиться" "Join"}}</button><button type="button" data-shop-manager-action="release" data-shop-id="{{shopId}}" data-token-id="{{tokenId}}" data-group-id="{{groupId}}" data-session-id="{{session.id}}">{{dmicherScreenText "Освободить магазин" "Release shop"}}</button></div>
       {{/if}}
       {{#each pending}}
       <div class="ms-pending-exchange">
-        <strong>Предложение обмена</strong>
-        <p><span class="ms-note">Игрок отдаёт:</span> {{#if summary.give}}{{summary.give}}{{else}}ничего{{/if}}<br><span class="ms-note">Игрок получает:</span> {{#if summary.take}}{{summary.take}}{{else}}ничего{{/if}}</p>
-        {{#if actionable}}<div class="ms-actions"><button type="button" data-shop-manager-action="approve" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-group-id="{{../groupId}}" data-message-id="{{messageId}}" class="ms-primary">Подтвердить обмен</button><button type="button" data-shop-manager-action="reject" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-group-id="{{../groupId}}" data-message-id="{{messageId}}" class="ms-danger">Отклонить</button></div>{{else}}<p class="ms-note">Статус: {{status}}</p>{{/if}}
+        <strong>{{dmicherScreenText "Предложение обмена" "Trade offer"}}</strong>
+        <p><span class="ms-note">{{dmicherScreenText "Игрок отдаёт:" "Player gives:"}}</span> {{#if summary.give}}{{summary.give}}{{else}}{{dmicherScreenText "ничего" "nothing"}}{{/if}}<br><span class="ms-note">{{dmicherScreenText "Игрок получает:" "Player receives:"}}</span> {{#if summary.take}}{{summary.take}}{{else}}{{dmicherScreenText "ничего" "nothing"}}{{/if}}</p>
+        {{#if actionable}}<div class="ms-actions"><button type="button" data-shop-manager-action="approve" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-group-id="{{../groupId}}" data-message-id="{{messageId}}" class="ms-primary">{{dmicherScreenText "Подтвердить обмен" "Approve trade"}}</button><button type="button" data-shop-manager-action="reject" data-shop-id="{{../shopId}}" data-token-id="{{../tokenId}}" data-group-id="{{../groupId}}" data-message-id="{{messageId}}" class="ms-danger">{{dmicherScreenText "Отклонить" "Reject"}}</button></div>{{else}}<p class="ms-note">{{dmicherScreenText "Статус" "Status"}}: {{status}}</p>{{/if}}
       </div>
       {{/each}}
-      {{#each issues}}<div class="ms-pending-exchange ms-error" role="status"><strong>{{statusLabel}}</strong><p>Игрок отдаёт: {{summary.give}}<br>Игрок получает: {{summary.take}}</p>{{#if error}}<p>{{error}}</p>{{/if}}</div>{{/each}}
+      {{#each issues}}<div class="ms-pending-exchange ms-error" role="status"><strong>{{statusLabel}}</strong><p>{{dmicherScreenText "Игрок отдаёт:" "Player gives:"}} {{summary.give}}<br>{{dmicherScreenText "Игрок получает:" "Player receives:"}} {{summary.take}}</p>{{#if error}}<p>{{error}}</p>{{/if}}</div>{{/each}}
     </article>
-    {{else}}<p class="ms-status">В этой сцене ещё нет магазинов. В конструкторе откройте настройки НИП и включите магазин в нужном состоянии.</p>{{/each}}
+    {{else}}<p class="ms-status">{{dmicherScreenText "В этой сцене ещё нет магазинов. Создайте магазин в «Инструменты → Магазины», затем назначьте его объектам через «Поведение → Особенности»." "This scene has no shops yet. Create a shop in Tools → Shops, then assign it to objects through Object behavior → Features."}}</p>{{/each}}
   </div>
   {{/if}}
 </section>

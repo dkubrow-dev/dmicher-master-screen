@@ -1,13 +1,14 @@
+import { text as t } from "../localization.js";
 export function requireNumber(value, label, { min = 0, max = Infinity } = {}) {
   const result = Number(value);
   if (String(value ?? "").trim() === "" || !Number.isFinite(result) || result < min || result > max) {
-    throw new Error(`${label}: введите число от ${min}${Number.isFinite(max) ? ` до ${max}` : ""}.`);
+    throw new Error(`${label}${t(": введите число от ", ": enter a number from ")}${min}${Number.isFinite(max) ? `${t(" до ", " to ")}${max}` : ""}.`);
   }
   return result;
 }
 
 export function buildConditionRows({ runtime, definition, tokens }) {
-  const labels = { shop: "Магазин", dialogue: "Диалог", interaction: "Действие", zone: "Зона" };
+  const labels = { shop: t("Магазин", "Shop"), dialogue: t("Диалог", "Dialogue"), interaction: t("Действие", "Action"), zone: t("Зона", "Zone") };
   const rows = new Map(), state = runtime.state;
   const add = (type, id, name, policy) => {
     const key = `${runtime.groupId ?? "main"}:${runtime.stateId}:${type}:${id}`;

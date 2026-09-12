@@ -1,136 +1,136 @@
 {{#if blocks.tokens}}
 <section class="ms-details" data-state-tool="tokens" open>
-      <h3>Токены сцены</h3>
-      <p class="ms-note">Настройте выбранный токен кнопкой или левым кликом по токену на карте в режиме конструктора.</p>
+      <h3>{{dmicherScreenText "Токены сцены" "Scene tokens"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Настройте выбранный токен кнопкой или левым кликом по токену на карте в режиме конструктора." "Configure a token using the button or left-click it on the map in Constructor mode."}}</p>
       <div class="ms-list">
         {{#each tokens}}
-        <div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}} <span aria-label="Эмоджи">{{emoji}}</span><small class="ms-note">{{#if configured}}Поведение задано{{else}}Ещё не настроен{{/if}}</small></span></span><button type="button" data-screen-action="token" data-token-id="{{id}}">Настроить</button></div>
-        {{else}}<p class="ms-note">Добавьте НИП на карту обычными средствами Foundry.</p>{{/each}}
+        <div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}} <span aria-label="{{dmicherScreenText "Эмоджи" "Emoji"}}">{{emoji}}</span><small class="ms-note">{{#if configured}}{{dmicherScreenText "Поведение задано" "Behavior configured"}}{{else}}{{dmicherScreenText "Ещё не настроен" "Not configured"}}{{/if}}</small></span></span><button type="button" data-screen-action="token" data-token-id="{{id}}">{{dmicherScreenText "Настроить" "Configure"}}</button></div>
+        {{else}}<p class="ms-note">{{dmicherScreenText "Добавьте НИП на карту обычными средствами Foundry." "Add NPCs to the map using Foundry's standard tools."}}</p>{{/each}}
       </div>
     </section>
 {{/if}}
 {{#if blocks.tags}}
-<section class="ms-details" data-state-tool="tags"><h3>Теги объектов сцены</h3><p class="ms-note">Теги принадлежат токенам и тайлам этой сцены. Укажите их через запятую. Они используются в условиях запуска; регистр при сравнении не учитывается.</p>
-    <div class="ms-list">{{#each taggedObjects}}<div class="ms-object-tags" data-object-tags data-object-type="{{type}}" data-object-id="{{id}}" data-scene-id="{{sceneId}}"><label class="ms-field">{{name}} · {{type}}<input name="objectTags" value="{{tagsText}}" placeholder="hero, trusted"></label><button type="button" data-screen-action="saveObjectTags">Сохранить теги</button><span class="ms-note" data-tag-status>{{#if unsaved}}Не сохранено{{/if}}</span></div>{{else}}<p class="ms-note">Добавьте НИП или тайлы на карту.</p>{{/each}}</div>
+<section class="ms-details" data-state-tool="tags"><h3>{{dmicherScreenText "Теги объектов сцены" "Scene object tags"}}</h3><p class="ms-note">{{dmicherScreenText "Теги принадлежат объектам этой сцены. Укажите их через запятую. Они используются в условиях запуска; регистр при сравнении не учитывается." "Tags belong to objects in this scene. Enter them separated by commas. Launch conditions compare them without case sensitivity."}}</p>
+    <div class="ms-list">{{#each taggedObjects}}<div class="ms-object-tags" data-object-tags data-object-type="{{type}}" data-object-id="{{id}}" data-scene-id="{{sceneId}}"><label class="ms-field">{{name}} · {{type}}<input name="objectTags" value="{{tagsText}}" placeholder="hero, trusted"></label><button type="button" data-screen-action="saveObjectTags">{{dmicherScreenText "Сохранить теги" "Save tags"}}</button><span class="ms-note" data-tag-status>{{#if unsaved}}{{dmicherScreenText "Не сохранено" "Not saved"}}{{/if}}</span></div>{{else}}<p class="ms-note">{{dmicherScreenText "Добавьте объекты на карту средствами Foundry." "Add objects to the map using Foundry's tools."}}</p>{{/each}}</div>
   </section>
 {{/if}}
 {{#if blocks.dialogues}}
 <form data-screen-form="saveState" data-state-fields data-state-tool="dialogues" class="ms-state-form"><section class="ms-details" data-state-tool="dialogues">
-      <h3>Прямые взаимодействия</h3>
-      <p class="ms-note">Взаимодействие сообщает событие, например нажатие на тайл рычага. Назначьте объекту эту группу через «Информация»; реакции задаются во вкладке «События».</p>
+      <h3>{{dmicherScreenText "Прямые взаимодействия" "Direct interactions"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Взаимодействие испускает объявленный сигнал объекта, например при нажатии на рычаг. Назначьте объекту группу через «Информация»; реакции задаются подписками во вкладке «Сигналы»." "Interaction emits a declared object signal, for example when a lever is clicked. Assign the object to a group through Information; configure responses with subscriptions in the Signals tab."}}</p>
       {{#each interactions}}
-      <fieldset class="ms-config-row" data-interaction-row="{{id}}"><div class="ms-grid-two"><label class="ms-field">Название действия<input name="actionName" value="{{name}}" required></label><label class="ms-check"><input type="checkbox" name="actionEnabled" {{checked enabled}}> Доступно</label></div>
-        <label class="ms-field">Объект<select name="actionTarget">{{selectOptions @root.interactionTargets selected=targetValue valueAttr="value" labelAttr="name" blank="Выберите НИП или тайл"}}</select></label>
-        <div class="ms-grid-two"><label class="ms-field">Дальность, единицы сцены<input type="number" name="actionRange" value="{{range}}" min="0" step="any" required></label><label class="ms-field">Сигнал объекта<select name="actionSignal">{{selectOptions signalOptions selected=signalId valueAttr="value" labelAttr="name" blank="Выберите сигнал"}}</select></label></div><label>Параметры сигнала (JSON)<textarea name="actionParameters">{{parametersJSON}}</textarea></label>
+      <fieldset class="ms-config-row" data-interaction-row="{{id}}"><div class="ms-grid-two"><label class="ms-field">{{dmicherScreenText "Название действия" "Action name"}}<input name="actionName" value="{{name}}" required></label><label class="ms-check"><input type="checkbox" name="actionEnabled" {{checked enabled}}> {{dmicherScreenText "Доступно" "Available"}}</label></div>
+        <label class="ms-field">{{dmicherScreenText "Объект" "Object"}}<select name="actionTarget">{{selectOptions @root.interactionTargets selected=targetValue valueAttr="value" labelAttr="name" blank=(dmicherScreenText "Выберите объект" "Choose an object")}}</select></label>
+        <div class="ms-grid-two"><label class="ms-field">{{dmicherScreenText "Дальность, единицы сцены" "Range, scene units"}}<input type="number" name="actionRange" value="{{range}}" min="0" step="any" required></label><label class="ms-field">{{dmicherScreenText "Сигнал объекта" "Object signal"}}<select name="actionSignal">{{selectOptions signalOptions selected=signalId valueAttr="value" labelAttr="name" blank=(dmicherScreenText "Выберите сигнал" "Choose a signal")}}</select></label></div><label>{{dmicherScreenText "Параметры сигнала (JSON)" "Signal parameters (JSON)"}}<textarea name="actionParameters">{{parametersJSON}}</textarea></label>
         {{{conditionFields}}}
-        <button type="button" data-screen-action="deleteInteraction" data-index="{{@index}}" class="ms-danger">Убрать действие</button>
+        <button type="button" data-screen-action="deleteInteraction" data-index="{{@index}}" class="ms-danger">{{dmicherScreenText "Убрать действие" "Remove action"}}</button>
       </fieldset>{{/each}}
-      <button type="button" data-screen-action="addInteraction">Добавить прямое действие</button>
-    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+      <button type="button" data-screen-action="addInteraction">{{dmicherScreenText "Добавить прямое действие" "Add direct action"}}</button>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">{{dmicherScreenText "Отменить ввод" "Discard edits"}}</button><button type="submit">{{dmicherScreenText "Сохранить" "Save"}}</button></footer></form>
 {{/if}}
 {{#if blocks.entry}}
 <form data-screen-form="saveState" data-state-fields data-state-tool="entry" class="ms-state-form"><section class="ms-details" data-state-tool="entry">
-      <h3>При входе: пауза, звук и подкрепление</h3>
-      <p class="ms-note">Выполняется один раз при переходе. Переподключение не повторяет действия. Созданные токены сохраняются после выхода из состояния.</p>
-      <label class="ms-check"><input type="checkbox" name="pause" {{checked state.pause}}> Поставить Foundry на паузу</label>
-      <label class="ms-field">Звук при входе<input type="text" name="sound" value="{{state.sound}}" placeholder="Путь к звуковому файлу"></label>
+      <h3>{{dmicherScreenText "При входе: пауза, звук и подкрепление" "On entry: pause, sound and reinforcements"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Выполняется один раз при переходе. Переподключение не повторяет действия. Созданные токены сохраняются после выхода из состояния." "Runs once on transition. Reconnecting does not repeat actions. Created tokens remain after leaving the state."}}</p>
+      <label class="ms-check"><input type="checkbox" name="pause" {{checked state.pause}}> {{dmicherScreenText "Поставить Foundry на паузу" "Pause Foundry"}}</label>
+      <label class="ms-field">{{dmicherScreenText "Звук при входе" "Entry sound"}}<input type="text" name="sound" value="{{state.sound}}" placeholder="{{dmicherScreenText "Путь к звуковому файлу" "Audio file path"}}"></label>
       <div data-spawn-drop class="ms-drop-zone">
-        <p class="ms-note">Перетащите персонажа из боковой панели сюда для добавления подкрепления.</p>
+        <p class="ms-note">{{dmicherScreenText "Перетащите персонажа из боковой панели сюда для добавления подкрепления." "Drop a character from the sidebar here to add reinforcements."}}</p>
         {{#each state.spawns}}
         <fieldset data-spawn-row="{{id}}" class="ms-config-row">
-          <legend>Подкрепление {{@index}}</legend>
-          <label class="ms-field">UUID персонажа<input name="spawnActor" value="{{actorUuid}}" placeholder="Actor.…" required></label>
+          <legend>{{dmicherScreenText "Подкрепление" "Reinforcement"}} {{@index}}</legend>
+          <label class="ms-field">{{dmicherScreenText "UUID персонажа" "Character UUID"}}<input name="spawnActor" value="{{actorUuid}}" placeholder="Actor.…" required></label>
           <div class="ms-grid-four">
-            <label class="ms-field">X, пикс.<input type="number" name="spawnX" value="{{x}}" min="0" step="any" required></label>
-            <label class="ms-field">Y, пикс.<input type="number" name="spawnY" value="{{y}}" min="0" step="any" required></label>
-            <label class="ms-field">Количество<input type="number" name="spawnCount" value="{{count}}" min="1" max="50" step="1" required></label>
-            <label class="ms-field">Шаг, пикс.<input type="number" name="spawnSpacing" value="{{spacing}}" min="0" step="any" required></label>
+            <label class="ms-field">{{dmicherScreenText "X, пикс." "X, px"}}<input type="number" name="spawnX" value="{{x}}" min="0" step="any" required></label>
+            <label class="ms-field">{{dmicherScreenText "Y, пикс." "Y, px"}}<input type="number" name="spawnY" value="{{y}}" min="0" step="any" required></label>
+            <label class="ms-field">{{dmicherScreenText "Количество" "Count"}}<input type="number" name="spawnCount" value="{{count}}" min="1" max="50" step="1" required></label>
+            <label class="ms-field">{{dmicherScreenText "Шаг, пикс." "Spacing, px"}}<input type="number" name="spawnSpacing" value="{{spacing}}" min="0" step="any" required></label>
           </div>
-          <div class="ms-actions"><button type="button" data-screen-action="pickSpawn" data-index="{{@index}}">Указать на карте</button><button type="button" data-screen-action="deleteSpawn" data-index="{{@index}}" class="ms-danger">Убрать</button></div>
+          <div class="ms-actions"><button type="button" data-screen-action="pickSpawn" data-index="{{@index}}">{{dmicherScreenText "Указать на карте" "Pick on map"}}</button><button type="button" data-screen-action="deleteSpawn" data-index="{{@index}}" class="ms-danger">{{dmicherScreenText "Убрать" "Remove"}}</button></div>
         </fieldset>
         {{/each}}
-        <button type="button" data-screen-action="addSpawn">Добавить подкрепление</button>
+        <button type="button" data-screen-action="addSpawn">{{dmicherScreenText "Добавить подкрепление" "Add reinforcements"}}</button>
       </div>
-    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">{{dmicherScreenText "Отменить ввод" "Discard edits"}}</button><button type="submit">{{dmicherScreenText "Сохранить" "Save"}}</button></footer></form>
 {{/if}}
 {{#if blocks.zones}}
 <form data-screen-form="saveState" data-state-fields data-state-tool="zones" class="ms-state-form"><section class="ms-details" data-state-tool="zones">
-      <h3>Зоны событий</h3>
-      <p class="ms-note">Прямоугольные зоны в координатах карты. Вход персонажа сообщает выбранное событие. Зоны действуют только в этом состоянии; переходы и другие реакции настраиваются через событие.</p>
+      <h3>{{dmicherScreenText "Зоны сигналов" "Signal zones"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Прямоугольные зоны в координатах карты. Вход персонажа испускает выбранный сигнал группы. Зоны действуют только в этом состоянии; переходы и другие реакции задаются подписками." "Rectangular zones use map coordinates. A character entering emits the selected group signal. Zones apply only in this state; configure transitions and other responses with subscriptions."}}</p>
       {{#each state.zones}}
       <fieldset class="ms-config-row" data-zone-row="{{id}}">
-        <legend>Зона {{@index}}</legend>
-        <label class="ms-field">Название<input name="zoneLabel" value="{{label}}"></label>
+        <legend>{{dmicherScreenText "Зона" "Zone"}} {{@index}}</legend>
+        <label class="ms-field">{{dmicherScreenText "Название" "Name"}}<input name="zoneLabel" value="{{label}}"></label>
         <div class="ms-grid-four">
-          <label class="ms-field">X, пикс.<input type="number" name="zoneX" value="{{x}}" min="0" step="any" required></label>
-          <label class="ms-field">Y, пикс.<input type="number" name="zoneY" value="{{y}}" min="0" step="any" required></label>
-          <label class="ms-field">Ширина<input type="number" name="zoneWidth" value="{{width}}" min="1" step="any" required></label>
-          <label class="ms-field">Высота<input type="number" name="zoneHeight" value="{{height}}" min="1" step="any" required></label>
+          <label class="ms-field">{{dmicherScreenText "X, пикс." "X, px"}}<input type="number" name="zoneX" value="{{x}}" min="0" step="any" required></label>
+          <label class="ms-field">{{dmicherScreenText "Y, пикс." "Y, px"}}<input type="number" name="zoneY" value="{{y}}" min="0" step="any" required></label>
+          <label class="ms-field">{{dmicherScreenText "Ширина" "Width"}}<input type="number" name="zoneWidth" value="{{width}}" min="1" step="any" required></label>
+          <label class="ms-field">{{dmicherScreenText "Высота" "Height"}}<input type="number" name="zoneHeight" value="{{height}}" min="1" step="any" required></label>
         </div>
-        <label class="ms-field">Сигнал группы<select name="zoneSignal">{{selectOptions signalOptions selected=signalId valueAttr="value" labelAttr="name" blank="Выберите сигнал"}}</select></label><label>Параметры сигнала (JSON)<textarea name="zoneParameters">{{parametersJSON}}</textarea></label>
+        <label class="ms-field">{{dmicherScreenText "Сигнал группы" "Group signal"}}<select name="zoneSignal">{{selectOptions signalOptions selected=signalId valueAttr="value" labelAttr="name" blank=(dmicherScreenText "Выберите сигнал" "Choose a signal")}}</select></label><label>{{dmicherScreenText "Параметры сигнала (JSON)" "Signal parameters (JSON)"}}<textarea name="zoneParameters">{{parametersJSON}}</textarea></label>
         {{{conditionFields}}}
-        <div class="ms-actions"><button type="button" data-screen-action="pickZone" data-index="{{@index}}">Указать левый верхний угол на карте</button><button type="button" data-screen-action="deleteZone" data-index="{{@index}}" class="ms-danger">Убрать</button></div>
+        <div class="ms-actions"><button type="button" data-screen-action="pickZone" data-index="{{@index}}">{{dmicherScreenText "Указать левый верхний угол на карте" "Pick top-left corner on map"}}</button><button type="button" data-screen-action="deleteZone" data-index="{{@index}}" class="ms-danger">{{dmicherScreenText "Убрать" "Remove"}}</button></div>
       </fieldset>
       {{/each}}
-      <button type="button" data-screen-action="addZone">Добавить зону</button>
-    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+      <button type="button" data-screen-action="addZone">{{dmicherScreenText "Добавить зону" "Add zone"}}</button>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">{{dmicherScreenText "Отменить ввод" "Discard edits"}}</button><button type="submit">{{dmicherScreenText "Сохранить" "Save"}}</button></footer></form>
 {{/if}}
 {{#if blocks.workspaceGM}}
 <form data-screen-form="saveState" data-state-fields data-state-tool="workspaceGM" class="ms-state-form"><section class="ms-details" data-state-tool="workspaceGM">
-      <h3>Рабочий стол мастера</h3>
-      <p class="ms-note">Окна документов и их положение при входе. Перетащите документ сюда или снимите расположение уже открытых листов. Ширма управляет только своими окнами.</p>
+      <h3>{{dmicherScreenText "Рабочий стол мастера" "GM workspace"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Окна документов и их положение при входе. Перетащите документ сюда или снимите расположение уже открытых листов. Ширма управляет только своими окнами." "Document windows and their entry positions. Drop a document here or capture the positions of open sheets. The screen manages only its own windows."}}</p>
       <div data-workspace-drop="gm" class="ms-drop-zone">
         {{#each workspaceGM}}
         <div class="ms-config-row" data-workspace-row="gm">
-          <label class="ms-field">UUID документа<input name="windowUuid" value="{{uuid}}" required></label>
-          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">Ширина<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">Высота<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
-          <button type="button" data-screen-action="deleteWindow" data-audience="gm" data-index="{{@index}}" class="ms-danger">Убрать окно</button>
+          <label class="ms-field">{{dmicherScreenText "UUID документа" "Document UUID"}}<input name="windowUuid" value="{{uuid}}" required></label>
+          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">{{dmicherScreenText "Ширина" "Width"}}<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">{{dmicherScreenText "Высота" "Height"}}<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
+          <button type="button" data-screen-action="deleteWindow" data-audience="gm" data-index="{{@index}}" class="ms-danger">{{dmicherScreenText "Убрать окно" "Remove window"}}</button>
         </div>
         {{/each}}
-        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="gm">Запомнить открытые окна</button><button type="button" data-screen-action="addWindow" data-audience="gm">Добавить по UUID</button></div>
+        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="gm">{{dmicherScreenText "Запомнить открытые окна" "Capture open windows"}}</button><button type="button" data-screen-action="addWindow" data-audience="gm">{{dmicherScreenText "Добавить по UUID" "Add by UUID"}}</button></div>
       </div>
-    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">{{dmicherScreenText "Отменить ввод" "Discard edits"}}</button><button type="submit">{{dmicherScreenText "Сохранить" "Save"}}</button></footer></form>
 {{/if}}
 {{#if blocks.workspacePlayers}}
 <form data-screen-form="saveState" data-state-fields data-state-tool="workspacePlayers" class="ms-state-form"><section class="ms-details" data-state-tool="workspacePlayers">
-      <h3>Окна игроков</h3>
-      <p class="ms-note">Открываются только документы, которые игроку разрешено видеть средствами Foundry. Эта настройка не выдаёт новые права на документы.</p>
+      <h3>{{dmicherScreenText "Окна игроков" "Player windows"}}</h3>
+      <p class="ms-note">{{dmicherScreenText "Открываются только документы, которые игроку разрешено видеть средствами Foundry. Эта настройка не выдаёт новые права на документы." "Only documents the player may view in Foundry are opened. This setting does not grant document permissions."}}</p>
       <div data-workspace-drop="players" class="ms-drop-zone">
         {{#each workspacePlayers}}
         <div class="ms-config-row" data-workspace-row="players">
-          <label class="ms-field">UUID документа<input name="windowUuid" value="{{uuid}}" required></label>
-          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">Ширина<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">Высота<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
-          <button type="button" data-screen-action="deleteWindow" data-audience="players" data-index="{{@index}}" class="ms-danger">Убрать окно</button>
+          <label class="ms-field">{{dmicherScreenText "UUID документа" "Document UUID"}}<input name="windowUuid" value="{{uuid}}" required></label>
+          <div class="ms-grid-four"><label class="ms-field">X<input type="number" name="windowX" value="{{x}}" min="0" required></label><label class="ms-field">Y<input type="number" name="windowY" value="{{y}}" min="0" required></label><label class="ms-field">{{dmicherScreenText "Ширина" "Width"}}<input type="number" name="windowWidth" value="{{width}}" min="100" required></label><label class="ms-field">{{dmicherScreenText "Высота" "Height"}}<input type="number" name="windowHeight" value="{{height}}" min="100" required></label></div>
+          <button type="button" data-screen-action="deleteWindow" data-audience="players" data-index="{{@index}}" class="ms-danger">{{dmicherScreenText "Убрать окно" "Remove window"}}</button>
         </div>
         {{/each}}
-        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="players">Взять расположение открытых окон</button><button type="button" data-screen-action="addWindow" data-audience="players">Добавить по UUID</button></div>
+        <div class="ms-actions"><button type="button" data-screen-action="captureWorkspace" data-audience="players">{{dmicherScreenText "Взять расположение открытых окон" "Capture open window positions"}}</button><button type="button" data-screen-action="addWindow" data-audience="players">{{dmicherScreenText "Добавить по UUID" "Add by UUID"}}</button></div>
       </div>
-    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">Отменить ввод</button><button type="submit">Сохранить</button></footer></form>
+    </section><footer class="ms-ide-save"><span data-save-status class="ms-note"></span><button type="button" data-screen-action="discard">{{dmicherScreenText "Отменить ввод" "Discard edits"}}</button><button type="submit">{{dmicherScreenText "Сохранить" "Save"}}</button></footer></form>
 {{/if}}
 {{#if blocks.playback}}
 <section class="ms-section" data-state-tool="playback">
     <h2>{{activeName}}</h2>
-    <p class="ms-note">Переход применяет подготовленное состояние и однократные действия. Повторный вход выполняет их заново. Переподключение оставляет текущее состояние.</p>
+    <p class="ms-note">{{dmicherScreenText "Переход применяет подготовленное состояние и однократные действия. Повторный вход выполняет их заново. Переподключение оставляет текущее состояние." "A transition applies the prepared state and one-time actions. Re-entering runs them again. Reconnecting preserves the current state."}}</p>
     <form data-screen-form="transition" class="ms-inline-form">
-      <select name="targetState" aria-label="Следующий состояние">{{#each states}}<option value="{{id}}" {{#unless allowed}}disabled{{/unless}}>{{name}}{{#unless allowed}} · переход закрыт{{/unless}}</option>{{/each}}</select>
-      <button type="submit" class="ms-primary"><i class="fa-solid fa-play"></i> Перейти</button>
+      <select name="targetState" aria-label="{{dmicherScreenText "Следующее состояние" "Next state"}}">{{#each states}}<option value="{{id}}" {{#unless allowed}}disabled{{/unless}}>{{name}}{{#unless allowed}} · {{dmicherScreenText "переход закрыт" "transition unavailable"}}{{/unless}}</option>{{/each}}</select>
+      <button type="submit" class="ms-primary"><i class="fa-solid fa-play"></i> {{dmicherScreenText "Перейти" "Transition"}}</button>
     </form>
-    <div class="ms-actions"><button type="button" data-screen-action="stop" class="ms-danger"><i class="fa-solid fa-hand"></i> Остановка · ручное управление</button><button type="button" data-screen-action="combat"><i class="fa-solid fa-dice-d20"></i> Бой и инициатива</button></div>
-    {{#if activeStop}}<p class="ms-status">Автоматизация сцены остановлена. Положение, состояние и ресурсы персонажей сохраняются.</p>{{/if}}
+    <div class="ms-actions"><button type="button" data-screen-action="stop" class="ms-danger"><i class="fa-solid fa-hand"></i> {{dmicherScreenText "Остановка · ручное управление" "Stop · manual control"}}</button><button type="button" data-screen-action="combat"><i class="fa-solid fa-dice-d20"></i> {{dmicherScreenText "Бой и инициатива" "Combat and initiative"}}</button></div>
+    {{#if activeStop}}<p class="ms-status">{{dmicherScreenText "Автоматизация группы остановлена. Положение, состояние и ресурсы персонажей сохраняются." "Group automation has stopped. Character positions, states and resources are preserved."}}</p>{{/if}}
   </section>
 {{/if}}
 {{#if blocks.automation}}
 <section class="ms-section" data-state-tool="automation">
-    <h2>Управление объектами</h2>
-    <p class="ms-note">Выключение сохраняется между состояниями и переподключениями. Возврат под автоматизацию происходит только по вашей команде.</p>
+    <h2>{{dmicherScreenText "Управление объектами" "Object control"}}</h2>
+    <p class="ms-note">{{dmicherScreenText "Выключение сохраняется между состояниями и переподключениями. Возврат под автоматизацию происходит только по вашей команде." "Disabling persists across states and reconnects. Automation resumes only on your explicit command."}}</p>
     <div class="ms-list">
-      {{#each tokens}}<div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}}<small class="ms-note">{{#if disabled}}Ручное управление{{else}}Разрешена автоматизация состояния{{/if}}</small></span></span><button type="button" data-screen-action="automation" data-token-id="{{id}}" data-enable="{{#if disabled}}true{{else}}false{{/if}}">{{#if disabled}}Включить{{else}}Отключить{{/if}}</button></div>{{/each}}
+      {{#each tokens}}<div class="ms-token-row"><span class="ms-token-title">{{#if img}}<img src="{{img}}" alt="" loading="lazy">{{/if}}<span>{{name}}<small class="ms-note">{{#if disabled}}{{dmicherScreenText "Ручное управление" "Manual control"}}{{else}}{{dmicherScreenText "Разрешена автоматизация состояния" "State automation allowed"}}{{/if}}</small></span></span><button type="button" data-screen-action="automation" data-token-id="{{id}}" data-enable="{{#if disabled}}true{{else}}false{{/if}}">{{#if disabled}}{{dmicherScreenText "Включить" "Enable"}}{{else}}{{dmicherScreenText "Отключить" "Disable"}}{{/if}}</button></div>{{/each}}
     </div>
   </section>
 {{/if}}
 {{#if blocks.counts}}
-<section class="ms-details" data-state-tool="counts"><h3>Допуск и счётчики триггеров</h3><p class="ms-note">Ручной допуск имеет приоритет над подготовленным флагом до следующего вашего переключения. Остальные условия продолжают действовать. Счётчик общий для триггера; можно сбросить его отдельно или для всей основной группы.</p><div class="ms-list">{{#each conditionCounts}}<div class="ms-token-row"><span>{{stateName}} · {{typeLabel}} · {{name}}<strong> · {{count}}</strong>{{#if canToggle}}<small class="ms-note">{{#if enabled}}Допуск включён{{else}}Допуск выключен{{/if}}</small>{{/if}}</span><div class="ms-actions">{{#if canToggle}}<button type="button" data-screen-action="toggleCondition" data-condition-key="{{key}}" data-enable="{{#if enabled}}false{{else}}true{{/if}}">{{#if enabled}}Выключить{{else}}Включить{{/if}}</button>{{/if}}<button type="button" data-screen-action="resetCondition" data-condition-key="{{key}}">Сбросить счётчик</button></div></div>{{else}}<p class="ms-note">В текущем состоянии ещё нет триггеров.</p>{{/each}}</div><button type="button" data-screen-action="resetConditions">Сбросить все счётчики</button></section>
+<section class="ms-details" data-state-tool="counts"><h3>{{dmicherScreenText "Допуск и счётчики запусков" "Launch access and counters"}}</h3><p class="ms-note">{{dmicherScreenText "Ручной допуск имеет приоритет над подготовленным флагом до следующего вашего переключения. Остальные условия продолжают действовать. Счётчик общий для этого действия; его можно сбросить отдельно или для всей выбранной группы." "Manual access overrides the prepared flag until you change it again. Other conditions still apply. The counter is shared by this action; reset it separately or for the entire selected group."}}</p><div class="ms-list">{{#each conditionCounts}}<div class="ms-token-row"><span>{{stateName}} · {{typeLabel}} · {{name}}<strong> · {{count}}</strong>{{#if canToggle}}<small class="ms-note">{{#if enabled}}{{dmicherScreenText "Допуск включён" "Access enabled"}}{{else}}{{dmicherScreenText "Допуск выключен" "Access disabled"}}{{/if}}</small>{{/if}}</span><div class="ms-actions">{{#if canToggle}}<button type="button" data-screen-action="toggleCondition" data-condition-key="{{key}}" data-enable="{{#if enabled}}false{{else}}true{{/if}}">{{#if enabled}}{{dmicherScreenText "Выключить" "Disable"}}{{else}}{{dmicherScreenText "Включить" "Enable"}}{{/if}}</button>{{/if}}<button type="button" data-screen-action="resetCondition" data-condition-key="{{key}}">{{dmicherScreenText "Сбросить счётчик" "Reset counter"}}</button></div></div>{{else}}<p class="ms-note">{{dmicherScreenText "В текущем состоянии ещё нет действий с условиями запуска." "This state has no actions with launch conditions yet."}}</p>{{/each}}</div><button type="button" data-screen-action="resetConditions">{{dmicherScreenText "Сбросить все счётчики" "Reset all counters"}}</button></section>
 {{/if}}
 {{#if blocks.journal}}
-<section class="ms-section" data-state-tool="journal"><h2>События сцены</h2><p class="ms-note">Последние 100 записей. Старые запуски и повторные уведомления не переигрывают события.</p><div class="ms-event-log">{{#each eventLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">Источник: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">Событий пока нет.</p>{{/each}}</div></section>
+<section class="ms-section" data-state-tool="journal"><h2>{{dmicherScreenText "Журнал сигналов сцены" "Scene signal log"}}</h2><p class="ms-note">{{dmicherScreenText "Последние 100 записей текущего подключения мастера-исполнителя. Просмотр журнала не испускает сигналы и не повторяет действия." "The latest 100 entries in the executing GM's current connection. Viewing the log does not emit signals or repeat actions."}}</p><div class="ms-signal-log">{{#each signalLog}}<article><div class="ms-toolbar"><strong>{{name}}</strong><span>{{time}} · {{statusLabel}}</span></div><p class="ms-note">{{dmicherScreenText "Эмитент" "Emitter"}}: {{source}}</p>{{#if resultsText}}<p>{{resultsText}}</p>{{/if}}{{#if error}}<p class="ms-error">{{error}}</p>{{/if}}</article>{{else}}<p class="ms-note">{{dmicherScreenText "Сигналов пока нет." "No signals yet."}}</p>{{/each}}</div></section>
 {{/if}}

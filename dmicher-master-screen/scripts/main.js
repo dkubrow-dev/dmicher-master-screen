@@ -7,6 +7,7 @@ import { installScreenSettingHelp } from "./setting-help.js";
 import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { findCanvasObject, canvasPointerPosition, clearCanvasObjectFocus, listenCanvasObjectClicks } from "./apps/canvas-object.js";
 import { installSceneSignals } from "./scene-signals.js";
+import { registerTemplateLocalization } from "./apps/template-localization.js";
 
 let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals;
 const hooks = [];
@@ -30,6 +31,7 @@ function attachCanvas() {
 }
 
 Hooks.once("init", () => {
+  registerTemplateLocalization(globalThis.Handlebars);
   theme.install();
   controller = new ScreenController();
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));

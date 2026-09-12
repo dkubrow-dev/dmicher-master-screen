@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { asArray } from "./store.js";
 
@@ -5,7 +6,7 @@ import { asArray } from "./store.js";
  * This correlates messages only; each receiving service authenticates and validates its command. */
 export async function requestGMReply(chat, { command, commandFlag, responseFlag, content, kind, timeoutMessage, timeoutMs = 20_000 }) {
   const gms = asArray(game.users).filter((user) => user.active && Number(user.role) === 4).map((user) => user.id);
-  if (!gms.length) throw new Error("Для взаимодействия нужен подключённый мастер.");
+  if (!gms.length) throw new Error(localizedMessage("Для взаимодействия нужен подключённый мастер."));
   return new Promise((resolve, reject) => {
     let messageId, timer, hookId, settled = false;
     const finish = (error, result) => {
@@ -23,7 +24,7 @@ export async function requestGMReply(chat, { command, commandFlag, responseFlag,
     Promise.resolve().then(() => chat.create({ author: game.user.id, content, flags: { [MODULE_ID]: { [commandFlag]: command } } },
       { audience: { type: "users", userIds: [...gms, game.user.id] }, kind, technical: true }))
       .then((messages) => {
-        if (!messages[0]?.id) throw new Error("Запрос не отправлен.");
+        if (!messages[0]?.id) throw new Error(localizedMessage("Запрос не отправлен."));
         messageId = messages[0].id;
         check(game.messages.get(messageId) ?? messages[0]);
       }).catch((error) => finish(error));

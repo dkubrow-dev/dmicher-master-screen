@@ -1,5 +1,7 @@
 // Synthetic Foundry lifecycle for browser QA. It never connects to a world or a Foundry server.
 const version = new URL(location.href).searchParams.get("version") || "14.366";
+const language = new URL(location.href).searchParams.get("lang") || "ru";
+const localize = (key) => key;
 const instances = new Map(), hookEntries = new Map();
 let hookId = 0;
 globalThis.Hooks = { on(name, callback) { const id = ++hookId; hookEntries.set(id, { name, callback }); return id; }, off(name, id) { if (hookEntries.get(id)?.name === name) hookEntries.delete(id); }, callAll(name, ...args) { for (const entry of hookEntries.values()) if (entry.name === name) entry.callback(...args); } };
@@ -7,7 +9,7 @@ globalThis.errors = [];
 globalThis.ui = { windows: {}, notifications: { error(message) { errors.push(message); }, warn(message) { globalThis.lastWarning = message; }, info(message) { globalThis.lastInfo = message; } }, hotbar: { _onResize() {} } };
 const escape = Handlebars.escapeExpression;
 Handlebars.registerHelper("checked", (flag) => flag ? "checked" : "");
-Handlebars.registerHelper("localize", (value) => value);
+Handlebars.registerHelper("localize", (value) => game.i18n.localize(value));
 Handlebars.registerHelper("selectOptions", (entries, { hash }) => new Handlebars.SafeString((hash.blank !== undefined ? `<option value="">${escape(hash.blank)}</option>` : "") + (entries ?? []).map((entry) => {
   const value = entry[hash.valueAttr ?? "value"], label = entry[hash.labelAttr ?? "label"];
   return `<option value="${escape(value)}" ${value === hash.selected ? "selected" : ""}>${escape(label)}</option>`;
@@ -50,7 +52,7 @@ globalThis.foundry = { applications: { instances, api: { ApplicationV2: Applicat
   utils: { deepClone: (value) => structuredClone(value), randomID: () => crypto.randomUUID().replaceAll("-", "").slice(0, 16) }, documents: {} };
 const gm = { id: "gm", isGM: true, role: 4, active: true, name: "GM", getFlag: () => null, async setFlag() {} };
 globalThis.game = { user: gm, users: new Map([["gm", gm]]), scenes: new Map(), macros: new Map(), modules: new Map(), messages: new Map(), paused: false,
-  release: { generation: Number(version.split(".")[0]) }, i18n: { lang: "ru", localize: (value) => value }, settings: { get: (_module, key) => key === "theme" ? "dark" : undefined }, async togglePause(value) { this.paused = value; } };
+  release: { generation: Number(version.split(".")[0]) }, i18n: { lang: language, localize }, settings: { get: (_module, key) => key === "theme" ? "dark" : undefined }, async togglePause(value) { this.paused = value; } };
 class MacroFixture { constructor(data) { Object.assign(this, data, { documentName: "Macro", uuid: `Macro.${data.id}` }); this.sheet = { render: () => { globalThis.editedMacro = this.uuid; } }; } }
 foundry.documents.Macro = { implementation: { async create(data) { const macro = new MacroFixture({ ...data, id: crypto.randomUUID() }); game.macros.set(macro.id, macro); return macro; } } };
 game.macros.set("demo", new MacroFixture({ id: "demo", name: "Example macro", type: "script", command: "return { parameters: {}, returns: {}, async execute() {} };" }));
@@ -69,8 +71,9 @@ globalThis.openNativeItemForm = () => {
   form.addEventListener("submit", save); form.addEventListener("change", save);
   document.body.append(form); Hooks.callAll("renderApplicationV2", { element: form }, form); form.elements.name.focus();
 };
-const { defaultDefinition, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
-const definition = defaultDefinition(); definition.groupName = "Town square";
+const { createGroupDefinition, defaultState, emptyRuntime, MODULE_ID } = await import("/modules/dmicher-master-screen/scripts/model.js");
+const sampleStates = [defaultState("Спокойствие", "calm"), defaultState("Напряжение", "tension"), defaultState("Тревога", "alarm"), defaultState("Остановка", "stop")];
+const definition = { ...createGroupDefinition({ groupId: "main", groupName: "Town square", state: sampleStates[0] }), states: sampleStates };
 definition.states[0].spawns = [{ id: "spawn", actorUuid: "Actor.guard", x: 100, y: 200, count: 1, spacing: 100 }];
 definition.states[0].workspace.gm = [{ uuid: "JournalEntry.note", x: 10, y: 20, width: 300, height: 200 }];
 const scene = { id: "scene-a", name: "Synthetic scene - no live world", tokens: new Map(), tiles: new Map(), grid: { size: 100, distance: 5 },
@@ -120,6 +123,8 @@ for (const [collection, layerName] of [['tokens','tokens'],['tiles','tiles'],['d
 }
 canvas.activeLayer = canvas.tokens;
 const { ScreenController } = await import("/modules/dmicher-master-screen/scripts/controller.js");
+const { registerTemplateLocalization } = await import("/modules/dmicher-master-screen/scripts/apps/template-localization.js");
+registerTemplateLocalization(Handlebars);
 const { installScreenSettingHelp } = await import("/modules/dmicher-master-screen/scripts/setting-help.js");
 installScreenSettingHelp((page, anchor) => { globalThis.helpTarget = { page, anchor }; });
 globalThis.controller = new ScreenController();

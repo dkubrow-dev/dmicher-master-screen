@@ -1,14 +1,11 @@
-import { generics } from "../generics.js";
+import { text as t } from "../localization.js";
+import { escapeHTML as e, textInput as input, formValue as value, selectOptions } from "./form-fields.js";
 import { renderSchema, readSignalSchemaField } from "./signal-schema-fields.js";
 export { renderSchema, bindSignalFields } from "./signal-schema-fields.js";
 import { localizedDescription } from "../model.js";
 import { validateSignalMacro, validateStandaloneMacro } from "../signal-macros.js";
 
-const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
-const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
-const input = (name, label, text, extra = "") => `<label>${e(label)}<input name="${name}" value="${e(text)}" ${extra}></label>`;
-const value = (root, name) => root.querySelector(`[name="${name}"]`)?.value ?? "";
-const choose = (name, label, items, current) => `<label>${e(label)}<select name="${name}"><option value="">${t("Выберите…", "Choose…")}</option>${items.map((item) => `<option value="${e(item.id)}"${item.id === current ? " selected" : ""}>${e(item.name)}</option>`).join("")}</select></label>`;
+const choose = (name, label, items, current) => `<label>${e(label)}<select name="${e(name)}">${selectOptions(items, current, t("Выберите…", "Choose…"))}</select></label>`;
 export const emitterName = (catalog, key) => catalog.emitters.find((item) => item.key === key)?.name ?? key;
 export const macroName = (uuid) => game.macros?.get?.(uuid?.split(".").at(-1))?.name ?? uuid ?? "";
 export const macroKey = (entry) => JSON.stringify([entry.ownerKey, entry.uuid]);

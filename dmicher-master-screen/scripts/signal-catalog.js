@@ -1,5 +1,7 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID, randomId, normalizeDescription } from "./model.js";
-import { requireGM, withSceneLock } from "./store.js";
+import { requireGM, withSceneLock, getDefinitions } from "./store.js";
+import { bindingScriptSteps } from "./object-binding-model.js";
 import { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 import { normalizeSignalFields, signalName } from "./signal-types.js";
 import { validateSignalMacro, validateStandaloneMacro } from "./signal-macros.js";
@@ -9,22 +11,22 @@ export { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 const clone = (value) => structuredClone(value);
 const unique = (entries, key, label) => {
   const values = new Set();
-  for (const entry of entries) { const value = key(entry); if (values.has(value)) throw new Error(`${label}: повторяющееся значение.`); values.add(value); }
+  for (const entry of entries) { const value = key(entry); if (values.has(value)) throw new Error(localizedMessage("{0}: повторяющееся значение.", [label])); values.add(value); }
 };
 function list(raw, field, maximum = 1000) {
   const value = raw[field] ?? [];
-  if (!Array.isArray(value) || value.length > maximum) throw new Error(`Каталог ${field}: требуется список не более ${maximum} элементов.`);
+  if (!Array.isArray(value) || value.length > maximum) throw new Error(localizedMessage("Каталог {0}: требуется список не более {1} элементов.", [field, maximum]));
   return value;
 }
 function normalizeSignal(raw) {
-  return { id: raw.id || randomId(), emitterKey: signalName(raw.emitterKey, "Эмитент"), name: signalName(raw.name, "Сигнал"), description: normalizeDescription(raw.description),
+  return { id: raw.id || randomId(), emitterKey: signalName(raw.emitterKey, localizedMessage("Эмитент")), name: signalName(raw.name, localizedMessage("Сигнал")), description: normalizeDescription(raw.description),
     builtin: raw.builtin === true, ...(raw.label ? { label: normalizeDescription(raw.label) } : {}), parameters: normalizeSignalFields(raw.parameters), returns: normalizeSignalFields(raw.returns) };
 }
 function protectBuiltin(signal, builtin) {
-  if (signal.name !== builtin.name || JSON.stringify(signal.description) !== JSON.stringify(builtin.description)) throw new Error("Имя и описание системного сигнала нельзя изменять.");
+  if (signal.name !== builtin.name || JSON.stringify(signal.description) !== JSON.stringify(builtin.description)) throw new Error(localizedMessage("Имя и описание системного сигнала нельзя изменять."));
   for (const kind of ["parameters", "returns"]) for (const field of builtin[kind]) {
     const candidate = signal[kind].find((entry) => entry.name === field.name);
-    if (!candidate || JSON.stringify(candidate) !== JSON.stringify(normalizeSignalFields([field])[0])) throw new Error(`Системное поле «${field.name}» нельзя изменять или удалять.`);
+    if (!candidate || JSON.stringify(candidate) !== JSON.stringify(normalizeSignalFields([field])[0])) throw new Error(localizedMessage("Системное поле «{0}» нельзя изменять или удалять.", [field.name]));
   }
   for (const kind of ["parameters", "returns"]) for (const field of signal[kind]) field.builtin = builtin[kind].some((base) => base.name === field.name);
   return { ...signal, builtin: true, label: builtin.label };
@@ -34,27 +36,27 @@ export function normalizeCatalog(raw = {}, { scene } = {}) {
   const signals = list(raw, "signals").map((entry) => {
     const signal = normalizeSignal(entry), base = baseById.get(signal.id);
     if (base) {
-      if (base.emitterKey !== signal.emitterKey) throw new Error("Системный сигнал нельзя передать другому эмитенту.");
+      if (base.emitterKey !== signal.emitterKey) throw new Error(localizedMessage("Системный сигнал нельзя передать другому эмитенту."));
       return protectBuiltin(signal, base);
     }
     // Deleted scene objects may leave references visible for explicit cleanup. They
     // cannot emit signals: dispatch always requires an existing emitter document.
-    if (scene && signal.builtin && listSignalEmitters(scene).some((emitter) => emitter.key === signal.emitterKey)) throw new Error("Неизвестный системный сигнал.");
+    if (scene && signal.builtin && listSignalEmitters(scene).some((emitter) => emitter.key === signal.emitterKey)) throw new Error(localizedMessage("Неизвестный системный сигнал."));
     if (!signal.builtin) for (const field of [...signal.parameters, ...signal.returns]) field.builtin = false;
     return signal;
   });
-  const macros = list(raw, "macros").map((entry) => ({ ownerKey: signalName(entry.ownerKey, "Владелец макроса"), uuid: signalName(entry.uuid, "UUID макроса") }));
-  const subscriptions = list(raw, "subscriptions", 2000).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, "Подписчик"),
-    emitterKey: signalName(entry.emitterKey, "Эмитент"), signalId: signalName(entry.signalId, "ID сигнала"), macroUuid: signalName(entry.macroUuid, "Макрос"), enabled: entry.enabled !== false }));
-  unique(signals, (entry) => entry.id, "ID сигнала"); unique(signals, (entry) => `${entry.emitterKey}\0${entry.name}`, "Имя сигнала у эмитента");
-  unique(macros, (entry) => `${entry.ownerKey}\0${entry.uuid}`, "Макрос объекта"); unique(subscriptions, (entry) => entry.id, "ID подписки");
-  unique(subscriptions, (entry) => `${entry.ownerKey}\0${entry.signalId}\0${entry.macroUuid}`, "Подписка макроса");
+  const macros = list(raw, "macros").map((entry) => ({ ownerKey: signalName(entry.ownerKey, localizedMessage("Владелец макроса")), uuid: signalName(entry.uuid, localizedMessage("UUID макроса")) }));
+  const subscriptions = list(raw, "subscriptions", 2000).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, localizedMessage("Подписчик")),
+    emitterKey: signalName(entry.emitterKey, localizedMessage("Эмитент")), signalId: signalName(entry.signalId, localizedMessage("ID сигнала")), macroUuid: signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false }));
+  unique(signals, (entry) => entry.id, localizedMessage("ID сигнала")); unique(signals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя сигнала у эмитента"));
+  unique(macros, (entry) => `${entry.ownerKey}\0${entry.uuid}`, localizedMessage("Макрос объекта")); unique(subscriptions, (entry) => entry.id, localizedMessage("ID подписки"));
+  unique(subscriptions, (entry) => `${entry.ownerKey}\0${entry.signalId}\0${entry.macroUuid}`, localizedMessage("Подписка макроса"));
   const allSignals = [...builtin.filter((entry) => !signals.some((signal) => signal.id === entry.id)), ...signals];
-  unique(allSignals, (entry) => `${entry.emitterKey}\0${entry.name}`, "Имя системного сигнала");
+  unique(allSignals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя системного сигнала"));
   for (const subscription of subscriptions) {
     const signal = allSignals.find((entry) => entry.id === subscription.signalId && entry.emitterKey === subscription.emitterKey);
-    if (scene && !signal && listSignalEmitters(scene).some((entry) => entry.key === subscription.emitterKey)) throw new Error("Подписка ссылается на отсутствующий сигнал эмитента.");
-    if (!macros.some((entry) => entry.ownerKey === subscription.ownerKey && entry.uuid === subscription.macroUuid)) throw new Error("Объект не владеет макросом подписки.");
+    if (scene && !signal && listSignalEmitters(scene).some((entry) => entry.key === subscription.emitterKey)) throw new Error(localizedMessage("Подписка ссылается на отсутствующий сигнал эмитента."));
+    if (!macros.some((entry) => entry.ownerKey === subscription.ownerKey && entry.uuid === subscription.macroUuid)) throw new Error(localizedMessage("Объект не владеет макросом подписки."));
   }
   return { schemaVersion: 1, revision: Number.isSafeInteger(raw.revision) ? raw.revision : 0, signals, macros, subscriptions };
 }
@@ -66,9 +68,13 @@ export function getSignalCatalog(scene) {
 export function findSignal(scene, { emitterKey, signalId, name }) {
   return getSignalCatalog(scene).signals.find((entry) => entry.emitterKey === emitterKey && (signalId ? entry.id === signalId : entry.name === name)) ?? null;
 }
-function objectReferences(scene, predicate) {
-  const visit = (value) => value && typeof value === "object" && (predicate(value) || Object.values(value).some(visit));
-  return visit(scene?.getFlag?.(MODULE_ID, "objectBindings")) || visit(scene?.getFlag?.(MODULE_ID, "interactionCatalog"));
+function hasPreparedSignalReference(scene, signalId) {
+  const bindings = Object.values(scene?.getFlag?.(MODULE_ID, "objectBindings")?.bindings ?? {});
+  const dialogues = scene?.getFlag?.(MODULE_ID, "interactionCatalog")?.dialogues ?? [];
+  const states = getDefinitions(scene).flatMap((definition) => definition.states);
+  return bindings.some((binding) => bindingScriptSteps(binding).some((step) => step.kind === "signal" && step.parameters?.signalId === signalId))
+    || dialogues.some((dialogue) => dialogue.pages?.some((page) => page.responses?.some((response) => response.signalId === signalId)))
+    || states.some((state) => [...state.zones, ...state.interactions].some((source) => source.signalId === signalId));
 }
 export class SignalCatalog {
   constructor(scene, { resolveMacro = globalThis.fromUuid } = {}) { this.scene = scene; this.resolveMacro = resolveMacro; }
@@ -77,7 +83,7 @@ export class SignalCatalog {
     return withSceneLock(this.scene, async () => {
       requireGM();
       const raw = normalizeCatalog(this.scene.getFlag(MODULE_ID, "signalCatalog") ?? {}, { scene: this.scene });
-      if (expectedRevision !== undefined && expectedRevision !== raw.revision) throw new Error("Каталог сигналов изменён другим окном. Обновите его перед сохранением.");
+      if (expectedRevision !== undefined && expectedRevision !== raw.revision) throw new Error(localizedMessage("Каталог сигналов изменён другим окном. Обновите его перед сохранением."));
       const result = await operation(raw), next = normalizeCatalog(raw, { scene: this.scene });
       next.revision++;
       await this.scene.setFlag(MODULE_ID, "signalCatalog", next);
@@ -86,7 +92,7 @@ export class SignalCatalog {
     });
   }
   requireOwner(key) {
-    if (!listSignalEmitters(this.scene).some((entry) => entry.key === key)) throw new Error("Объект эмитента или подписчика больше не существует.");
+    if (!listSignalEmitters(this.scene).some((entry) => entry.key === key)) throw new Error(localizedMessage("Объект эмитента или подписчика больше не существует."));
   }
   saveSignal(source, options) {
     return this.change(async (catalog) => {
@@ -100,8 +106,8 @@ export class SignalCatalog {
   }
   removeSignal(id, options) {
     return this.change((catalog) => {
-      if (this.list().signals.find((entry) => entry.id === id)?.builtin) throw new Error("Системный сигнал нельзя удалить.");
-      if (catalog.subscriptions.some((entry) => entry.signalId === id) || objectReferences(this.scene, (value) => value.signalId === id)) throw new Error("Сигнал используется подпиской или скриптом.");
+      if (this.list().signals.find((entry) => entry.id === id)?.builtin) throw new Error(localizedMessage("Системный сигнал нельзя удалить."));
+      if (catalog.subscriptions.some((entry) => entry.signalId === id) || hasPreparedSignalReference(this.scene, id)) throw new Error(localizedMessage("Сигнал используется подпиской или подготовленным поведением."));
       catalog.signals = catalog.signals.filter((entry) => entry.id !== id);
     }, options);
   }
@@ -117,8 +123,8 @@ export class SignalCatalog {
   removeMacro(ownerKey, uuid, options) {
     return this.change((catalog) => {
       const binding = this.scene.getFlag(MODULE_ID, "objectBindings")?.bindings?.[ownerKey];
-      const used = (value) => value && typeof value === "object" && ((value.kind === "macro" && value.parameters?.macroUuid === uuid) || Object.values(value).some(used));
-      if (catalog.subscriptions.some((entry) => entry.ownerKey === ownerKey && entry.macroUuid === uuid) || used(binding)) throw new Error("Макрос используется подпиской или скриптом объекта.");
+      const used = bindingScriptSteps(binding).some((step) => step.kind === "macro" && step.parameters?.macroUuid === uuid);
+      if (catalog.subscriptions.some((entry) => entry.ownerKey === ownerKey && entry.macroUuid === uuid) || used) throw new Error(localizedMessage("Макрос используется подпиской или скриптом объекта."));
       catalog.macros = catalog.macros.filter((entry) => entry.ownerKey !== ownerKey || entry.uuid !== uuid);
     }, options);
   }
@@ -130,8 +136,8 @@ export class SignalCatalog {
     return this.change(async (catalog) => {
       this.requireOwner(source.ownerKey); this.requireOwner(source.emitterKey);
       const signal = this.list().signals.find((entry) => entry.id === source.signalId && entry.emitterKey === source.emitterKey);
-      if (!signal) throw new Error("Сигнал этого эмитента не зарегистрирован.");
-      if (!catalog.macros.some((entry) => entry.ownerKey === source.ownerKey && entry.uuid === source.macroUuid)) throw new Error("Подписчик не владеет выбранным макросом.");
+      if (!signal) throw new Error(localizedMessage("Сигнал этого эмитента не зарегистрирован."));
+      if (!catalog.macros.some((entry) => entry.ownerKey === source.ownerKey && entry.uuid === source.macroUuid)) throw new Error(localizedMessage("Подписчик не владеет выбранным макросом."));
       await this.requireInterface(source.macroUuid, signal);
       const entry = { ...source, id: source.id || randomId() };
       catalog.subscriptions = [...catalog.subscriptions.filter((item) => item.id !== entry.id), entry];
@@ -157,7 +163,7 @@ export function mergeCatalogDependencies(scene, source = {}, { emitterMapping = 
     idMapping.set(signal.id, next.id);
     if (match) {
       const contract = (fields) => fields.map(({ description, builtin, ...field }) => field);
-      if (JSON.stringify(contract(match.parameters)) !== JSON.stringify(contract(next.parameters)) || JSON.stringify(contract(match.returns)) !== JSON.stringify(contract(next.returns))) throw new Error(`Конфликт сигнала «${signal.name}» принимающего эмитента.`);
+      if (JSON.stringify(contract(match.parameters)) !== JSON.stringify(contract(next.parameters)) || JSON.stringify(contract(match.returns)) !== JSON.stringify(contract(next.returns))) throw new Error(localizedMessage("Конфликт сигнала «{0}» принимающего эмитента.", [signal.name]));
     } else current.signals.push(next);
   }
   for (const entry of incoming.macros) {

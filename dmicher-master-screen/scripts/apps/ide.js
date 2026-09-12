@@ -1,6 +1,7 @@
+import { text as t } from "../localization.js";
 import { EditorApplication } from "./editor.js";
-import { ScreenLayout, MAIN_TABS, DETAIL_TABS } from "./screen-layout.js";
-import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
+import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
+import { renderSceneTree, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
 import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
 import { GroupEditor } from "../group-editor.js";
@@ -13,16 +14,11 @@ import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
 import { bindIDEMenus } from "./ide-menu.js";
 import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
-const t = (ru,en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
+import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form-fields.js";
 
-const esc = generics.utilities.escapeHTML;
 const clone = (value) => structuredClone(value);
-const fieldValue = (root, name, fallback = "") => root?.querySelector(`[name="${name}"]`)?.value ?? fallback;
-const checkbox = (root, name) => root?.querySelector(`[name="${name}"]`)?.checked === true;
-const plainJSON = (source) => { const value = JSON.parse(source || "{}"); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Статические параметры должны быть JSON объектом."); return value; };
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
 const notify = (error) => { console.error("dmicher-master-screen |", error); globalThis.ui?.notifications?.error(error.message); };
-const actionButton = (action, label, extra = "") => `<button type="button" data-screen-action="${action}" ${extra}>${label}</button>`;
 
 /** The IDE owns navigation and draft forms. The existing state editors remain isolated under Other. */
 export class MasterScreenApplication extends EditorApplication {
@@ -146,7 +142,7 @@ export class MasterScreenApplication extends EditorApplication {
   hasUnsavedChanges() { return this.dirty || [...this.tabStates.values()].some((state) => state.dirty); }
   async mayClose() {
     if (!this.hasUnsavedChanges()) return true;
-    return foundry.applications.api.DialogV2.confirm({ window: { title: "Несохранённые изменения вкладок" }, content: "<p>Закрыть ширму и отменить несохранённые изменения, включая скрытые вкладки?</p>", rejectClose: false });
+    return foundry.applications.api.DialogV2.confirm({ window: { title: t("Несохранённые изменения вкладок", "Unsaved tab changes") }, content: `<p>${t("Закрыть ширму и отменить несохранённые изменения, включая скрытые вкладки?", "Close the screen and discard unsaved changes, including hidden tabs?")}</p>`, rejectClose: false });
   }
 
   async _prepareContext(options) {
@@ -186,8 +182,8 @@ export class MasterScreenApplication extends EditorApplication {
     let mainHTML = "", detailHTML = "", nodeActions = "";
     if (activeMain === "scene") {
       mainHTML = renderSceneTree(definitions, runtimes, this.selection, this.mode);
-      if (!definitions.length) mainHTML = '<p class="ms-note">В этой сцене пока нет групп. Создайте группу — в ней появится первый состояние.</p>';
-      if (this.mode === "constructor") nodeActions = actionButton("addGroup", "Создать группу") + (definitions.length ? actionButton("addSceneState", "+ Состояние") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить") : "") + generics.components.renderJSONControls({ id: "group-list", importLabel: "Импорт группы", exportLabel: "Экспорт группы" });
+      if (!definitions.length) mainHTML = `<p class="ms-note">${t("В этой сцене пока нет групп. Создайте группу — в ней появится первое состояние.", "This scene has no groups yet. Create a group to add its first state.")}</p>`;
+      if (this.mode === "constructor") nodeActions = actionButton("addGroup", t("Создать группу", "Create group")) + (definitions.length ? actionButton("addSceneState", t("+ Состояние", "+ State")) + actionButton("editSelected", t("Править", "Edit")) + actionButton("deleteSelected", t("Удалить", "Delete")) : "") + generics.components.renderJSONControls({ id: "group-list", importLabel: t("Импорт группы", "Import group"), exportLabel: t("Экспорт группы", "Export group") });
     }
     if (activeMain === "signals") {
       mainHTML = renderSignalTree(catalog, this.selection, this.mode, definitions);
@@ -197,24 +193,24 @@ export class MasterScreenApplication extends EditorApplication {
       this.selectedMacroOwner ??= `Scene:${current.scene.id}`;
       const validation = new Map(await Promise.all(catalog.macros.map(async (macro) => [macroKey(macro), await macroValidationSummary(catalog, macro)])));
       mainHTML = renderMacroList(catalog, this.selection, (uuid) => globalThis.game?.macros?.get(uuid.split(".").pop()), this.selectedMacroOwner, validation);
-      if (this.mode === "constructor") nodeActions = actionButton("createMacro", "+ Макрос") + actionButton("deleteSelected", "Убрать из ширмы");
+      if (this.mode === "constructor") nodeActions = actionButton("createMacro", t("+ Макрос", "+ Macro")) + actionButton("deleteSelected", t("Убрать из ширмы", "Remove from screen"));
     }
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
     if (["shops", "dialogues"].includes(activeMain)) {
       const kind = activeMain === "shops" ? "shop" : "dialogue";
-      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[`${kind}s`]?.some((link) => link[`${kind}Id`] === entry.id)).length} об.` }));
+      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[`${kind}s`]?.some((link) => link[`${kind}Id`] === entry.id)).length}${t(" об.", " obj.")}` }));
       mainHTML = renderObjectList(rows, this.selection, kind);
-      nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? "+ Магазин" : "+ Диалог") + actionButton("deleteSelected", "Удалить") + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: "Импорт", exportLabel: "Экспорт" }) : "")
-        + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
+      nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? t("+ Магазин", "+ Shop") : t("+ Диалог", "+ Dialogue")) + actionButton("deleteSelected", t("Удалить", "Delete")) + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: t("Импорт", "Import"), exportLabel: t("Экспорт", "Export") }) : "")
+        + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? t("Состояния магазинов", "Shop sessions") : t("Просмотр и ручной показ", "View and show manually"));
     }
 
     if (activeDetail === "reference") {
       const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
-      detailHTML = `<p class="ms-note">Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.</p>${actionButton("contextHelp", "Открыть справку", `data-page="${page}"`)}`;
+      detailHTML = `<p class="ms-note">${t("Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.", "Select an entry in the main area. Saving parameters does not start automation; manual transitions are available in Director mode.")}</p>${actionButton("contextHelp", t("Открыть справку", "Open help"), `data-page="${page}"`)}`;
     } else if (["shops", "dialogues"].includes(activeMain)) {
       detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.assetPageIds.get(`${current.scene?.id}:${this.selection.id}`), mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
     } else if (activeMain === "other") {
-      if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.</p>${actionButton("shops", "Магазины")}${actionButton("dialogues", "Диалоги и действия")}`;
+      if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">${t("Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.", "View shops, read lines and show dialogues to players. Manual dialogues remain available after automation stops.")}</p>${actionButton("shops", t("Магазины", "Shops"))}${actionButton("dialogues", t("Диалоги и действия", "Dialogues and actions"))}`;
       else {
         detailHTML = await this.stateTool(this.otherBlock, base);
       }
@@ -233,7 +229,7 @@ export class MasterScreenApplication extends EditorApplication {
       mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail),
       isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
       presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
-      presentationTitle: this.layout.presentation === "panel" ? "Открыть ширму в отдельном окне" : "Вернуть ширму в панель" };
+      presentationTitle: this.layout.presentation === "panel" ? t("Открыть ширму в отдельном окне", "Open screen in a separate window") : t("Вернуть ширму в панель", "Return screen to panel") };
   }
 
   async _onRender(context, options) {
@@ -361,7 +357,7 @@ export class MasterScreenApplication extends EditorApplication {
 
   assertScene() {
     const scene = this.controller.getContext().scene;
-    if (!scene || scene.id !== this.selectionSceneId) throw new Error("Сцена изменилась. Дождитесь обновления ширмы или вернитесь к сцене черновика.");
+    if (!scene || scene.id !== this.selectionSceneId) throw new Error(t("Сцена изменилась. Дождитесь обновления ширмы или вернитесь к сцене черновика.", "The scene changed. Wait for the screen to refresh or return to the draft's scene."));
     return scene;
   }
 
@@ -389,29 +385,29 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async openAsset(kind, id) {
-    if (!["shop", "dialogue"].includes(kind)) throw new Error("Неизвестный вид каталога.");
+    if (!["shop", "dialogue"].includes(kind)) throw new Error(t("Неизвестный вид каталога.", "Unknown catalog type."));
     await this.switchMainTab(kind === "shop" ? "shops" : "dialogues");
     return this.selectNode(kind, id);
   }
 
   async dropShopItem(event) {
     if (this.mode !== "constructor" || this.selection.kind !== "shop") return;
-    let data; try { data = JSON.parse(event.dataTransfer.getData("text/plain")); } catch { throw new Error("Перетащите предмет Foundry."); }
+    let data; try { data = JSON.parse(event.dataTransfer.getData("text/plain")); } catch { throw new Error(t("Перетащите предмет Foundry.", "Drop a Foundry item.")); }
     const original = { scene: this.selectionSceneId, id: this.selection.id };
     const item = data.type === "Item" && typeof data.uuid === "string" ? await fromUuid(data.uuid) : null;
-    if (item?.documentName !== "Item" || typeof item.toObject !== "function") throw new Error("Перетащите доступный предмет Foundry.");
-    if (original.scene !== this.selectionSceneId || original.id !== this.selection.id) throw new Error("Выбор изменился. Повторите перенос предмета.");
+    if (item?.documentName !== "Item" || typeof item.toObject !== "function") throw new Error(t("Перетащите доступный предмет Foundry.", "Drop an accessible Foundry item."));
+    if (original.scene !== this.selectionSceneId || original.id !== this.selection.id) throw new Error(t("Выбор изменился. Повторите перенос предмета.", "The selection changed. Drop the item again."));
     const source = item.toObject(); delete source._id;
     return this.mutateParameters((draft) => draft.items.push({ id: randomId(), data: source, stock: 1 }));
   }
 
   async assignObject(descriptor, remove = false) {
     const scene = this.assertScene(), service = new SceneObjects(scene), existing = service.get(descriptor);
-    if (this.mode !== "constructor" || this.selection.kind !== "group") throw new Error("Выберите группу в Конструкторе.");
+    if (this.mode !== "constructor" || this.selection.kind !== "group") throw new Error(t("Выберите группу в Конструкторе.", "Select a group in Constructor mode."));
     let allowReassign = false;
-    if (remove && await this.inlineChoice("Отвязать объект от группы? Его назначения магазинов, диалогов и поведения этой группы будут сняты.", [{ value: "yes", label: "Отвязать" }, { value: "cancel", label: "Отмена" }]) !== "yes") return;
+    if (remove && await this.inlineChoice(t("Отвязать объект от группы? Его назначения магазинов, диалогов и поведения этой группы будут сняты.", "Unassign the object from the group? Its shop, dialogue and behavior assignments for this group will be removed."), [{ value: "yes", label: t("Отвязать", "Unassign") }, { value: "cancel", label: t("Отмена", "Cancel") }]) !== "yes") return;
     if (!remove && existing?.groupId && existing.groupId !== this.selection.id) {
-      allowReassign = await this.inlineChoice("Объект уже принадлежит другой группе. Переназначить его выбранной группе?", [{ value: "yes", label: "Переназначить" }, { value: "cancel", label: "Отмена" }]) === "yes";
+      allowReassign = await this.inlineChoice(t("Объект уже принадлежит другой группе. Переназначить его выбранной группе?", "This object belongs to another group. Assign it to the selected group?"), [{ value: "yes", label: t("Переназначить", "Reassign") }, { value: "cancel", label: t("Отмена", "Cancel") }]) === "yes";
       if (!allowReassign) return;
     }
     this.captureParameterDraft();
@@ -422,15 +418,15 @@ export class MasterScreenApplication extends EditorApplication {
   async setTabVisible(zone, id, visible) {
     if (zone === "main") this.storeTabState(); else this.captureParameterDraft();
     const active = this.layout.preferences.mainTab;
-    if (!this.layout.toggleTab(zone, id, visible)) ui.notifications.warn("Оставьте хотя бы одну вкладку в зоне.");
+    if (!this.layout.toggleTab(zone, id, visible)) ui.notifications.warn(t("Оставьте хотя бы одну вкладку в зоне.", "Keep at least one tab in the area."));
     if (zone === "main" && active !== this.layout.preferences.mainTab) this.restoreTabState(this.layout.preferences.mainTab);
     this.menuBranch = menuParent(this.layout.preferences.mainTab);
     return this.render({ force: true });
   }
 
   async stateTool(id, base) {
-    if (!this.controller.getContext().definition && id !== "sceneIO") return '<p class="ms-note">Сначала создайте группу во вкладке «Сцена».</p>';
-    if (id === "sceneIO") return `<div>${actionButton("export", "Экспорт сцены")}${actionButton("import", "Импорт сцены")}<input type="file" data-import-file accept=".json,application/json" hidden></div>`;
+    if (!this.controller.getContext().definition && id !== "sceneIO") return `<p class="ms-note">${t("Сначала создайте группу во вкладке «Сцена».", "Create a group in the Scene tab first.")}</p>`;
+    if (id === "sceneIO") return `<div>${actionButton("export", t("Экспорт сцены", "Export scene"))}${actionButton("import", t("Импорт сцены", "Import scene"))}<input type="file" data-import-file accept=".json,application/json" hidden></div>`;
     const renderTemplate = foundry.applications.handlebars?.renderTemplate ?? globalThis.renderTemplate;
     return renderTemplate("modules/dmicher-master-screen/templates/state-tools.hbs", { ...base, blocks: { [id]: true } });
   }
@@ -440,9 +436,9 @@ export class MasterScreenApplication extends EditorApplication {
     const doc = this.element.ownerDocument, dialog = doc.createElement("dialog");
     dialog.className = "dmicher-window dmicher-master-screen ms-menu-settings-dialog";
     if (this.element.dataset.dmicherTheme) dialog.dataset.dmicherTheme = this.element.dataset.dmicherTheme;
-    dialog.setAttribute("aria-label", zone === "main" ? "Основные вкладки" : "Дополнительные вкладки");
+    dialog.setAttribute("aria-label", zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs"));
     const draw = () => {
-      dialog.innerHTML = `<h3>${zone === "main" ? "Основные вкладки" : "Дополнительные вкладки"}</h3>${renderMenuSettings(zone, this.layout.preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"])}<footer><button type="button" data-close-menu>Готово</button></footer>`;
+      dialog.innerHTML = `<h3>${zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs")}</h3>${renderMenuSettings(zone, this.layout.preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"])}<footer><button type="button" data-close-menu>${t("Готово", "Done")}</button></footer>`;
       for (const input of dialog.querySelectorAll("[data-indeterminate]")) input.indeterminate = true;
     };
     draw(); this.menuDialog = dialog; doc.body.append(dialog);
@@ -460,18 +456,18 @@ export class MasterScreenApplication extends EditorApplication {
 
   async mutateParameters(change) {
     this.parameterDraft = this.readParameterDraft();
-    if (this.parameterDraft?.builtin && this.selection.kind !== "signal") throw new Error("Встроенное определение нельзя изменять.");
+    if (this.parameterDraft?.builtin && this.selection.kind !== "signal") throw new Error(t("Встроенное определение нельзя изменять.", "Built-in definitions cannot be edited."));
     await change(this.parameterDraft); this.dirty = true; return this.render({ force: true });
   }
 
   async saveParameters() {
     const scene = this.assertScene(), draft = this.readParameterDraft();
-    if (!draft || draft.builtin && this.selection.kind !== "signal") throw new Error("Выберите изменяемый элемент.");
+    if (!draft || draft.builtin && this.selection.kind !== "signal") throw new Error(t("Выберите изменяемый элемент.", "Select an editable entry."));
     const groups = new GroupEditor(scene), catalog = new SignalCatalog(scene);
     const options = { expectedRevision: this.parameterRevision };
     if (["group", "state"].includes(this.selection.kind)) {
       try { draft.background = generics.components.normalizeHexColor(draft.background); draft.textColor = generics.components.normalizeHexColor(draft.textColor); }
-      catch { throw new Error("Цвет фона и текста указывается в формате #RRGGBB."); }
+      catch { throw new Error(t("Цвет фона и текста указывается в формате #RRGGBB.", "Background and text colors must use #RRGGBB format.")); }
     }
     if (this.selection.kind === "group") await groups.updateGroup(this.selection.id, { groupName: draft.groupName, symbol: draft.symbol, entryStateId: draft.entryStateId, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
     if (this.selection.kind === "state") await groups.updateState(this.selection.groupId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
@@ -491,7 +487,7 @@ export class MasterScreenApplication extends EditorApplication {
       const sceneId = this.selectionSceneId, assetId = this.selection.id, pageId = this.element.querySelector("[data-asset-page]")?.dataset.assetPage, name = button.dataset.field;
       const Picker = foundry.applications.apps.FilePicker.implementation;
       return new Picker({ type: "image", current: fieldValue(this.element, name), callback: (path) => {
-        if (this.selectionSceneId !== sceneId || this.selection.id !== assetId || (pageId && this.element.querySelector("[data-asset-page]")?.dataset.assetPage !== pageId)) { ui.notifications.warn("Выбор изменился. Откройте выбор изображения ещё раз."); return; }
+        if (this.selectionSceneId !== sceneId || this.selection.id !== assetId || (pageId && this.element.querySelector("[data-asset-page]")?.dataset.assetPage !== pageId)) { ui.notifications.warn(t("Выбор изменился. Откройте выбор изображения ещё раз.", "The selection changed. Open the image picker again.")); return; }
         const field = this.element.querySelector(`[name="${name}"]`); if (!field) return;
         field.value = path; field.dispatchEvent(new field.ownerDocument.defaultView.Event("input", { bubbles: true }));
       } }).render({ force: true });
@@ -499,7 +495,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "objectInfo") return this.controller.openObjectInfo({ type: button.dataset.objectType, id: button.dataset.objectId });
     if (action === "assignObject") {
       const [type, id] = fieldValue(this.element, "newOwnedObject").split(":");
-      if (!type || !id) throw new Error("Выберите объект сцены.");
+      if (!type || !id) throw new Error(t("Выберите объект сцены.", "Select a scene object."));
       return this.assignObject({ type, id });
     }
     if (action === "unassignObject") return this.assignObject({ type: button.dataset.objectType, id: button.dataset.objectId }, true);
@@ -512,15 +508,15 @@ export class MasterScreenApplication extends EditorApplication {
     if (["addAssetPage", "deleteAssetPage", "addAssetResponse", "removeAssetResponse"].includes(action)) {
       return this.mutateParameters((draft) => {
         const key = `${this.selectionSceneId}:${draft.id}`, page = draft.pages.find((entry) => entry.id === this.assetPageIds.get(key)) ?? draft.pages[0];
-        if (action === "addAssetPage") { const entry = { id: randomId(), name: nextName(draft.pages, "Новый блок"), text: "", art: "", responses: [] }; draft.pages.push(entry); this.assetPageIds.set(key, entry.id); }
+        if (action === "addAssetPage") { const entry = { id: randomId(), name: nextName(draft.pages, t("Новый блок", "New page")), text: "", art: "", responses: [] }; draft.pages.push(entry); this.assetPageIds.set(key, entry.id); }
         if (action === "deleteAssetPage") {
-          if (draft.pages.length === 1) throw new Error("В диалоге должен остаться хотя бы один блок.");
+          if (draft.pages.length === 1) throw new Error(t("В диалоге должен остаться хотя бы один блок.", "A dialogue must retain at least one page."));
           draft.pages = draft.pages.filter((entry) => entry.id !== page.id);
           for (const entry of draft.pages) for (const response of entry.responses) if (response.nextPageId === page.id) response.nextPageId = "";
           if (draft.startPageId === page.id) draft.startPageId = draft.pages[0].id;
           this.assetPageIds.set(key, draft.pages[0].id);
         }
-        if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: "Новый ответ", nextPageId: "", signalId: "", parameters: {} });
+        if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: t("Новый ответ", "New response"), nextPageId: "", signalId: "", parameters: {} });
         if (action === "removeAssetResponse") page.responses.splice(Number(button.dataset.index), 1);
       });
     }
@@ -572,7 +568,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "resumeSelectedGroup") return this.controller.resumeGroup(fieldValue(this.element, "resumeState"), this.selection.groupId);
     if (action === "editMacro") {
       const macro = await fromUuid(button.dataset.uuid ?? this.selection.id);
-      if (!macro || macro.documentName !== "Macro") throw new Error("Макрос недоступен. Проверьте каталог Foundry.");
+      if (!macro || macro.documentName !== "Macro") throw new Error(t("Макрос недоступен. Проверьте каталог Foundry.", "The macro is unavailable. Check the Foundry directory."));
       return macro.sheet.render(true);
     }
     if (action === "addSignal") this.pendingSignalEmitter = button.dataset.emitterKey;
@@ -581,14 +577,14 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async changeStructure(action) {
-    if (this.mode !== "constructor") throw new Error("Изменение структуры доступно в Конструкторе.");
+    if (this.mode !== "constructor") throw new Error(t("Изменение структуры доступно в Конструкторе.", "Structure can be edited in Constructor mode."));
     if (!(await this.mayDiscard())) return;
     const scene = this.assertScene(), groups = new GroupEditor(scene), catalog = new SignalCatalog(scene), definitions = groups.list(), data = catalog.list();
     let selection;
-    if (action === "addShopAsset") { const assets = new SceneAssets(scene), entry = await assets.saveShop({ name: nextName(assets.list().shops, "Новый магазин"), items: [], display: "list", requireGMApproval: true, img: "" }); selection = ["shop", entry.id]; }
-    if (action === "addDialogueAsset") { const assets = new SceneAssets(scene), id = randomId(), entry = await assets.saveDialogue({ name: nextName(assets.list().dialogues, "Новый диалог"), startPageId: id, pages: [{ id, name: "Начало", text: "", art: "", responses: [] }] }); selection = ["dialogue", entry.id]; }
-    if (action === "addGroup") { const entry = await groups.createGroup({ name: nextName(definitions, "Новая группа", "groupName") }); selection = ["group", entry.groupId, entry.groupId]; }
-    if (action === "addSceneState") { const definition = definitions.find((item) => item.groupId === this.selection.groupId) ?? definitions[0]; if (!definition) throw new Error("Сначала создайте группу."); const entry = await groups.createState(definition.groupId, { name: nextName(definition.states, "Новое состояние") }); selection = ["state", entry.id, definition.groupId]; }
+    if (action === "addShopAsset") { const assets = new SceneAssets(scene), entry = await assets.saveShop({ name: nextName(assets.list().shops, t("Новый магазин", "New shop")), items: [], display: "list", requireGMApproval: true, img: "" }); selection = ["shop", entry.id]; }
+    if (action === "addDialogueAsset") { const assets = new SceneAssets(scene), id = randomId(), entry = await assets.saveDialogue({ name: nextName(assets.list().dialogues, t("Новый диалог", "New dialogue")), startPageId: id, pages: [{ id, name: t("Начало", "Start"), text: "", art: "", responses: [] }] }); selection = ["dialogue", entry.id]; }
+    if (action === "addGroup") { const entry = await groups.createGroup({ name: nextName(definitions, t("Новая группа", "New group"), "groupName") }); selection = ["group", entry.groupId, entry.groupId]; }
+    if (action === "addSceneState") { const definition = definitions.find((item) => item.groupId === this.selection.groupId) ?? definitions[0]; if (!definition) throw new Error(t("Сначала создайте группу.", "Create a group first.")); const entry = await groups.createState(definition.groupId, { name: nextName(definition.states, t("Новое состояние", "New state")) }); selection = ["state", entry.id, definition.groupId]; }
     if (action === "addSignal") {
       const emitterKey = this.pendingSignalEmitter ?? (this.selection.kind === "emitter" ? this.selection.id : this.parameterDraft?.emitterKey);
       this.pendingSignalEmitter = null;
@@ -598,13 +594,13 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "createMacro") {
       const Macro = foundry.documents.Macro?.implementation ?? globalThis.Macro;
-      const macro = await Macro.create({ name: "Новый макрос ширмы", type: "script", scope: "global", command: "" }, { renderSheet: true });
+      const macro = await Macro.create({ name: t("Новый макрос ширмы", "New screen macro"), type: "script", scope: "global", command: "" }, { renderSheet: true });
       if (!macro) return;
       const ownerKey = this.selectedMacroOwner ?? `Scene:${scene.id}`; await catalog.attachMacro(ownerKey, macro.uuid); selection = ["macro", macroKey({ownerKey,uuid:macro.uuid})];
     }
     if (action === "deleteSelected") {
-      if (this.parameterDraft?.builtin) throw new Error("Встроенные определения нельзя удалять.");
-      const confirmed = await this.inlineChoice("Удалить выбранный элемент?", [{ value: "delete", label: "Удалить" }, { value: "cancel", label: "Отмена" }]);
+      if (this.parameterDraft?.builtin) throw new Error(t("Встроенные определения нельзя удалять.", "Built-in definitions cannot be deleted."));
+      const confirmed = await this.inlineChoice(t("Удалить выбранный элемент?", "Delete the selected entry?"), [{ value: "delete", label: t("Удалить", "Delete") }, { value: "cancel", label: t("Отмена", "Cancel") }]);
       if (confirmed !== "delete") return;
       if (this.selection.kind === "group") await groups.deleteGroup(this.selection.id);
       else if (this.selection.kind === "state") await groups.deleteState(this.selection.groupId, this.selection.id);
@@ -612,7 +608,7 @@ export class MasterScreenApplication extends EditorApplication {
       else if (this.selection.kind === "macro") await catalog.removeMacro(this.parameterDraft.ownerKey,this.parameterDraft.uuid);
       else if (this.selection.kind === "shop") await new SceneAssets(scene).deleteShop(this.selection.id);
       else if (this.selection.kind === "dialogue") await new SceneAssets(scene).deleteDialogue(this.selection.id);
-      else throw new Error("Выберите удаляемый элемент.");
+      else throw new Error(t("Выберите удаляемый элемент.", "Select an entry to delete."));
     }
     this.resetDraft(); this.parameterDraft = null;
     if (selection) await this.selectNode(...selection); else await this.render({ force: true });
@@ -666,7 +662,7 @@ export class MasterScreenApplication extends EditorApplication {
     const scene = this.assertScene(), catalog = new SignalCatalog(scene), groups = new GroupEditor(scene);
     if (data.type === "Macro" || data.uuid?.startsWith("Macro.")) {
       const macro = await fromUuid(data.uuid);
-      if (macro?.documentName !== "Macro") throw new Error("Перетащите макрос Foundry.");
+      if (macro?.documentName !== "Macro") throw new Error(t("Перетащите макрос Foundry.", "Drop a Foundry macro."));
       if (!(await this.mayDiscard())) return;
       const ownerKey = this.selectedMacroOwner ?? `Scene:${scene.id}`;
       await catalog.attachMacro(ownerKey,macro.uuid);
@@ -682,7 +678,7 @@ export class MasterScreenApplication extends EditorApplication {
         const ids = groups.get(destination).states.map((entry) => entry.id), from = ids.indexOf(data.id), to = target.dataset.ideKind === "state" ? ids.indexOf(target.dataset.ideId) : ids.length - 1;
         if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await groups.reorderStates(destination, ids); }
       } else {
-        const result = await this.inlineChoice("Состояние в другой группе: скопировать или переместить?", [{ value: "copy", label: "Скопировать" }, { value: "move", label: "Переместить" }, { value: "cancel", label: "Отмена" }]);
+        const result = await this.inlineChoice(t("Состояние в другой группе: скопировать или переместить?", "State from another group: copy or move?"), [{ value: "copy", label: t("Скопировать", "Copy") }, { value: "move", label: t("Переместить", "Move") }, { value: "cancel", label: t("Отмена", "Cancel") }]);
         if (result === "cancel") return;
         const entry = await groups.transferState(data.groupId, destination, data.id, { copy: result === "copy" });
         this.resetDraft(); await this.selectNode("state", entry.id, destination);
@@ -695,19 +691,19 @@ export class MasterScreenApplication extends EditorApplication {
     for (const id of ["selection", "group-list", "asset-selection", "shop-list", "dialogue-list"]) {
       if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
       const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);
-      const assert = () => { const scene = this.assertScene(); if (scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error("Выбор изменился. Повторите импорт или экспорт."); return scene; };
+      const assert = () => { const scene = this.assertScene(); if (scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error(t("Выбор изменился. Повторите импорт или экспорт.", "The selection changed. Repeat the import or export.")); return scene; };
       const transfer = generics.components.createJSONTransfer({
         filename: () => `master-screen-${originalSelection.kind}-${originalSelection.id}.json`,
-        validate: (value) => { const expected = id.endsWith("-list") ? id.slice(0, -5) : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error("JSON не соответствует выбранному виду объекта Ширмы."); return value; },
+        validate: (value) => { const expected = id.endsWith("-list") ? id.slice(0, -5) : originalSelection.kind; if (!value || value.format !== "dmicher-master-screen" || value.version !== 1 || value.kind !== expected) throw new Error(t("JSON не соответствует выбранному виду объекта Ширмы.", "The JSON does not match the selected screen object type.")); return value; },
         exportValue: () => {
           const scene = assert();
-          if (this.dirty) throw new Error("Сначала сохраните изменения, затем экспортируйте.");
-          if (id === "group-list") { if (!originalSelection.groupId) throw new Error("Выберите группу для экспорта."); return new GroupEditor(scene).exportGroup(originalSelection.groupId); }
+          if (this.dirty) throw new Error(t("Сначала сохраните изменения, затем экспортируйте.", "Save your changes before exporting."));
+          if (id === "group-list") { if (!originalSelection.groupId) throw new Error(t("Выберите группу для экспорта.", "Select a group to export.")); return new GroupEditor(scene).exportGroup(originalSelection.groupId); }
           if (originalSelection.kind === "group") return new GroupEditor(scene).exportGroup(originalSelection.id);
           if (originalSelection.kind === "state") return new GroupEditor(scene).exportState(originalSelection.groupId, originalSelection.id);
           if (originalSelection.kind === "shop") return new SceneAssets(scene).exportShop(originalSelection.id);
           if (originalSelection.kind === "dialogue") return new SceneAssets(scene).exportDialogue(originalSelection.id);
-          throw new Error("Выберите группу, состояние, пользовательское событие или триггер.");
+        throw new Error(t("Выберите группу или состояние для экспорта.", "Select a group or state to export."));
         },
         importValue: async (value) => {
           const scene = assert();

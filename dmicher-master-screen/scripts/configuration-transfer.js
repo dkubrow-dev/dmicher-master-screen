@@ -1,4 +1,5 @@
 import { MODULE_ID } from "./model.js";
+import { bindingScriptSteps } from "./object-binding-model.js";
 
 /** Validate a complete draft without writing partially imported flags to the world. */
 export function stageScene(scene, flags) {
@@ -7,10 +8,28 @@ export function stageScene(scene, flags) {
   return staged;
 }
 
-/** Only declared reference fields are remapped; author prose and JSON text stay intact. */
-export function remapSignalIds(value, mapping) {
-  if (Array.isArray(value)) return value.map((entry) => remapSignalIds(entry, mapping));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
-    key === "signalId" ? mapping.get(entry) ?? entry : remapSignalIds(entry, mapping)]));
+const remapSignalReference = (reference, mapping) => {
+  if (reference?.signalId) reference.signalId = mapping.get(reference.signalId) ?? reference.signalId;
+};
+
+/** Follow the current domain schema, never arbitrary author JSON. A signal's
+ * payload may contain its own signalId without being an editor reference. */
+export function remapStateSignals(states, mapping) {
+  const next = structuredClone(states);
+  for (const state of next) for (const source of [...state.zones, ...state.interactions]) remapSignalReference(source, mapping);
+  return next;
+}
+
+export function remapDialogueSignals(dialogue, mapping) {
+  const next = structuredClone(dialogue);
+  for (const page of next.pages) for (const response of page.responses) remapSignalReference(response, mapping);
+  return next;
+}
+
+export function remapBindingSignals(binding, mapping) {
+  const next = structuredClone(binding);
+  for (const step of bindingScriptSteps(next)) {
+    if (step.kind === "signal") remapSignalReference(step.parameters, mapping);
+  }
+  return next;
 }

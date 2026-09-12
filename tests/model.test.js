@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODULE_ID, defaultDefinition, normalizeDefinition, normalizeConditions, getState, emptyRuntime, normalizeRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID, normalizeDefinition, normalizeConditions, getState, emptyRuntime, normalizeRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { getDefinition, getDefinitions, getRuntime, saveDefinition, saveRuntime, withSceneLock, isAuthority, getObjectTags, saveObjectTags } from "../dmicher-master-screen/scripts/store.js";
 
 const copy = (value) => structuredClone(value);

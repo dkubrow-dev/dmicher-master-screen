@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sceneFixture, clone, descriptor, shopData, dialogueData } from "./fixtures/scene.js";
-import { MODULE_ID, defaultDefinition } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { GroupEditor } from "../dmicher-master-screen/scripts/group-editor.js";
 import { SceneAssets, getInteractionCatalog } from "../dmicher-master-screen/scripts/scene-assets.js";
 import { SceneObjects, materializeState, resolveObjectTools } from "../dmicher-master-screen/scripts/scene-objects.js";
@@ -100,4 +101,66 @@ test("whole scene bundles contain catalogs and explicit bindings but no active e
   let imported; globalThis.CONFIG = { Scene: { documentClass: { create: async () => { imported = f.create("imported"); return imported; } } } };
   await importBundle(bundle); assert.equal(imported.flags[MODULE_ID].objectBindings.bindings["Token:npc"].notes, "Note"); assert.equal(imported.flags[MODULE_ID].groupRuntimes, undefined);
   const empty = await exportBundle(f.create("empty")); validateBundle(empty); assert.deepEqual(empty.definitions, []);
+});
+
+test("group imports keep shop and dialogue identities separate when their source IDs coincide", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup({ name: "Shared identifiers" });
+  const shop = await f.assets.saveShop({ ...shopData(), id: "shared" });
+  const dialogue = await f.assets.saveDialogue({ ...dialogueData(), id: "shared" });
+  await f.catalog.saveSignal({ emitterKey: "Shop:shared", name: "Shop signal", parameters: [], returns: [] });
+  await f.catalog.saveSignal({ emitterKey: "Dialogue:shared", name: "Dialogue signal", parameters: [], returns: [] });
+  await f.objects.save(descriptor, { groupId: group.groupId, shops: [{ shopId: shop.id }], dialogues: [{ dialogueId: dialogue.id }] });
+  const receiver = f.create("receiver");
+  await new GroupEditor(receiver).importGroup(f.editor.exportGroup(group.groupId));
+  const binding = new SceneObjects(receiver).get(descriptor), catalog = getInteractionCatalog(receiver), signals = getSignalCatalog(receiver).signals;
+  assert.notEqual(binding.shops[0].shopId, binding.dialogues[0].dialogueId);
+  assert.equal(binding.shops[0].shopId, catalog.shops[0].id);
+  assert.equal(binding.dialogues[0].dialogueId, catalog.dialogues[0].id);
+  assert.equal(signals.find((signal) => signal.name === "Shop signal").emitterKey, `Shop:${catalog.shops[0].id}`);
+  assert.equal(signals.find((signal) => signal.name === "Dialogue signal").emitterKey, `Dialogue:${catalog.dialogues[0].id}`);
+});
+
+test("state copies remap condition scopes without interpreting similarly named payload fields", async () => {
+  const f = sceneFixture(), source = await f.editor.createGroup({ name: "Source" }), destination = await f.editor.createGroup({ name: "Destination" });
+  const parameters = { groupIds: [source.groupId], stateIds: [source.entryStateId], nested: { groupIds: [source.groupId] } };
+  await f.editor.updateState(source.groupId, source.entryStateId, { zones: [{ id: "zone", x: 0, y: 0, width: 10, height: 10,
+    parameters, conditions: { groupIds: [source.groupId], stateIds: [source.entryStateId] } }] });
+  const state = await f.editor.transferState(source.groupId, destination.groupId, source.entryStateId, { name: "Copied" });
+  assert.deepEqual(state.zones[0].parameters, parameters);
+  assert.deepEqual(state.zones[0].conditions.groupIds, [destination.groupId]);
+  assert.deepEqual(state.zones[0].conditions.stateIds, [state.id]);
+});
+
+test("state materialization reads one catalog snapshot and returns detached runtime configuration", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), dialogue = await f.assets.saveDialogue(dialogueData());
+  for (const target of [descriptor, { type: "Tile", id: "counter" }]) await f.objects.save(target, { groupId: group.groupId, dialogues: [{ dialogueId: dialogue.id }] });
+  const read = f.scene.getFlag.bind(f.scene), reads = [];
+  f.scene.getFlag = (scope, key) => { reads.push(key); return read(scope, key); };
+  const result = materializeState(f.scene, group, group.states[0]);
+  assert.deepEqual(reads, ["objectBindings", "interactionCatalog"]);
+  assert.equal(result.dialogues.length, 2);
+  assert.equal(result.dialogues[0].startPageId, "first");
+  assert.equal(result.dialogues[0].nodes, undefined);
+  result.dialogues[0].pages[0].text = "Changed runtime";
+  assert.equal(result.dialogues[1].pages[0].text, "Welcome");
+  assert.equal(f.assets.getDialogue(dialogue.id).pages[0].text, "Welcome");
+});
+
+test("rejected atomic group import leaves every related catalog untouched", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), dialogue = await f.assets.saveDialogue(dialogueData());
+  await f.objects.save(descriptor, { groupId: group.groupId, dialogues: [{ dialogueId: dialogue.id }] });
+  const receiver = f.create("receiver"), before = clone(receiver.flags), updates = [];
+  receiver.update = async (fields) => { updates.push(fields); throw new Error("Document rejected"); };
+  await assert.rejects(new GroupEditor(receiver).importGroup(f.editor.exportGroup(group.groupId)), /Document rejected/);
+  assert.equal(updates.length, 1);
+  for (const key of ["groupDefinitions", "interactionCatalog", "objectBindings", "signalCatalog"]) assert.ok(Object.hasOwn(updates[0], `flags.${MODULE_ID}.${key}`));
+  assert.deepEqual(receiver.flags, before);
+});
+
+test("missing state JSON data never falls back to creating a new default state", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), before = clone(f.scene.flags);
+  for (const data of [undefined, null, [], "state"]) {
+    assert.throws(() => f.editor.importState(group.groupId, { format: MODULE_ID, kind: "state", version: 1, groupId: "source", data }));
+  }
+  assert.deepEqual(f.scene.flags, before);
 });

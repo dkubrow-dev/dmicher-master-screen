@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { exportBundle, importBundle, validateBundle, remapReferences } from "../dmicher-master-screen/scripts/transfer.js";
-import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { getSignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
 
 const copy = (value) => structuredClone(value);

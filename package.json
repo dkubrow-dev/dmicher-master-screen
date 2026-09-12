@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --import ./scripts/esm-loader.mjs --test tests/*.test.js",
+    "audit:localization": "node scripts/localization-audit.mjs --check",
     "deploy:dry-run": "node scripts/release.mjs dry-run",
     "deploy": "node scripts/release.mjs deploy",
     "release:build": "node scripts/release.mjs build",

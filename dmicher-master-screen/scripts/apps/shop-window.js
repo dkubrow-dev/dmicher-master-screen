@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { asArray } from "../store.js";
@@ -8,9 +9,10 @@ const clone = (value) => structuredClone(value);
 const newId = () => foundry.utils.randomID();
 
 export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
+  get title() { return localizedMessage("Ширма мастера · Магазин"); }
   static DEFAULT_OPTIONS = {
     classes: themedClasses("ms-shop"), position: { width: 920, height: 760 },
-    window: { title: "Ширма мастера · Магазин", icon: "fa-solid fa-store", resizable: true },
+    window: { icon: "fa-solid fa-store", resizable: true },
     actions: { addTake: ShopApplication.addTake, removeTake: ShopApplication.removeTake,
       addGive: ShopApplication.addGive, removeGive: ShopApplication.removeGive,
       confirm: ShopApplication.confirm, display: ShopApplication.display, refresh: ShopApplication.refresh,
@@ -34,7 +36,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     if (this.session || this.sessionError || this.finished || this.closing) return;
     if (this.join) {
       const current = this.controller.shop.getContext(this.sceneId, this.target, this.groupId, this.shopId).runtime?.shopSessions?.[this.shopId];
-      if (!current || current.sessionId !== this.sessionId) throw new Error("Сессия участника уже завершилась.");
+      if (!current || current.sessionId !== this.sessionId) throw new Error(localizedMessage("Сессия участника уже завершилась."));
       this.session = current; this.readOnly = current.userId !== game.user.id;
     } else {
       this.sessionPromise ??= this.controller.shop.requestSession(this.intent());
@@ -57,15 +59,15 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       this.requestId = receipt.intent.requestId;
       this.pending = ["pending", "processing", "uncertain"].includes(receipt.status);
       this.finished = ["done", "rejected", "failed"].includes(receipt.status);
-      this.feedback = ({ pending: "Предложение ожидает решения мастера.", processing: "Обмен выполняется.",
-        uncertain: "Обмен требует ручной сверки мастером. Не отправляйте его повторно.", done: "Обмен выполнен.",
-        rejected: "Предложение отклонено.", failed: "Обмен отменён." })[receipt.status] + (receipt.error ? ` ${receipt.error}` : "");
+      this.feedback = ({ pending: localizedMessage("Предложение ожидает решения мастера."), processing: localizedMessage("Обмен выполняется."),
+        uncertain: localizedMessage("Обмен требует ручной сверки мастером. Не отправляйте его повторно."), done: localizedMessage("Обмен выполнен."),
+        rejected: localizedMessage("Предложение отклонено."), failed: localizedMessage("Обмен отменён.") })[receipt.status] + (receipt.error ? ` ${receipt.error}` : "");
       if (receipt.status === "done") this.draft = { giveItemIds: [], take: [] };
     }
     if (!receipt && this.messageId) {
       const result = game.messages.get(this.messageId)?.getFlag(MODULE_ID, "tradeResult");
       if (["rejected", "failed"].includes(result)) {
-        this.pending = false; this.finished = true; this.feedback = "Предложение отклонено. Причина указана в чате.";
+        this.pending = false; this.finished = true; this.feedback = localizedMessage("Предложение отклонено. Причина указана в чате.");
       }
     }
     const live = current.runtime?.shopSessions?.[this.shopId];
@@ -86,16 +88,16 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     }
     this.view ??= current.behavior?.shop?.display ?? "list";
     return { ...base, unavailable, feedback: this.feedback, locked, finished: this.finished && !this.readOnly,
-      readOnly: this.readOnly, npcName: unavailable ? "Взаимодействие недоступно" : current.asset?.name || current.token?.name,
-      npcImg: unavailable ? null : current.asset?.img || current.token?.texture?.src || current.token?.actor?.img,
+      readOnly: this.readOnly, npcName: unavailable ? localizedMessage("Взаимодействие недоступно") : current.asset?.name || current.object?.name,
+      npcImg: unavailable ? null : current.asset?.img || current.object?.texture?.src || current.object?.actor?.img,
       actorName: actor?.name, ownerName: game.users.get(this.session?.userId)?.name,
       needsApproval: current.behavior?.shop?.requireGMApproval !== false,
       groups: [...groups].map(([name, items]) => ({ name, items })), tiles: this.view === "tiles",
       offeredGive: this.draft.giveItemIds.map((itemId) => { const item = inventory.find((item) => item.id === itemId);
-        return { id: itemId, name: item?.name ?? "Предмет уже отсутствует", img: item?.img || "icons/svg/hazard.svg", locked }; }),
+        return { id: itemId, name: item?.name ?? localizedMessage("Предмет уже отсутствует"), img: item?.img || "icons/svg/hazard.svg", locked }; }),
       offeredTake: this.draft.take.map(({ entryId, count }) => {
         const entry = entries.find((entry) => entry.id === entryId);
-        return { id: entryId, name: entry?.data?.name ?? "Предмет уже отсутствует", img: entry?.data?.img || "icons/svg/hazard.svg", count, locked };
+        return { id: entryId, name: entry?.data?.name ?? localizedMessage("Предмет уже отсутствует"), img: entry?.data?.img || "icons/svg/hazard.svg", count, locked };
       }),
       inventory: inventory.filter((item) => !this.draft.giveItemIds.includes(item.id)).map((item) => ({ id: item.id,
         name: item.name, img: item.img || "icons/svg/item-bag.svg", locked })),
@@ -129,11 +131,11 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
         return this.edit((draft) => { const item = draft.take.find((item) => item.entryId === data.entryId);
           if (item) item.count++; else draft.take.push({ entryId: data.entryId, count: 1 }); });
       }
-      if (side !== "player" || data.type !== "Item" || typeof data.uuid !== "string") throw new Error("Перенесите предмет в соответствующую колонку предложения.");
+      if (side !== "player" || data.type !== "Item" || typeof data.uuid !== "string") throw new Error(localizedMessage("Перенесите предмет в соответствующую колонку предложения."));
       const item = await fromUuid(data.uuid);
       const current = this.controller.shop.getContext(this.sceneId, this.target, this.groupId);
       const actor = validateTradeContext(current, this.intent(), game.user);
-      if (item?.documentName !== "Item" || item.parent?.uuid !== actor.uuid) throw new Error("Предмет не принадлежит выбранному персонажу.");
+      if (item?.documentName !== "Item" || item.parent?.uuid !== actor.uuid) throw new Error(localizedMessage("Предмет не принадлежит выбранному персонажу."));
       return this.edit((draft) => { if (!draft.giveItemIds.includes(item.id)) draft.giveItemIds.push(item.id); });
     } catch (error) { this.feedback = error.message; this.render({ force: true }); }
   }
@@ -143,7 +145,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     const next = clone(this.draft); change(next);
     try {
       this.session = await this.controller.shop.updateOffer(this.intent({ draft: next, revision: ++this.revision }));
-      this.draft = clone(this.session.draft); this.feedback = "Предложение изменено. Предметы ещё не переданы.";
+      this.draft = clone(this.session.draft); this.feedback = localizedMessage("Предложение изменено. Предметы ещё не переданы.");
     } catch (error) { this.feedback = error.message; }
     finally { this.busy = false; if (this.rendered) this.render({ force: true }); }
   }
@@ -162,7 +164,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       const result = await this.controller.shop.requestTrade(this.intent({ kind: "exchange", ...clone(this.draft) }));
       this.messageId = result?.id ?? null;
       this.pending = !["done", "failed", "rejected"].includes(result?.status);
-      this.feedback = this.pending ? "Предложение отправлено. Ожидаем результат." : (result.error || "Обмен выполнен.");
+      this.feedback = this.pending ? localizedMessage("Предложение отправлено. Ожидаем результат.") : (result.error || localizedMessage("Обмен выполнен."));
     } catch (error) { this.feedback = error.message; }
     finally { this.busy = false; if (this.rendered) this.render({ force: true }); }
   }

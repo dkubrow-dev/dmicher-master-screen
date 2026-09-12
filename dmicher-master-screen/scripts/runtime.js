@@ -1,6 +1,8 @@
+import { message as localizedMessage } from "./localization.js";
+import { objectCenter, crossesRectangle } from "./scene-object-geometry.js";
 import { MODULE_ID, getState, emptyRuntime } from "./model.js";
 import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
-import { createFoundryEffects, tokenCenter, crossesRectangle, clearTokenEmojis, setTokenEmoji, setObjectSpeech } from "./effects.js";
+import { createFoundryEffects } from "./effects.js";
 import { getConditionKey, getConditionGate, consumeCondition, resetStateConditions } from "./interaction-conditions.js";
 import { executionGeneration, requestHalt, finishHalt, isExecutionHalted, notifyExecutionChange,
   sceneExecutionGeneration, requestSceneHalt, finishSceneHalt, isSceneAutomationHalted } from "./execution.js";
@@ -18,15 +20,16 @@ const uuid = (scene) => scene.uuid ?? `Scene.${scene.id}`;
 /** Owns group lifetimes. Scripts and signals have separate executors and never own group state. */
 export class GroupRuntime {
   constructor({ onChange = () => {}, onWorkspace = async () => {}, emitSignal = async () => ({ allowed: true }), chat,
-    effects, now = () => Date.now(), isConstructor = () => false, combat } = {}) {
+    effects, visuals, now = () => Date.now(), isConstructor = () => false, combat } = {}) {
     Object.assign(this, { onChange, onWorkspace, emitSignal, now, isConstructor });
+    this.visuals = visuals;
     this.effects = effects ?? createFoundryEffects(chat);
     this.chat = chat; this.hooks = []; this.previousPositions = new Map(); this.tickTimes = new Map();
     this.manualRuns = new Map(); this.manualVisuals = new Map(); this.busy = false; this.disposed = false;
     this.combat = combat ?? createCombatAdapter({ chat, emitSignal: (scene, name, parameters) => this.emitSignal(scene, { emitterKey: `Combat:${scene.id}`, name, parameters }) });
     this.scripts = new ObjectScriptRuntime(this);
   }
-  requireAuthority(scene) { requireGM(); if (!isAuthority() || !scene || globalThis.canvas?.scene?.id !== scene.id) throw new Error("Действие доступно исполняющему мастеру текущей сцены."); }
+  requireAuthority(scene) { requireGM(); if (!isAuthority() || !scene || globalThis.canvas?.scene?.id !== scene.id) throw new Error(localizedMessage("Действие доступно исполняющему мастеру текущей сцены.")); }
   owns(scene, runId) {
     if (this.disposed || !isAuthority() || globalThis.canvas?.scene?.id !== scene?.id) return false;
     if (!runId) return true;
@@ -40,11 +43,14 @@ export class GroupRuntime {
     this.disposed = false;
     const on = (name, fn) => this.hooks.push([name, Hooks.on(name, fn)]);
     on("canvasReady", () => { this.tickTimes.clear(); this.refresh(canvas.scene); });
-    on("canvasTearDown", () => { this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); clearTokenEmojis(); });
+    on("canvasTearDown", () => { this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
     on("updateUser", () => notifyExecutionChange(globalThis.canvas?.scene));
     on("updateScene", (scene, changes) => { if (changes.flags?.[MODULE_ID] || Object.keys(changes).some((key) => key.startsWith(`flags.${MODULE_ID}`))) this.refresh(scene); });
-    for (const type of SCENE_OBJECT_TYPES) on(`refresh${type}`, (object) => this.refreshObject(object.document));
-    on("preUpdateToken", (token, changes) => { if ("x" in changes || "y" in changes) this.previousPositions.set(token.uuid ?? token.id, tokenCenter(token, token.parent)); });
+    for (const type of SCENE_OBJECT_TYPES) {
+      on(`refresh${type}`, (object) => this.refreshObject(object.document));
+      on(`delete${type}`, (document) => this.visuals?.remove(document));
+    }
+    on("preUpdateToken", (token, changes) => { if ("x" in changes || "y" in changes) this.previousPositions.set(token.uuid ?? token.id, objectCenter(token, token.parent)); });
     on("updateToken", (token, changes) => {
       if (!("x" in changes || "y" in changes)) return;
       const key = token.uuid ?? token.id, previous = this.previousPositions.get(key); this.previousPositions.delete(key);
@@ -56,7 +62,7 @@ export class GroupRuntime {
   }
   dispose() {
     this.disposed = true; clearInterval(this.interval); this.interval = null;
-    this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); clearTokenEmojis();
+    this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); this.visuals?.clear();
     for (const [name, id] of this.hooks) Hooks.off(name, id); this.hooks = []; this.tickTimes.clear();
   }
   scriptState(scene, runId) { return this.manualRuns.has(runId) ? clone(this.manualRuns.get(runId)) : getRuntimeForRun(scene, runId); }
@@ -78,7 +84,6 @@ export class GroupRuntime {
     if (!ignoreInteractionPause && isInteractionPaused(scene, target)) return false;
     return true;
   }
-  isTokenEnabled(run, id) { return !run.halted && !run.disabledObjects.includes(`Token:${id}`); }
   refreshObject(object) {
     if (!object) return;
     const scene = object.parent ?? globalThis.canvas?.scene;
@@ -87,9 +92,8 @@ export class GroupRuntime {
       ...[...this.manualRuns.values(), ...this.manualVisuals.values()].filter((run) => run.sceneId === scene?.id)];
     const prefix = `${objectKey(target)}:`, progress = runs.flatMap((run) => Object.entries(run.scriptStates ?? {}).filter(([key]) => key.startsWith(prefix)).map(([, value]) => value)).filter(Boolean);
     const latest = (field) => progress.reduce((selected, entry) => Number(entry[`${field}At`] ?? 0) > Number(selected?.[`${field}At`] ?? 0) ? entry : selected, null);
-    setTokenEmoji(object, latest("emoji")?.emoji ?? ""); setObjectSpeech(object, latest("bubble")?.bubble ?? null);
+    this.visuals?.update(object, { emoji: latest("emoji")?.emoji ?? "", bubble: latest("bubble")?.bubble ?? null });
   }
-  refreshToken(token) { this.refreshObject(token); }
   refresh(scene) {
     if (scene?.id !== globalThis.canvas?.scene?.id) return;
     for (const collection of Object.values(SCENE_OBJECT_COLLECTIONS)) for (const object of asArray(scene[collection])) this.refreshObject(object);
@@ -111,7 +115,7 @@ export class GroupRuntime {
     const result = await this.emitSignal(scene, { emitterKey: `Group:${group.groupId}`, name: starting ? "validateStart" : "validateTransition",
       parameters, context: { ...signalContext, runId: previous.runId, groupId: group.groupId, validation: true } });
     if (result.allowed === false) {
-      const reasons = result.messages?.map((message) => typeof message === "string" ? message : `${message.name || message.ownerKey || "Подписчик"}: ${message.message ?? ""}`).join("; ") || "Подписчик запретил действие.";
+      const reasons = result.messages?.map((message) => typeof message === "string" ? message : `${message.name || message.ownerKey || localizedMessage("Подписчик")}: ${message.message ?? ""}`).join("; ") || localizedMessage("Подписчик запретил действие.");
       const error = new Error(reasons); this.report(error); throw error;
     }
     return parameters;
@@ -120,7 +124,7 @@ export class GroupRuntime {
     this.requireAuthority(scene);
     const previous = getRuntime(scene, { groupId }), group = getDefinition(scene, { groupId });
     stateId ??= previous.stateId ?? group.entryStateId;
-    const prepared = getState(group, stateId); if (!prepared) throw new Error("Состояние не найдено.");
+    const prepared = getState(group, stateId); if (!prepared) throw new Error(localizedMessage("Состояние не найдено."));
     if (expectedRunId && previous.runId !== expectedRunId) return null;
     if (!force && !restart && !previous.halted && !isSceneAutomationHalted(scene) && previous.stateId === stateId) return previous;
     const starting = !preserveStatus && (restart || !previous.runId || previous.halted);
@@ -130,7 +134,7 @@ export class GroupRuntime {
     const run = await withSceneLock(scene, async () => {
       this.requireAuthority(scene);
       const current = getRuntime(scene, { groupId });
-      if (current.runId !== previous.runId || current.stateId !== previous.stateId || getDefinition(scene, { groupId }).revision !== group.revision || executionGeneration(scene, groupId) !== generation || sceneExecutionGeneration(scene) !== sceneGeneration) throw new Error("Группа изменилась во время проверки. Повторите команду.");
+      if (current.runId !== previous.runId || current.stateId !== previous.stateId || getDefinition(scene, { groupId }).revision !== group.revision || executionGeneration(scene, groupId) !== generation || sceneExecutionGeneration(scene) !== sceneGeneration) throw new Error(localizedMessage("Группа изменилась во время проверки. Повторите команду."));
       const snapshot = materializeState(scene, group, prepared);
       const next = { ...emptyRuntime(groupId), groupId, stateId, state: snapshot, runId: active ? randomId() : previous.runId,
         halted: preserveStatus ? previous.halted : false, haltedAt: preserveStatus ? previous.haltedAt : 0,
@@ -181,7 +185,7 @@ export class GroupRuntime {
   async restoreInitial(scene, target) {
     this.requireAuthority(scene);
     const binding = getObjectBindings(scene).bindings[objectKey(target)];
-    if (!binding?.initialScript?.enabled) throw new Error("Исходное состояние объекта не настроено.");
+    if (!binding?.initialScript?.enabled) throw new Error(localizedMessage("Исходное состояние объекта не настроено."));
     for (const [id, previous] of this.manualRuns) if (previous.sceneId === scene.id && objectKey(previous.target) === objectKey(target)) this.manualRuns.delete(id);
     const run = { ...emptyRuntime(binding.groupId), manual: true, sceneId: scene.id, runId: randomId(), target: clone(target), script: clone(binding.initialScript) };
     this.manualRuns.set(run.runId, run); this.tickTimes.set(`${scene.id}:${run.runId}`, this.now()); notifyExecutionChange(scene, "initial-restoration"); return run.runId;
@@ -213,7 +217,7 @@ export class GroupRuntime {
   async resetConditions(scene, { conditionKey, groupId = "main" } = {}) {
     this.requireAuthority(scene); return withSceneLock(scene, async () => {
       const run = getRuntime(scene, { groupId });
-      if (conditionKey && !conditionKey.startsWith(`${groupId}:`)) throw new Error("Счётчик относится к другой группе.");
+      if (conditionKey && !conditionKey.startsWith(`${groupId}:`)) throw new Error(localizedMessage("Счётчик относится к другой группе."));
       if (conditionKey) delete run.conditionCounts[conditionKey]; else run.conditionCounts = {};
       await saveRuntime(scene, run); this.refresh(scene); return run;
     });
@@ -221,7 +225,7 @@ export class GroupRuntime {
   async setConditionEnabled(scene, conditionKey, enabled) {
     this.requireAuthority(scene); return withSceneLock(scene, async () => {
       const groupId = conditionKey.split(":")[0], run = getRuntime(scene, { groupId });
-      if (!conditionKey.startsWith(`${groupId}:${run.stateId}:`) || typeof enabled !== "boolean") throw new Error("Условия относятся к другому состоянию.");
+      if (!conditionKey.startsWith(`${groupId}:${run.stateId}:`) || typeof enabled !== "boolean") throw new Error(localizedMessage("Условия относятся к другому состоянию."));
       run.conditionEnabledOverrides[conditionKey] = enabled; await saveRuntime(scene, run); this.refresh(scene); return run;
     });
   }
@@ -268,7 +272,7 @@ export class GroupRuntime {
     for (const snapshot of getRuntimes(scene)) {
       if (!this.owns(scene, snapshot.runId)) continue;
       for (const zone of snapshot.state?.zones ?? []) {
-        if (!zone.signalId || !crossesRectangle(previous, tokenCenter(token, scene), zone)) continue;
+        if (!zone.signalId || !crossesRectangle(previous, objectCenter(token, scene), zone)) continue;
         const admitted = await withSceneLock(scene, async () => {
           const run = getRuntimeForRun(scene, snapshot.runId); if (!run || !this.owns(scene, run.runId)) return false;
           const conditionKey = getConditionKey(run, "zone", zone.id);
@@ -282,7 +286,7 @@ export class GroupRuntime {
   }
   async startCombat(scene, { rollInitiative = true } = {}) {
     this.requireAuthority(scene); const Combat = globalThis.CONFIG?.Combat?.documentClass ?? globalThis.foundry?.documents?.Combat;
-    if (!Combat?.create) throw new Error("Боевая система Foundry недоступна.");
+    if (!Combat?.create) throw new Error(localizedMessage("Боевая система Foundry недоступна."));
     let combat = asArray(game.combats).find((entry) => (entry.scene?.id ?? entry.scene) === scene.id);
     if (!combat) combat = await Combat.create({ scene: scene.id, active: true });
     const selected = asArray(canvas.tokens?.controlled).map((object) => object.document), tokens = (selected.length ? selected : asArray(scene.tokens)).filter((token) => token.actor);

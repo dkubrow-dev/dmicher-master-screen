@@ -9,7 +9,7 @@
 .dmicher-master-screen .ms-object-scroll > * { flex-shrink: 0; }
 .dmicher-master-screen .ms-object-tabs, .dmicher-master-screen .ms-object-form > footer { flex: 0 0 auto; }
 .dmicher-master-screen.ms-object-info > .window-content, .dmicher-master-screen.ms-object-behavior > .window-content { min-height: 0; }
-/* Legacy token editors and other standalone forms must also shrink inside a resized window. */
+/* Standalone forms must also shrink inside a resized window. */
 .dmicher-master-screen .window-content > .ms-body { flex: 1; min-height: 0; }
 .dmicher-master-screen .ms-script-table-scroll { overflow-x: auto; }
 .dmicher-master-screen .ms-script-table { width: 100%; min-width: 480px; table-layout: fixed; }
@@ -28,7 +28,7 @@
 .dmicher-master-screen .ms-object-form .ms-object-row > * { flex: 1; min-width: 0; }
 .dmicher-master-screen .ms-object-metadata { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 12px; margin: 0; }
 .dmicher-master-screen .ms-object-metadata dt { opacity: .7; }
-.dmicher-master-screen .ms-object-metadata dd { margin: 0; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-object-metadata dd { margin: 0; overflow-wrap: anywhere; display: flex; align-items: start; gap: 6px; min-width: 0; }
 .dmicher-master-screen .ms-object-form footer { display: flex; justify-content: flex-end; gap: 8px; }
 .dmicher-master-screen .ms-object-feature { border: 1px solid var(--dmicher-border, #777); border-radius: 4px; padding: 8px; }
 .ms-script-table .ms-script-drag { cursor: grab; width: 22px; min-width: 22px; padding: 0; display: block; border: 0; background: transparent; }
@@ -37,7 +37,6 @@
 .ms-script-table .ms-script-drop-before { box-shadow: inset 0 3px var(--dmicher-accent, #d8ae66); }
 .ms-script-table .ms-script-drop-after { box-shadow: inset 0 -3px var(--dmicher-accent, #d8ae66); }
 .dmicher-master-screen .ms-copy-value { flex: 0 0 24px; width: 24px; min-height: 22px; padding: 0 3px; }
-.dmicher-master-screen .ms-object-metadata dd { display: flex; align-items: start; gap: 6px; min-width: 0; }
 .dmicher-master-screen .ms-object-metadata dd > span { flex: 1; overflow-wrap: anywhere; }
 .dmicher-master-screen .ms-state-script-table { table-layout: fixed; width: 100%; }
 .dmicher-master-screen .ms-state-script-table td { vertical-align: top; padding: 5px; }
@@ -48,13 +47,21 @@
 .dmicher-master-screen .ms-initial-script-actions { display: flex; align-items: center; gap: 5px; overflow-x: auto; }
 .dmicher-master-screen .ms-initial-script-actions > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .dmicher-master-screen .ms-initial-script-actions > button { flex: 0 0 auto; width: auto; margin: 0; white-space: nowrap; }
-.dmicher-master-screen .ms-script-parameter-table { width: 100%; margin: 0; border: 0; table-layout: fixed; background: transparent; font-size: 12px; }
-.dmicher-master-screen .ms-script-parameter-table > tbody > tr > th { width: 38%; font-weight: normal; text-align: left; vertical-align: middle; padding: 1px 3px; overflow-wrap: anywhere; }
-.dmicher-master-screen .ms-script-parameter-table > tbody > tr > td { padding: 1px 3px; vertical-align: middle; }
-.dmicher-master-screen .ms-script-parameter-table :is(input, select) { min-height: 22px; height: 22px; font-size: 12px; padding-block: 0; }
-.dmicher-master-screen .ms-script-parameter-table input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; margin: 2px; }
-.dmicher-master-screen .ms-script-parameter-table textarea { min-height: 40px; font: inherit; }
-.dmicher-master-screen .ms-script-parameter-table button { display: inline-flex; width: auto; min-height: 22px; margin: 0; padding: 1px 4px; font-size: 11px; line-height: 18px; }
+/* Script and signal editors share dense parameter rows. Signal-specific spacing
+   stays here beside the common component, not in a competing earlier sheet. */
+.dmicher-master-screen .ms-parameter-table { width: 100%; margin: 0; border: 0; table-layout: fixed; background: transparent; font-size: 12px; }
+.dmicher-master-screen .ms-parameter-table > tbody > tr > th { width: 38%; font-weight: normal; text-align: left; vertical-align: middle; padding: 1px 3px; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-parameter-table > tbody > tr > td { padding: 1px 3px; vertical-align: middle; }
+.dmicher-master-screen .ms-parameter-table :is(input, select) { min-height: 22px; height: 22px; font-size: 12px; padding-block: 0; }
+.dmicher-master-screen .ms-parameter-table input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; margin: 2px; }
+.dmicher-master-screen .ms-parameter-table textarea { min-height: 40px; font: inherit; }
+.dmicher-master-screen .ms-parameter-table button { display: inline-flex; width: auto; min-height: 22px; margin: 0; padding: 1px 4px; font-size: 11px; line-height: 18px; }
+.dmicher-master-screen .ms-signal-field-table > tbody > tr > th { width: 37%; padding: 1px 4px 1px 18px; font-size: 11px; }
+.dmicher-master-screen .ms-signal-field-table > tbody > tr > td { padding: 1px 4px; }
+.dmicher-master-screen .ms-signal-field-table :is(input, select) { height: 23px; min-height: 23px; padding: 1px 4px; }
+.dmicher-master-screen .ms-signal-field-table input[type=checkbox] { margin: 0; height: 16px; min-height: 16px; }
+.dmicher-master-screen .ms-signal-field-table textarea { min-height: 42px; padding: 2px 4px; font-size: 12px; }
+.dmicher-master-screen .ms-signal-field-table button { height: 23px; min-height: 23px; padding: 1px 6px; margin-right: 3px; }
 .dmicher-master-screen .ms-script-value, .dmicher-master-screen .ms-script-inline-actions { display: flex; align-items: center; gap: 4px; }
 .dmicher-master-screen .ms-script-value > input { flex: 1; min-width: 30px; }
 .dmicher-master-screen .ms-script-unit { flex: 0 0 auto; white-space: nowrap; font-size: 11px; opacity: .8; }
@@ -66,16 +73,7 @@
 .dmicher-master-screen .ms-script-parameter-group > table { border-left: 1px solid var(--dmicher-border, #68717a); }
 .dmicher-master-screen [data-script-json-value] { margin-top: 6px; min-height: 180px; }
 .dmicher-master-screen [data-script-json-value][hidden] { display: none; }
-.dmicher-master-screen [data-signal-field] { margin: 8px 0; padding: 8px; border: 1px solid var(--dmicher-border, #68717a); }
-.dmicher-master-screen [data-signal-field] label { display: flex; flex-direction: column; gap: 4px; }
-.dmicher-master-screen [data-signal-field] label.ms-check { flex-direction: row; align-items: center; }
-.dmicher-master-screen [data-signal-field] label.ms-check input { flex: 0 0 auto; width: auto; }
 .dmicher-master-screen .ms-macro-validation textarea { width: 100%; min-height: 180px; font-family: monospace; }
-.dmicher-master-screen .ms-signal-tree details { margin: 4px 0 4px 10px; }
-.dmicher-master-screen .ms-signal-tree details > summary { cursor: pointer; padding: 4px; }
-.dmicher-master-screen .ms-signal-tree summary button { display: inline-flex; width: auto; min-width: 24px; margin-left: 8px; }
-.dmicher-master-screen .ms-signal-tree table { margin: 2px 0 8px; }
-.dmicher-master-screen .ms-signal-tree td small { display: block; opacity: .7; overflow-wrap: anywhere; }
 .dmicher-master-screen [data-subscription-fields] { display: grid; gap: 8px; margin: 8px 0; }
 .dmicher-master-screen [data-subscription-fields] label { display: grid; gap: 4px; }
 .dmicher-master-screen [data-signal-fields] > label { display: flex; flex-direction: column; gap: 4px; margin-block: 6px; }

@@ -4,7 +4,8 @@ import { sceneFixture, clone, descriptor } from "./fixtures/scene.js";
 import { GroupEditor } from "../dmicher-master-screen/scripts/group-editor.js";
 import { GroupRuntime } from "../dmicher-master-screen/scripts/runtime.js";
 import { builtinCatalog, getSignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
-import { MODULE_ID, defaultDefinition, normalizeGroupSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID, normalizeGroupSymbol, normalizeDescription, localizedDescription } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { getDefinitions, getRuntime, getRuntimes } from "../dmicher-master-screen/scripts/store.js";
 import { validateParameters } from "../dmicher-master-screen/scripts/signal-types.js";
 

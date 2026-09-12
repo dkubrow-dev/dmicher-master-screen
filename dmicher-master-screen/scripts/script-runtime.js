@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { withSceneLock } from "./store.js";
 import { onExecutionChange } from "./execution.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } from "./script-movement.js";
@@ -62,7 +63,7 @@ export class ObjectScriptRuntime {
     state.scriptStates ??= {};
     const progress = state.scriptStates[key] ??= initialScriptProgress(script);
     if (progress.status === "pending") {
-      if (!this.jobs.has(jobKey)) { progress.status = "uncertain"; state.error = `Скрипт «${script.name || object.name}»: исход прежнего действия неизвестен. Проверьте результат и явно перезапустите состояние.`; await this.save(scene, state); this.runtime.onChange(scene); }
+      if (!this.jobs.has(jobKey)) { progress.status = "uncertain"; state.error = localizedMessage("Скрипт «{0}»: исход прежнего действия неизвестен. Проверьте результат и явно перезапустите состояние.", [script.name || object.name]); await this.save(scene, state); this.runtime.onChange(scene); }
       return;
     }
     const combat = this.combat.context(scene, object);
@@ -138,7 +139,7 @@ export class ObjectScriptRuntime {
       return { messageIds: start ? [] : current?.messageIds ?? [] };
     }
     if (step.kind === "visibility") {
-      if (!scriptObjectCapabilities(object).visibility) throw new Error("Этот объект не поддерживает скрытие.");
+      if (!scriptObjectCapabilities(object).visibility) throw new Error(localizedMessage("Этот объект не поддерживает скрытие."));
       if (admitted()) await object.update({ hidden: !p.visible }); return {};
     }
     if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume); return {}; }
@@ -147,12 +148,12 @@ export class ObjectScriptRuntime {
       return {};
     }
     if (step.kind === "macro") {
-      if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error("Этот макрос не прикреплён к объекту скрипта.");
+      if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error(localizedMessage("Этот макрос не прикреплён к объекту скрипта."));
       try { await effects.macro(p.macroUuid, { scene, token: object, state: this.state(scene, runId)?.state, runId, stepId: step.id, isCurrent: admitted }); }
-      catch (error) { if (error.code === "script-deferred") throw error; console.error("dmicher-master-screen | script macro", error); globalThis.ui?.notifications?.error(`Макрос скрипта: ${error.message ?? error}`); }
+      catch (error) { if (error.code === "script-deferred") throw error; console.error("dmicher-master-screen | script macro", error); globalThis.ui?.notifications?.error(localizedMessage("Макрос скрипта: {0}", [error.message ?? error])); }
       return {};
     }
-    throw new Error("Неизвестное действие скрипта.");
+    throw new Error(localizedMessage("Неизвестное действие скрипта."));
   }
   async execute(job) {
     const { scene, runId, target, sequence, step, script } = job;
@@ -163,7 +164,7 @@ export class ObjectScriptRuntime {
       if (current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
       // A turn may change while the claimed job waits outside the scene queue.
       // Keep the action ready for its next admission; never start it off-turn.
-      const error = new Error("Скрипт ожидает своего хода или завершения взаимодействия."); error.code = "script-deferred"; throw error;
+      const error = new Error(localizedMessage("Скрипт ожидает своего хода или завершения взаимодействия.")); error.code = "script-deferred"; throw error;
     };
     try {
       const outcome = await Promise.race([Promise.resolve().then(() => { admitted(); return this.effect(job, admitted); }).then((result) => ({ result }), (error) => ({ error })), cancelled]);
@@ -173,7 +174,7 @@ export class ObjectScriptRuntime {
         const state = this.state(scene, runId), progress = state?.scriptStates?.[job.progressKey];
         if (progress?.status !== "pending" || progress.sequence !== sequence) return;
         if (outcome.error?.code === "script-deferred") progress.status = "ready";
-        else if (outcome.error) { progress.status = "failed"; state.error = `Скрипт «${script.name || job.object.name}»: ${outcome.error.message}`; globalThis.ui?.notifications?.error(state.error); }
+        else if (outcome.error) { progress.status = "failed"; state.error = localizedMessage("Скрипт «{0}»: {1}", [script.name || job.object.name, outcome.error.message]); globalThis.ui?.notifications?.error(state.error); }
         else if (job.stage === "combat") {
           progress.status = "ready";
           if (progress.combat?.turnKey === job.combat.turnKey) {

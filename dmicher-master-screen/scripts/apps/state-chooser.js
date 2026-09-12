@@ -1,9 +1,9 @@
-import { ScreenFormApplication } from "./editor.js";
+import { text as t } from "../localization.js";
+import { ScreenFormApplication } from "./screen-form.js";
 import { getDefinitions, getRuntimes } from "../store.js";
 import { generics } from "../generics.js";
 import { themedClasses } from "../ui.js";
 
-const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
 
 /** A local draft: dismissing the chooser does not change any group's state. */

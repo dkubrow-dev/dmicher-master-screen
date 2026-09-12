@@ -1,6 +1,7 @@
 import { MODULE_ID } from "./model.js";
 import { asArray, getDefinitions } from "./store.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
+import { text } from "./localization.js";
 
 export const SCENE_COLLECTIONS = SCENE_OBJECT_COLLECTIONS;
 export const sceneUuid = (scene) => scene.uuid ?? `Scene.${scene.id}`;
@@ -59,8 +60,8 @@ const specs = {
 export function listSignalEmitters(scene) {
   if (!scene?.id) return [];
   const raw = scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings ?? {};
-  const emitters = [{ key: `Scene:${scene.id}`, type: "Scene", id: scene.id, name: scene.name ?? "Scene", groupId: null, uuid: sceneUuid(scene), builtin: true }];
-  if (globalThis.CONFIG?.Combat?.documentClass || globalThis.game?.combats) emitters.push({ key: `Combat:${scene.id}`, type: "Combat", id: scene.id, name: "Боевой агент", description: description("Боевой агент", "Combat agent"), groupId: null, uuid: virtualUuid(scene, "Combat", scene.id), builtin: true });
+  const emitters = [{ key: `Scene:${scene.id}`, type: "Scene", id: scene.id, name: scene.name ?? text("Сцена", "Scene"), groupId: null, uuid: sceneUuid(scene), builtin: true }];
+  if (globalThis.CONFIG?.Combat?.documentClass || globalThis.game?.combats) emitters.push({ key: `Combat:${scene.id}`, type: "Combat", id: scene.id, name: text("Боевой агент", "Combat agent"), description: description("Боевой агент", "Combat agent"), groupId: null, uuid: virtualUuid(scene, "Combat", scene.id), builtin: true });
   for (const group of getDefinitions(scene)) emitters.push({ key: `Group:${group.groupId}`, type: "Group", id: group.groupId, name: group.groupName, groupId: group.groupId, uuid: virtualUuid(scene, "Group", group.groupId), builtin: true });
   for (const [type, collection] of Object.entries(SCENE_COLLECTIONS)) for (const document of asArray(scene[collection])) {
     const key = `${type}:${document.id}`;

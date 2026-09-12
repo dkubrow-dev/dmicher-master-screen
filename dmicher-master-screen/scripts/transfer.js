@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID, normalizeDefinition } from "./model.js";
 import { asArray, getDefinitions, requireGM } from "./store.js";
 import { getSignalCatalog, normalizeCatalog, exportCatalogDependencies } from "./signal-catalog.js";
@@ -26,7 +27,7 @@ export function remapReferences(value, mapping) {
 }
 export async function exportBundle(scene) {
   requireGM();
-  if (!scene) throw new Error("Сначала откройте сцену");
+  if (!scene) throw new Error(localizedMessage("Сначала откройте сцену"));
   const definitions = getDefinitions(scene), actors = [], macros = [], journals = [];
   const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
   const signalCatalog = exportCatalogDependencies(scene);
@@ -59,33 +60,33 @@ export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
   const name = (entry) => typeof entry === "string" && entry.trim().length > 0;
   if (value?.format !== MODULE_ID || value.schemaVersion !== 1 || !object(value.scene) || !name(value.scene.name)
-    || !Array.isArray(value.definitions)) throw new Error("Это не JSON сцены Ширмы версии 1");
-  if (value.systemId !== game.system.id) throw new Error("Предметы и персонажи требуют той же игровой системы");
+    || !Array.isArray(value.definitions)) throw new Error(localizedMessage("Это не JSON сцены Ширмы версии 1"));
+  if (value.systemId !== game.system.id) throw new Error(localizedMessage("Предметы и персонажи требуют той же игровой системы"));
   if (value.definitions) {
-    if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error("Некорректный список групп.");
+    if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error(localizedMessage("Некорректный список групп."));
     const groups = value.definitions.map(normalizeDefinition);
-    if (new Set(groups.map((entry) => entry.groupId)).size !== groups.length || new Set(groups.map((entry) => entry.groupName.toLocaleLowerCase())).size !== groups.length) throw new Error("Группы должны иметь уникальные названия и идентификаторы.");
+    if (new Set(groups.map((entry) => entry.groupId)).size !== groups.length || new Set(groups.map((entry) => entry.groupName.toLocaleLowerCase())).size !== groups.length) throw new Error(localizedMessage("Группы должны иметь уникальные названия и идентификаторы."));
   }
-  if (typeof value.sourceSceneId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.sourceSceneId)) throw new Error("В JSON отсутствует ID исходной сцены.");
+  if (typeof value.sourceSceneId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.sourceSceneId)) throw new Error(localizedMessage("В JSON отсутствует ID исходной сцены."));
   normalizeCatalog(value.signalCatalog ?? {});
   const uuids = new Set();
   for (const [field, type] of [["actors", "Actor"], ["macros", "Macro"], ["journals", "JournalEntry"]]) {
-    if (!Array.isArray(value[field]) || value[field].length > 500) throw new Error(`Некорректный список ${field}`);
+    if (!Array.isArray(value[field]) || value[field].length > 500) throw new Error(localizedMessage("Некорректный список {0}", [field]));
     for (const entry of value[field]) {
       if (!object(entry) || !name(entry.uuid) || !object(entry.data) || !name(entry.data.name)
         || !(entry.uuid.startsWith(`${type}.`) || entry.uuid.startsWith("Compendium.")) || uuids.has(entry.uuid)) {
-        throw new Error(`Повреждён или повторён документ ${field}`);
+        throw new Error(localizedMessage("Повреждён или повторён документ {0}", [field]));
       }
       uuids.add(entry.uuid);
     }
   }
-  if (value.scene.tokens !== undefined && !Array.isArray(value.scene.tokens)) throw new Error("Токены сцены должны быть списком");
-  if (value.scene.notes !== undefined && !Array.isArray(value.scene.notes)) throw new Error("Заметки сцены должны быть списком");
+  if (value.scene.tokens !== undefined && !Array.isArray(value.scene.tokens)) throw new Error(localizedMessage("Токены сцены должны быть списком"));
+  if (value.scene.notes !== undefined && !Array.isArray(value.scene.notes)) throw new Error(localizedMessage("Заметки сцены должны быть списком"));
   const tokens = value.scene.tokens ?? [];
-  if (tokens.length > 1000) throw new Error("Допустимо до 1000 токенов в импортируемой сцене");
+  if (tokens.length > 1000) throw new Error(localizedMessage("Допустимо до 1000 токенов в импортируемой сцене"));
   const tokenIds = new Set();
   for (const token of tokens) {
-    if (!object(token) || !name(token._id) || tokenIds.has(token._id)) throw new Error("Повреждён или повторён ID токена сцены");
+    if (!object(token) || !name(token._id) || tokenIds.has(token._id)) throw new Error(localizedMessage("Повреждён или повторён ID токена сцены"));
     tokenIds.add(token._id);
   }
   const definitions = value.definitions.map((entry) => normalizeDefinition(entry));
@@ -94,14 +95,14 @@ export function validateBundle(value) {
     ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings };
   const scene = { id: value.sourceSceneId, uuid: value.sourceSceneUuid, getFlag: (_scope, key) => flags[key] };
   for (const key of ["tokens", "tiles", "drawings", "lights", "sounds", "notes", "templates", "walls", "regions"]) {
-    if (value.scene[key] !== undefined && !Array.isArray(value.scene[key])) throw new Error("Объекты сцены должны быть списками.");
+    if (value.scene[key] !== undefined && !Array.isArray(value.scene[key])) throw new Error(localizedMessage("Объекты сцены должны быть списками."));
     scene[key] = new Map((value.scene[key] ?? []).map((entry) => [entry._id, { ...entry, id: entry._id }]));
   }
   const signals = getSignalCatalog(scene).signals;
   for (const dialogue of getInteractionCatalog(scene).dialogues) for (const page of dialogue.pages) for (const response of page.responses) {
     if (response.signalId) {
       const signal = signals.find((entry) => entry.id === response.signalId && entry.emitterKey === `Dialogue:${dialogue.id}`);
-      if (!signal) throw new Error("Диалог ссылается на чужой или отсутствующий сигнал.");
+      if (!signal) throw new Error(localizedMessage("Диалог ссылается на чужой или отсутствующий сигнал."));
       validateParameters(signal, response.parameters);
     }
   }
@@ -116,7 +117,7 @@ export async function importBundle(value) {
       for (const entry of value[field]) {
         const Class = CONFIG[type]?.documentClass ?? getDocumentClass(type);
         const doc = await Class.create({ ...portable(entry.data), ownership: { default: 0 } }, { keepEmbeddedIds: true });
-        if (!doc) throw new Error(`Не удалось создать ${type}`);
+        if (!doc) throw new Error(localizedMessage("Не удалось создать {0}", [type]));
         created.push(doc); mapping.set(entry.uuid, doc.uuid);
       }
     }
@@ -134,7 +135,7 @@ export async function importBundle(value) {
     delete data.flags[MODULE_ID];
     const Scene = CONFIG.Scene?.documentClass ?? getDocumentClass("Scene");
     const scene = await Scene.create(data, { keepEmbeddedIds: true });
-    if (!scene) throw new Error("Не удалось создать сцену");
+    if (!scene) throw new Error(localizedMessage("Не удалось создать сцену"));
     created.push(scene);
     mapping.set(value.sourceSceneUuid ?? `Scene.${value.sourceSceneId}`, scene.uuid ?? `Scene.${scene.id}`);
     for (const type of ["Scene", "Combat"]) mapping.set(`${type}:${value.sourceSceneId}`, `${type}:${scene.id}`);
@@ -153,12 +154,12 @@ export async function importBundle(value) {
       interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog ?? {}, mapping)),
       objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings ?? {}, mapping))
     } });
-    return { scene, created, warnings: ["Медиафайлы должны находиться по сохранённым путям.",
-      "Проверьте права новых персонажей, ссылки и скриптовые макросы перед запуском."] };
+    return { scene, created, warnings: [localizedMessage("Медиафайлы должны находиться по сохранённым путям."),
+      localizedMessage("Проверьте права новых персонажей, ссылки и скриптовые макросы перед запуском.")] };
   } catch (error) {
     const remaining = [];
     for (const doc of created.reverse()) { try { await doc.delete(); } catch { remaining.push(doc.uuid); } }
-    if (remaining.length) error.message += ` Остались созданные документы: ${remaining.join(", ")}`;
+    if (remaining.length) error.message += localizedMessage(" Остались созданные документы: {0}", [remaining.join(", ")]);
     throw error;
   }
 }

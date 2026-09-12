@@ -66,3 +66,35 @@ test("old event catalog is neither migrated nor read", () => {
   const f = fixture(); f.data.eventCatalog = { events: [{ id: "old", name: "old" }], triggers: [] };
   assert.equal(f.catalog.list().signals.some((s) => s.name === "old"), false); assert.equal(f.writes(), 0);
 });
+
+test("signal removal checks real script references without treating payload signalId fields as links", async () => {
+  const f = fixture(), used = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Used", parameters: [{ name: "signalId", type: "string" }] });
+  const unused = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Only mentioned" });
+  f.data.objectBindings.bindings["Token:npc"] = { scripts: [{ steps: [{ id: 1, kind: "signal", parameters: { signalId: used.id, parameters: { signalId: unused.id } } }] }] };
+  await f.catalog.removeSignal(unused.id);
+  assert.equal(f.catalog.list().signals.some((entry) => entry.id === unused.id), false);
+  await assert.rejects(f.catalog.removeSignal(used.id));
+});
+
+test("macro removal inspects action steps and ignores action-shaped author JSON", async () => {
+  const f = fixture(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Payload" });
+  f.macro("Macro.m", signal); await f.catalog.attachMacro("Token:npc", "Macro.m");
+  const action = { kind: "macro", parameters: { macroUuid: "Macro.m" } };
+  f.data.objectBindings.bindings["Token:npc"] = { initialScript: { steps: [{ kind: "signal", parameters: { signalId: signal.id, parameters: structuredClone(action) } }] } };
+  await f.catalog.removeMacro("Token:npc", "Macro.m");
+  assert.equal(f.catalog.list().macros.length, 0);
+  await f.catalog.attachMacro("Token:npc", "Macro.m");
+  f.data.objectBindings.bindings["Token:npc"].transitionScripts = { calm: { steps: [action] } };
+  await assert.rejects(f.catalog.removeMacro("Token:npc", "Macro.m"));
+});
+
+test("signals referenced by zones, direct interactions or dialogue answers cannot be removed", async () => {
+  for (const source of ["zones", "interactions", "answers"]) {
+    const f = fixture(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Prepared source" });
+    if (source === "answers") f.data.interactionCatalog.dialogues[0].pages = [{ id: "page", responses: [{ id: "answer", signalId: signal.id }] }];
+    else f.definition.states[0][source] = [{ id: "source", signalId: signal.id }];
+    const before = f.writes();
+    await assert.rejects(f.catalog.removeSignal(signal.id), source);
+    assert.equal(f.writes(), before);
+  }
+});

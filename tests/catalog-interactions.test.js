@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { GroupRuntime } from "../dmicher-master-screen/scripts/runtime.js";
 import { getRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { createShopService, getShopContext, shopEntries, validateTradeContext } from "../dmicher-master-screen/scripts/shop.js";
@@ -201,7 +202,7 @@ test("manual catalog dialogue works unbound after halt and sends presentation wi
   const before = copy(f.flags), opened = [];
   const service = createManualDialogueService({ openWindow: async (view) => { opened.push(view); return view; } });
   const view = await service.openManualDialogue({ sceneId: f.scene.id, dialogueId: "talk", pageId: "last" });
-  assert.equal(view.dialogue.startNodeId, "last"); assert.equal(view.dialogue.nodes[1].text, "Goodbye");
+  assert.equal(view.dialogue.startPageId, "last"); assert.equal(view.dialogue.pages[1].text, "Goodbye");
   assert.deepEqual(f.flags, before); assert.deepEqual(f.emitted, []);
 });
 

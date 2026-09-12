@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { asArray, getRuntime } from "./store.js";
 import { isExecutionHalted } from "./execution.js";
@@ -17,7 +18,7 @@ async function renderSheet(app) {
   try {
     await new Promise((resolve, reject) => {
       hook = Hooks.on("renderApplication", (rendered) => { if (rendered === app) resolve(); });
-      timer = setTimeout(() => reject(new Error("Окно не завершило открытие за 10 секунд")), 10000);
+      timer = setTimeout(() => reject(new Error(localizedMessage("Окно не завершило открытие за 10 секунд"))), 10000);
       try {
         const result = app.render(true);
         if (result?.then) result.then(resolve, reject);
@@ -143,7 +144,7 @@ export class WorkspaceManager {
         } catch (error) { failures.push(`${entry.uuid}: ${error.message}`); }
       }
       if (current()) await this.remember(key, runId);
-      if (failures.length) ui.notifications.warn(`Рабочие окна: ${failures.join("; ")}`);
+      if (failures.length) ui.notifications.warn(localizedMessage("Рабочие окна: {0}", [failures.join("; ")]));
     });
   }
   async release(current = () => true) {
@@ -152,7 +153,7 @@ export class WorkspaceManager {
       this.slots.delete(uuid);
       slot.dispose();
       if (slot.owned && slot.app.rendered) {
-        try { await slot.app.close(); } catch (error) { ui.notifications.warn(`Не удалось закрыть окно: ${error.message}`); }
+        try { await slot.app.close(); } catch (error) { ui.notifications.warn(localizedMessage("Не удалось закрыть окно: {0}", [error.message])); }
       }
     }
   }

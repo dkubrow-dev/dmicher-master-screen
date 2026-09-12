@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getConditionKey, getConditionGate, consumeCondition, resetStateConditions } from "../dmicher-master-screen/scripts/interaction-conditions.js";
+import { getConditionKey, getConditionGate, evaluateConditionPolicy, consumeCondition, resetStateConditions } from "../dmicher-master-screen/scripts/interaction-conditions.js";
+import { evaluateInteractionPreview } from "../dmicher-master-screen/scripts/interaction-access.js";
 import { MODULE_ID, defaultState, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
 import { requestHalt, finishHalt } from "../dmicher-master-screen/scripts/execution.js";
 
@@ -34,6 +35,29 @@ test("scope predicates restrict the owning group and state and reject foreign-sc
   assert.equal(f.gate({}, { conditionKey: "other:calm:zone:door" }).allowed, false);
   const impostor = { id: "pc", parent: { id: "other" } };
   assert.equal(getConditionGate(f.scene, f.state, {}, impostor, { conditionKey: f.key }).allowed, false);
+});
+
+test("preview and live admission share policy decisions without a preview Scene or document adapter", () => {
+  const policies = [{}, { enabled: false }, { groupIds: ["other"] }, { stateIds: ["alarm"] },
+    { allowTags: ["ELF", "MEMBER"] }, { allowTags: ["elf"] }, { allowTags: ["member"], denyTags: ["human"] },
+    { repeat: "always" }, { repeat: "limited", limit: 2 }];
+  for (const policy of policies) for (const used of [0, 1, 2]) for (const halted of [false, true]) {
+    const f = fixture(); f.state.halted = halted; f.state.conditionCounts[f.key] = used;
+    const preview = evaluateInteractionPreview({ config: { id: "door", conditions: policy }, kind: "zone",
+      groupId: "main", stateId: "calm", tags: ["member", "human"], used, halted });
+    assert.deepEqual(preview, f.gate(policy));
+  }
+});
+
+test("pure condition policy gives stop and inactive state precedence over overrides, tags and quota", () => {
+  const context = { active: true, groupId: "main", stateId: "calm", conditionKey: "main:calm:zone:door" };
+  const policy = Object.freeze({ enabled: false, denyTags: Object.freeze(["blocked"]), limit: 1 });
+  const stop = evaluateConditionPolicy({ ...context, halted: true }, {});
+  assert.deepEqual(evaluateConditionPolicy({ ...context, active: false, halted: true, count: 20 }, policy, ["blocked"]), stop);
+  const inactive = evaluateConditionPolicy({ ...context, active: false }, {});
+  assert.deepEqual(evaluateConditionPolicy({ ...context, active: false, count: 20 }, policy, ["blocked"]), inactive);
+  assert.equal(evaluateConditionPolicy({ ...context, enabledOverride: true }, policy).allowed, true);
+  assert.equal(evaluateConditionPolicy({ ...context, enabledOverride: true }, policy, ["blocked"]).allowed, false);
 });
 
 test("default quota is one and an existing admitted session may ignore only its quota", () => {

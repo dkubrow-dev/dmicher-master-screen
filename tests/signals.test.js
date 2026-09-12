@@ -10,6 +10,9 @@ test("delivery binds signal names to their emitter and rejects undeclared input 
   assert.throws(() => f.bus.emit(f.scene, { emitterKey: signal.emitterKey, name: signal.name, parameters: { "сообщение?!": 4 } }));
   const result = await f.bus.emit(f.scene, { emitterKey: signal.emitterKey, name: signal.name, parameters: { "сообщение?!": "world" } });
   assert.equal(result.status, "done"); assert.equal(result.results.length, 1);
+  const history = f.bus.history(f.scene);
+  assert.equal(history[0].emitterKey, signal.emitterKey); assert.ok(Number.isFinite(history[0].at));
+  history[0].name = "Local edit"; assert.equal(f.bus.history(f.scene)[0].name, signal.name);
 });
 test("validation waits for subscribers and any denial blocks the action with object name", async () => {
   const f = fixture(), signal = f.catalog.list().signals.find((s) => s.emitterKey === "Shop:shop" && s.name === "beforePurchase");

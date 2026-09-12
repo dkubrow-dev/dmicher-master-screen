@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { requireNumber, buildConditionRows } from "../dmicher-master-screen/scripts/apps/editor-view.js";
 import { buildConditionFields, readConditionFields } from "../dmicher-master-screen/scripts/apps/condition-fields.js";
-import { defaultDefinition, emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { registerTemplateLocalization } from "../dmicher-master-screen/scripts/apps/template-localization.js";
+import { emptyRuntime } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 
 class ApplicationStub {
   constructor(options) { this.options = options; this.rendered = true; this.renderCount = 0; }
@@ -50,6 +52,17 @@ test("director reads persisted disabled IDs and uses domain rules including emer
   assert.equal(view.states.find((entry) => entry.id === "stop").allowed, true);
   assert.equal(view.isDirector, true);
   assert.equal(view.groupName, f.context.definition.groupName);
+});
+
+test("journal renders current signal history without reading the replaced runtime event log", async () => {
+  const f = fixture();
+  f.context.signalLog = [{ name: "first", emitterKey: "Token:guard", at: 10, status: "done", results: [] },
+    { name: "latest", emitterKey: "Scene:scene", at: 20, status: "failed", error: "Rejected", results: [] }];
+  f.context.runtime.eventLog = [{ name: "obsolete" }];
+  const view = await new EditorApplication(f.controller)._prepareContext({});
+  assert.deepEqual(view.signalLog.map(entry => entry.name), ["latest", "first"]);
+  assert.equal(view.signalLog[0].source, "Scene:scene");
+  assert.equal(view.signalLog[0].error, "Rejected");
 });
 
 test("editor drafts are isolated from saved scene configuration and survive switching maps", async () => {
@@ -222,7 +235,7 @@ test("manual dialogue catalog reads preparation while halted and calls only manu
   const app = new DialogueCatalogApplication(f.controller);
   const view = await app._prepareContext({});
   assert.equal(view.dialogue.id, "talk");
-  assert.equal(view.node.text, "Hello");
+  assert.equal(view.page.text, "Hello");
   globalThis.ui = { notifications: { info() {} } };
   app.recipients.add("player");
   await app.handleAction("players");
@@ -236,6 +249,7 @@ for (const version of ["13.351", "14.366"]) {
   const library = `E:/Foundry Portable/Foundry VTT ${version}/App/resources/app/node_modules/handlebars`;
   test(`Foundry ${version} templates compile and escape scene, token, and state text`, { skip: !existsSync(library) }, async () => {
     const hbs = require(library).create();
+    registerTemplateLocalization(hbs);
     hbs.registerHelper("checked", (flag) => flag ? "checked" : "");
     hbs.registerHelper("selectOptions", () => "");
     const f = fixture();
@@ -259,7 +273,7 @@ for (const version of ["13.351", "14.366"]) {
       const compiled = hbs.compile(readFileSync(new URL(`../dmicher-master-screen/templates/${template}.hbs`, import.meta.url), "utf8"));
       const html = compiled({ name: "<script>bad</script>", npcName: "<script>bad</script>", sceneName: "<script>bad</script>",
         shop: true, transition: true, label: "<script>bad</script>", characters: [], groups: [], tokens: [],
-        node: { id: "start", text: "<script>bad</script>", responses: [] }, dialogue: { id: "talk", name: "<script>bad</script>" } });
+        page: { id: "start", text: "<script>bad</script>", responses: [] }, dialogue: { id: "talk", name: "<script>bad</script>" } });
       assert.ok(html.length > 100);
       assert.ok(!html.includes("<script>"));
       if (template === "shop") assert.ok(html.includes("data-currency-adapter hidden"));

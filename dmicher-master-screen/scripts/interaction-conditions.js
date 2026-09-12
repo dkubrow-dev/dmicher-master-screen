@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { normalizeTags, normalizeConditions } from "./model.js";
 import { getObjectTags } from "./store.js";
 import { isExecutionHalted } from "./execution.js";
@@ -8,30 +9,41 @@ const uses = (state, key) => Math.max(0, Number(state.conditionCounts?.[key]) ||
 const limit = (policy) => normalizeConditions(policy).limit;
 export const getConditionKey = (state, type, id) => `${state.groupId ?? "main"}:${state.stateId}:${type}:${id}`;
 
-/** This predicate does not write, log, consume a use or claim success. */
-export function getConditionGate(scene, state, policy = {}, actorToken, { conditionKey, ignoreQuota = false } = {}) {
+/** Pure policy shared by live admission and preparation previews. No Scene,
+ * token document, logging or use consumption is needed to evaluate these facts. */
+export function evaluateConditionPolicy({ active, groupId = "main", stateId, conditionKey, halted = false,
+  enabledOverride, count = 0, actorInScene = true, ignoreQuota = false }, policy = {}, actorTagValues = []) {
   const deny = (reason) => ({ allowed: false, reason });
-  if (isExecutionHalted(scene, state)) return deny("Автоматизация группы аварийно остановлена мастером.");
-  if (!state?.runId || !state.stateId || !state.state) return deny("Нет действующего состояния с автоматизацией.");
-  if ((state.conditionEnabledOverrides?.[conditionKey] ?? policy?.enabled) === false) return deny("Триггер выключен мастером.");
-  const groupId = state.groupId ?? "main";
-  if (!conditionKey || !conditionKey.startsWith(`${groupId}:${state.stateId}:`)) return deny("Триггер принадлежит другой группе или состоянию.");
-  if (list(policy?.groupIds).length && !policy.groupIds.includes(groupId)) return deny("Триггер недоступен в этой группе.");
-  if (list(policy?.stateIds).length && !policy.stateIds.includes(state.stateId)) return deny("Триггер недоступен в этом состоянии.");
-  const token = actorToken?.document ?? actorToken;
-  if (token && (scene.tokens?.get(token.id) !== token || (token.parent?.id && token.parent.id !== scene.id))) return deny("Персонаж находится в другой сцене.");
-  const actorTags = tags(token ? getObjectTags(scene, { type: "Token", id: token.id }) : []);
+  if (halted) return deny(localizedMessage("Автоматизация группы аварийно остановлена мастером."));
+  if (!active) return deny(localizedMessage("Нет действующего состояния с автоматизацией."));
+  if ((enabledOverride ?? policy?.enabled) === false) return deny(localizedMessage("Условие срабатывания выключено мастером."));
+  if (!conditionKey || !conditionKey.startsWith(`${groupId}:${stateId}:`)) return deny(localizedMessage("Условие срабатывания принадлежит другой группе или состоянию."));
+  if (list(policy?.groupIds).length && !policy.groupIds.includes(groupId)) return deny(localizedMessage("Условие срабатывания недоступно в этой группе."));
+  if (list(policy?.stateIds).length && !policy.stateIds.includes(stateId)) return deny(localizedMessage("Условие срабатывания недоступно в этом состоянии."));
+  if (!actorInScene) return deny(localizedMessage("Персонаж находится в другой сцене."));
+  const actorTags = tags(actorTagValues);
   const allow = tags(policy?.allowTags), block = tags(policy?.denyTags);
-  if (allow.size && ![...allow].some((tag) => actorTags.has(tag))) return deny("Теги персонажа не входят в разрешённый список.");
-  if ([...block].some((tag) => actorTags.has(tag))) return deny("Тег персонажа входит в запрещённый список.");
-  if (!ignoreQuota && policy?.repeat !== "always" && uses(state, conditionKey) >= limit(policy)) return deny("Разрешённое число срабатываний исчерпано.");
+  if (allow.size && ![...allow].some((tag) => actorTags.has(tag))) return deny(localizedMessage("Теги персонажа не входят в разрешённый список."));
+  if ([...block].some((tag) => actorTags.has(tag))) return deny(localizedMessage("Тег персонажа входит в запрещённый список."));
+  if (!ignoreQuota && policy?.repeat !== "always" && count >= limit(policy)) return deny(localizedMessage("Разрешённое число срабатываний исчерпано."));
   return { allowed: true, reason: "" };
+}
+
+/** Gather native identity and current run facts without changing persisted state. */
+export function getConditionGate(scene, state, policy = {}, actorToken, { conditionKey, ignoreQuota = false } = {}) {
+  const token = actorToken?.document ?? actorToken;
+  const actorInScene = !token || scene.tokens?.get(token.id) === token && (!token.parent?.id || token.parent.id === scene.id);
+  return evaluateConditionPolicy({ active: Boolean(state?.runId && state.stateId && state.state),
+    groupId: state?.groupId ?? "main", stateId: state?.stateId, conditionKey, ignoreQuota,
+    halted: isExecutionHalted(scene, state), enabledOverride: state?.conditionEnabledOverrides?.[conditionKey],
+    count: state ? uses(state, conditionKey) : 0, actorInScene }, policy,
+  token && actorInScene ? getObjectTags(scene, { type: "Token", id: token.id }) : []);
 }
 
 /** Caller must hold the owning Scene lock and have checked its current gate. */
 export function consumeCondition(state, key, policy = {}) {
   if ((state.conditionEnabledOverrides?.[key] ?? policy?.enabled) === false
-    || (policy?.repeat !== "always" && uses(state, key) >= limit(policy))) throw new Error("Триггер уже недоступен.");
+    || (policy?.repeat !== "always" && uses(state, key) >= limit(policy))) throw new Error(localizedMessage("Условие срабатывания уже недоступно."));
   state.conditionCounts ??= {};
   state.conditionCounts[key] = Math.min(Number.MAX_SAFE_INTEGER, uses(state, key) + 1);
   return state.conditionCounts[key];

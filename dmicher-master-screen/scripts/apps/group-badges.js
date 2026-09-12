@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "../localization.js";
 import { getDefinitions, getRuntimes } from "../store.js";
 import { generics } from "../generics.js";
 
@@ -11,7 +12,7 @@ export function groupBadges(definitions, runtimes) {
     const runtime = runtimes.find((entry) => entry.groupId === definition.groupId);
     const state = definition.states.find((entry) => entry.id === runtime?.stateId) ?? runtime?.state;
     const status = runtime?.halted ? "halted" : state ? "running" : "unstarted";
-    const statusText = status === "halted" ? (en ? "Stopped" : "Остановлена") : status === "unstarted" ? (en ? "Not started" : "Не запущена") : "";
+    const statusText = status === "halted" ? (en ? "Stopped" : localizedMessage("Остановлена")) : status === "unstarted" ? (en ? "Not started" : localizedMessage("Не запущена")) : "";
     return { id: definition.groupId, symbol: definition.symbol ?? "🎬", status,
       title: [definition.groupName, state?.name, statusText].filter(Boolean).join(" · "),
       background: color(state?.background, "#444B55"), textColor: color(state?.textColor, "#FFFFFF") };

@@ -33,7 +33,7 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
     state: { tokens: { npc: { enabled: true, shop: { enabled: true, requireGMApproval, range: 5, items: [
       { id: "entry", data: { name: "Sword", type: "gear", system: { quantity: 5 } }, stock }
     ] } } } } };
-  const context = () => ({ scene, runtime: structuredClone(runtime), token: npc, target: { type: "Token", id: "npc" }, shopId: "npc", behavior: structuredClone(runtime.state.tokens.npc) });
+  const context = () => ({ scene, runtime: structuredClone(runtime), object: npc, target: { type: "Token", id: "npc" }, shopId: "npc", behavior: structuredClone(runtime.state.tokens.npc) });
   let queue = Promise.resolve();
   const lock = (_scene, task) => { const result = queue.then(async () => { locked = true; try { return await task(); } finally { locked = false; } }); queue = result.catch(() => {}); return result; };
   const save = async (_scene, next) => { if (++saves === failSaveAt) throw new Error("write failed"); runtime = structuredClone(next); await onSave(runtime, saves); };

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultDefinition, emptyRuntime, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { emptyRuntime, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 
 // These are lifecycle/contract tests, not a browser renderer or a multiplayer Foundry server.
 const instances = new Map();
@@ -81,6 +82,7 @@ function fixture(generation, isGM = true) {
   globalThis.addEventListener = (name, callback) => { if (name === "pagehide") pagehide.push(callback); };
   globalThis.document = { querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} };
   globalThis.Hooks = hookBus;
+  globalThis.Handlebars = { registerHelper() {} };
   globalThis.ui = { windows: {}, notifications: { info() {}, warn() {}, error: (message) => errors.push(message) } };
   globalThis.game = { user: isGM ? gm : player, users: new Map([[gm.id, gm], [player.id, player]]),
     modules: new Map([[MODULE_ID, { id: MODULE_ID, active: true }]]),

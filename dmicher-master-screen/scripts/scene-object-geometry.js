@@ -54,3 +54,29 @@ export function translateRegionShapes(document, dx, dy) {
   };
   return Array.from(document.shapes ?? []).map(translate);
 }
+
+export function objectCenter(document, scene) {
+  return document?.getCenterPoint?.(document._source ?? document) ?? sceneObjectCenter(document, scene) ?? { x: NaN, y: NaN };
+}
+
+export function sceneDistance(scene, a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y) * Number(scene.grid?.distance ?? 1) / Number(scene.grid?.size || 100);
+}
+
+
+export function crossesRectangle(from, to, zone) {
+  const left = Number(zone.x), top = Number(zone.y);
+  const right = left + Number(zone.width), bottom = top + Number(zone.height);
+  const inside = (point) => point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+  if (inside(from)) return false;
+  if (inside(to)) return true;
+  let start = 0, end = 1;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  for (const [p, q] of [[-dx, from.x - left], [dx, right - from.x], [-dy, from.y - top], [dy, bottom - from.y]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const ratio = q / p;
+    if (p < 0) start = Math.max(start, ratio); else end = Math.min(end, ratio);
+    if (start > end) return false;
+  }
+  return true;
+}

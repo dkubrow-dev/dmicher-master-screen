@@ -1,4 +1,6 @@
+import { message as localizedMessage, text } from "./localization.js";
 import { escapeScriptText } from "./script-text.js";
+import { scriptActionLabel } from "./script-action-labels.js";
 import { isAuthority } from "./store.js";
 
 const values = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
@@ -43,20 +45,20 @@ export function createCombatAdapter({ emitSignal, chat } = {}) {
       on("deleteCombat", (combat) => { const prior = snapshots.get(combat.id); snapshots.delete(combat.id); if (prior?.started ?? combat.started) void send(combat, "combatEnded", { groupUuid: null, groupName: null, stateUuid: null, stateName: null }).catch(report); });
     },
     async notify(object, script, step, rounds, key) {
-      const message = `${object.name ?? object.id}: ${script.name || "Скрипт"}, шаг ${step.id} (${step.kind}), ходов: ${rounds}.`;
+      const message = localizedMessage("{0}: {1}, шаг {2} ({3}), ходов: {4}.", [object.name ?? object.id, script.name || localizedMessage("Скрипт"), step.id, scriptActionLabel(step.kind), rounds]);
       if (script.combat.notifyWarning) globalThis.ui?.notifications?.warn(message);
       if (script.combat.notifyChat) {
-        if (!informer) throw new Error("Информатор Generics недоступен.");
+        if (!informer) throw new Error(localizedMessage("Информатор Generics недоступен."));
         await informer.create({ content: `<p>${escapeScriptText(message)}</p>` }, { audience: { type: "gms" }, key, kind: "combat-action", technical: true });
       }
     },
     async confirmAction(object, script, step, rounds) {
       if (!script.combat.confirm) return "continue";
       const Dialog = globalThis.foundry?.applications?.api?.DialogV2;
-      if (!Dialog?.wait) throw new Error("Диалог подтверждения Foundry недоступен.");
-      return await Dialog.wait({ window: { title: `${object.name ?? object.id}: ${script.name || "Скрипт"}` },
-        content: `<p>Шаг ${step.id}: ${escapeScriptText(step.kind)}. Ожидаемая длительность: ${rounds} ход(а).</p>`,
-        buttons: [{ action: "continue", label: "Продолжить", default: true }, { action: "skip", label: "Пропустить" }, { action: "stop", label: "Остановить" }], close: () => "skip" }, { rejectClose: false }) ?? "skip";
+      if (!Dialog?.wait) throw new Error(localizedMessage("Диалог подтверждения Foundry недоступен."));
+      return await Dialog.wait({ window: { title: `${object.name ?? object.id}: ${script.name || localizedMessage("Скрипт")}` },
+        content: `<p>${escapeScriptText(text(`Шаг ${step.id}: ${scriptActionLabel(step.kind)}. Ожидаемая длительность: ${rounds} ход(а).`, `Step ${step.id}: ${scriptActionLabel(step.kind)}. Expected duration: ${rounds} turn(s).`))}</p>`,
+        buttons: [{ action: "continue", label: localizedMessage("Продолжить"), default: true }, { action: "skip", label: localizedMessage("Пропустить") }, { action: "stop", label: localizedMessage("Остановить") }], close: () => "skip" }, { rejectClose: false }) ?? "skip";
     },
     async finishTurn(scene, object, expected) {
       const current = context(scene, object);

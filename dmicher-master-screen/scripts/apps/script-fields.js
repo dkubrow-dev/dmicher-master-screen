@@ -1,13 +1,10 @@
-import { generics } from "../generics.js";
-import { scriptStepTemplate } from "../script-model.js";
+import { text as t } from "../localization.js";
+import { moveScriptStep } from "../script-editing.js";
+import { escapeHTML as e, formValue } from "./form-fields.js";
 import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
+import { scriptActionOptions } from "../script-action-labels.js";
 
-const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
-const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
-const kinds = () => [["wait", t("Ожидание", "Wait")], ["move", t("Перемещение", "Move")],
-  ["visibility", t("Видимость", "Visibility")],
-  ["speech", t("Реплика", "Speech")], ["emotion", t("Эмоция", "Emotion")],
-  ["sound", t("Звук", "Sound")], ["signal", t("Сигнал", "Signal")], ["macro", t("Макрос", "Macro")]];
+const kinds = scriptActionOptions;
 
 /** Row order is presentation only. IDs and outgoing edges define execution. */
 export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, open = false, combatSupported = false } = {}) {
@@ -37,7 +34,7 @@ export function readScriptFields(root, scripts) {
   for (const control of root.querySelectorAll?.("[data-script-param]") ?? []) {
     if (!control.disabled && control.checkValidity?.() === false) throw new Error(`${control.getAttribute("aria-label") ?? ""}: ${control.validationMessage}`);
   }
-  const value = (name) => root.querySelector(`[name="${name}"]`)?.value ?? "";
+  const value = (name) => formValue(root, name);
   return scripts.map((script, index) => {
     const prefix = `script-${index}`;
     const on = (name) => root.querySelector(`[name="${prefix}-${name}"]`)?.checked === true;
@@ -55,25 +52,6 @@ export function readScriptFields(root, scripts) {
         return { ...step, kind: value(`${key}-kind`), parameters, next };
       }) };
   });
-}
-
-export function appendScriptStep(script) {
-  const id = Math.max(0, ...script.steps.map((step) => step.id)) + 1;
-  const previous = script.steps.at(-1);
-  if (previous && !previous.next.length) previous.next = [id];
-  script.steps.push({ id, ...scriptStepTemplate("wait") });
-}
-
-export function removeScriptStep(script, index) {
-  if (script.steps[index]?.id === 1 && script.steps.length > 1) throw new Error(t("Сначала удалите остальные шаги: шаг 1 начинает рутину.", "Remove the other steps first: step 1 starts the script."));
-  const [removed] = script.steps.splice(index, 1);
-  if (removed) for (const step of script.steps) step.next = step.next.filter((id) => id !== removed.id);
-}
-
-export function moveScriptStep(script, from, to) {
-  if (![from, to].every((index) => Number.isInteger(index) && index >= 0 && index < script.steps.length) || from === to) return false;
-  script.steps.splice(to, 0, script.steps.splice(from, 1)[0]);
-  return true;
 }
 
 /** Move existing DOM rows so unfinished JSON and focus survive; never reinterpret edges. */

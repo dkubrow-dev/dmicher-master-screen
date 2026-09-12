@@ -1,4 +1,6 @@
-export const escapeScriptText = (text) => String(text ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+import { generics } from "./generics.js";
+
+export const escapeScriptText = (text) => generics.utilities.escapeHTML(String(text ?? ""));
 const FORMATTING = new Set(["P", "BR", "B", "STRONG", "I", "EM", "U", "S", "SUB", "SUP", "UL", "OL", "LI", "BLOCKQUOTE", "H1", "H2", "H3", "H4", "HR", "IMG"]);
 const DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "SVG", "MATH", "TEMPLATE"]);
 const imageSource = (value) => {

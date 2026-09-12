@@ -4,5 +4,4 @@ export const theme = generics.theme.createWindowThemeController({
   windowClass: "dmicher-master-screen", getTheme: () => generics.appearance.getTheme()
 });
 export const themedClasses = (...names) => theme.classes(...names);
-export const localize = (key) => game.i18n.localize(`DMICHERMASTERSCREEN.${key}`);
 export const notifyError = (error) => { console.error(MODULE_ID, error); ui.notifications.error(error.message ?? String(error)); };

@@ -1,24 +1,24 @@
 <section class="ms-actor-view-content">
   <div class="ms-toolbar">
     <strong>{{sceneName}}</strong>
-    <label>Персонаж <select name="actorTokenId">{{#each tokens}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
-    <button type="button" data-action="selectToken">Выбрать на карте</button>
-    {{#if detachable}}<button type="button" data-action="separateWindow">На отдельный экран</button>{{/if}}
+    <label>{{dmicherScreenText "Персонаж" "Character"}} <select name="actorTokenId">{{#each tokens}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+    <button type="button" data-action="selectToken">{{dmicherScreenText "Выбрать на карте" "Select on map"}}</button>
+    {{#if detachable}}<button type="button" data-action="separateWindow">{{dmicherScreenText "На отдельный экран" "Move to separate screen"}}</button>{{/if}}
   </div>
-  {{#unless hasTokens}}<p class="ms-note">Добавьте на карту токен персонажа, которым владеет игрок.</p>{{/unless}}
-  <canvas class="ms-actor-canvas" width="800" height="500" aria-label="Предпросмотр карты выбранного персонажа"></canvas>
+  {{#unless hasTokens}}<p class="ms-note">{{dmicherScreenText "Добавьте на карту токен персонажа, которым владеет игрок." "Add a player-owned character token to the map."}}</p>{{/unless}}
+  <canvas class="ms-actor-canvas" width="800" height="500" aria-label="{{dmicherScreenText "Предпросмотр карты выбранного персонажа" "Map preview for the selected character"}}"></canvas>
   <p class="ms-status" data-preview-status></p>
   <div class="ms-actions">
-    <button type="button" data-action="move" data-direction="left" aria-label="Влево">←</button>
-    <button type="button" data-action="move" data-direction="up" aria-label="Вверх">↑</button>
-    <button type="button" data-action="move" data-direction="down" aria-label="Вниз">↓</button>
-    <button type="button" data-action="move" data-direction="right" aria-label="Вправо">→</button>
-    <span>Движение персонажа: стрелки или Shift + двойной щелчок по карте.</span>
+    <button type="button" data-action="move" data-direction="left" aria-label="{{dmicherScreenText "Влево" "Left"}}">←</button>
+    <button type="button" data-action="move" data-direction="up" aria-label="{{dmicherScreenText "Вверх" "Up"}}">↑</button>
+    <button type="button" data-action="move" data-direction="down" aria-label="{{dmicherScreenText "Вниз" "Down"}}">↓</button>
+    <button type="button" data-action="move" data-direction="right" aria-label="{{dmicherScreenText "Вправо" "Right"}}">→</button>
+    <span>{{dmicherScreenText "Движение персонажа: стрелки или Shift + двойной щелчок по карте." "Move the character using arrows or Shift + double-click on the map."}}</span>
   </div>
   <div class="ms-actions" data-interactions></div>
-  <details class="ms-note"><summary>Границы предпросмотра</summary>
-    <p>Показаны карта и токены с маской зрения выбранного персонажа. Скрытые токены не выводятся. Тайлы, крыши, цвет освещения, эффекты, особые чувства и ранее исследованный туман здесь не воспроизводятся. Фон отображается в границах карты; нестандартное смещение и поворот фонового изображения могут отличаться. Для точного вида используйте отдельное подключение игрока.</p>
-    <p>Это окно мастера: движения и взаимодействия меняют настоящую сцену. Роль и права подключения остаются прежними. Перезаход не переигрывает состояние.</p>
-    {{#unless detachable}}<p>В Foundry 13 окно находится внутри основной страницы. В Foundry 14 доступен штатный перенос на отдельный экран.</p>{{/unless}}
+  <details class="ms-note"><summary>{{dmicherScreenText "Границы предпросмотра" "Preview limitations"}}</summary>
+    <p>{{dmicherScreenText "Показаны карта и токены с маской зрения выбранного персонажа. Скрытые токены не выводятся. Тайлы, крыши, цвет освещения, эффекты, особые чувства и ранее исследованный туман здесь не воспроизводятся. Фон отображается в границах карты; нестандартное смещение и поворот фонового изображения могут отличаться. Для точного вида используйте отдельное подключение игрока." "The map and tokens use the selected character's vision mask. Hidden tokens are not shown. Tiles, roofs, lighting colors, effects, special senses and explored fog are not reproduced here. The background fits the map bounds; custom background offsets and rotation may differ. Use a separate player connection for an exact view."}}</p>
+    <p>{{dmicherScreenText "Это окно мастера: движения и взаимодействия меняют настоящую сцену. Роль и права подключения остаются прежними. Перезаход не переигрывает состояние." "This is a GM window: movement and interactions change the real scene. Your role and permissions remain unchanged. Reconnecting does not replay the state."}}</p>
+    {{#unless detachable}}<p>{{dmicherScreenText "В Foundry 13 окно находится внутри основной страницы. В Foundry 14 доступен штатный перенос на отдельный экран." "In Foundry 13 this window stays inside the main page. Foundry 14 supports native transfer to a separate screen."}}</p>{{/unless}}
   </details>
 </section>

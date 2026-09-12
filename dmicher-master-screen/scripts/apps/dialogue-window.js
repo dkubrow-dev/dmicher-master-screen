@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { validateDialogueAccess } from "../dialogues.js";
@@ -5,9 +6,10 @@ import { validateDialogueAccess } from "../dialogues.js";
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV2) {
+  get title() { return localizedMessage("Ширма мастера · Диалог"); }
   static DEFAULT_OPTIONS = {
     classes: themedClasses("ms-dialogue"), position: { width: 660, height: 580 },
-    window: { title: "Ширма мастера · Диалог", icon: "fa-solid fa-comments", resizable: true },
+    window: { icon: "fa-solid fa-comments", resizable: true },
     actions: { answer: DialogueApplication.answer, leave: DialogueApplication.leave }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/dialogue.hbs` } };

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createDialogueService, validateDialogueAccess } from "../dmicher-master-screen/scripts/dialogues.js";
+import { createGroupDefinition, defaultState } from "../dmicher-master-screen/scripts/model.js";
+import { isInteractionPaused } from "../dmicher-master-screen/scripts/interaction-pause.js";
 
 const MODULE_ID = "dmicher-master-screen";
 function fixture({ emitFailure = false, signal = async () => ({ status: "done", allowed: true }) } = {}) {
@@ -17,10 +19,10 @@ function fixture({ emitFailure = false, signal = async () => ({ status: "done", 
     getFlag: (_module, name) => name === "objectBindings" ? { bindings: Object.fromEntries(Object.entries(tags).map(([id, values]) => [`Token:${id}`, { type: "Token", id, tags: values }])) }
       : name === "signalCatalog" ? { signals: [{ id: "alarm", name: "merchant.alarmed", emitterKey: "Dialogue:talk" }, { id: "open", name: "chest.opened", emitterKey: "Tile:chest" }] } : undefined };
   let runtime = { schemaVersion: 1, runId: "run", groupId: "main", stateId: "calm", disabledObjects: [], dialogueSessions: {}, dialogueCommands: {}, state: {
-    dialogues: [{ id: "talk", name: "Conversation", enabled: true, target: { type: "Token", id: "npc" }, range: 5, startNodeId: "start", nodes: [
-      { id: "start", text: "Welcome", art: "", responses: [{ id: "ask", label: "Ask", nextNodeId: "info", signalId: "" },
-        { id: "alarm", label: "Alarm", nextNodeId: "", signalId: "alarm", parameters: {} }] },
-      { id: "info", text: "Information", art: "info.webp", responses: [{ id: "finish", label: "Done", nextNodeId: "", signalId: "" }] }
+    dialogues: [{ id: "talk", name: "Conversation", enabled: true, target: { type: "Token", id: "npc" }, range: 5, startPageId: "start", pages: [
+      { id: "start", text: "Welcome", art: "", responses: [{ id: "ask", label: "Ask", nextPageId: "info", signalId: "" },
+        { id: "alarm", label: "Alarm", nextPageId: "", signalId: "alarm", parameters: {} }] },
+      { id: "info", text: "Information", art: "info.webp", responses: [{ id: "finish", label: "Done", nextPageId: "", signalId: "" }] }
     ] }], interactions: [{ id: "lever", name: "Open", enabled: true, target: { type: "Tile", id: "chest" }, range: 5, signalId: "open", parameters: {} }]
   } };
   const context = (_sceneId, dialogueId) => {
@@ -267,5 +269,40 @@ test("an ongoing dialogue requires its exact stored Actor and object identities"
     const { result } = await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, nodeId: "start", step: 0, responseId: "ask" });
     assert.ok(result.failure, field); assert.equal(f.events.length, 1);
     assert.equal(Object.values(f.runtime().dialogueSessions)[0].nodeId, "start");
+  }
+});
+
+test("finished dialogue windows renew their pause and release it immediately on close without duplicate signals", async (t) => {
+  let now = 1000;
+  t.mock.method(Date, "now", () => now);
+  for (const throughAnswer of [false, true]) {
+    const f = fixture();
+    const dialogue = f.runtime().state.dialogues[0];
+    dialogue.pages[0].responses = throughAnswer ? [{ id: "finish", label: "Finish", nextPageId: "", signalId: "" }] : [];
+    const definition = createGroupDefinition({ groupId: "main", state: defaultState("Calm", "calm") });
+    const getFlag = f.scene.getFlag;
+    f.scene.getFlag = (scope, key) => key === "groupDefinitions" ? { main: definition }
+      : key === "groupRuntimes" ? { main: f.runtime() } : getFlag(scope, key);
+    const { result: opened } = await f.send(f.start);
+    const finished = throughAnswer
+      ? (await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, responseId: "finish", nodeId: "start", step: 0 })).result
+      : opened;
+    assert.equal(finished.status, "finished");
+    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), true);
+    const before = structuredClone(Object.values(f.runtime().dialogueSessions)[0]);
+    now += 30_000;
+    const { result: renewed } = await f.send({ kind: "renew", sceneId: "scene", sessionId: finished.sessionId, target: { type: "Token", id: "npc" } });
+    assert.equal(renewed.status, "finished");
+    assert.equal(renewed.nodeId, before.nodeId);
+    assert.equal(renewed.step, before.step);
+    assert.ok(Object.values(f.runtime().dialogueSessions)[0].expiresAt > before.expiresAt);
+    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), true);
+    assert.equal(f.events.filter((event) => event.name === "closed").length, 1);
+    const leave = { kind: "leave", sceneId: "scene", sessionId: finished.sessionId };
+    assert.equal((await f.send(leave)).result.status, "left");
+    assert.equal(Object.values(f.runtime().dialogueSessions)[0].status, "left");
+    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), false);
+    assert.equal((await f.send(leave)).result.status, "left");
+    assert.equal(f.events.filter((event) => event.name === "closed").length, 1);
   }
 });

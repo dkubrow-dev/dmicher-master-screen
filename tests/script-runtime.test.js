@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { GroupRuntime } from "../dmicher-master-screen/scripts/runtime.js";
-import { defaultDefinition, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
+import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
 import { getRuntime, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { scriptProgressKey } from "../dmicher-master-screen/scripts/script-runtime.js";
 import { beginInteractionPause, isInteractionPaused } from "../dmicher-master-screen/scripts/interaction-pause.js";

@@ -1,7 +1,7 @@
 <section class="ms-form">
   <h2>{{name}}</h2>
-  {{#if missing}}<p>Взаимодействие сейчас недоступно.</p>{{else}}
-  <label>Персонаж <select>{{#each characters}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
-  {{#each choices}}<button type="button" data-interaction="{{@index}}">{{name}}</button>{{else}}<p>Для выбранного персонажа нет доступных действий.</p>{{/each}}
+  {{#if missing}}<p>{{dmicherScreenText "Взаимодействие сейчас недоступно." "Interaction is currently unavailable."}}</p>{{else}}
+  <label>{{dmicherScreenText "Персонаж" "Character"}} <select>{{#each characters}}<option value="{{id}}" {{#if selected}}selected{{/if}}>{{name}}</option>{{/each}}</select></label>
+  {{#each choices}}<button type="button" data-interaction="{{@index}}">{{name}}</button>{{else}}<p>{{dmicherScreenText "Для выбранного персонажа нет доступных действий." "No actions are available to the selected character."}}</p>{{/each}}
   {{/if}}
 </section>

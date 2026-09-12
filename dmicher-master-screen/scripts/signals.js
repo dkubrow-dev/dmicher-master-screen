@@ -1,3 +1,4 @@
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID, randomId } from "./model.js";
 import { getRuntime, getRuntimeForRun, requireGM, isAuthority } from "./store.js";
 import { getSignalCatalog } from "./signal-catalog.js";
@@ -14,8 +15,8 @@ export class SceneSignals {
   }
   requireAuthority() {
     requireGM();
-    if (!isAuthority()) throw new Error("Сигналы исполняет выбранный активный полный мастер.");
-    if (this.disposed) throw new Error("Обработчик сигналов остановлен.");
+    if (!isAuthority()) throw new Error(localizedMessage("Сигналы исполняет выбранный активный полный мастер."));
+    if (this.disposed) throw new Error(localizedMessage("Обработчик сигналов остановлен."));
   }
   current(scene, context = {}) {
     if (this.disposed || !isAuthority()) return false;
@@ -33,21 +34,21 @@ export class SceneSignals {
     this.requireAuthority();
     const catalog = getSignalCatalog(scene), emitter = catalog.emitters.find((entry) => entry.key === input.emitterKey);
     const signal = catalog.signals.find((entry) => entry.emitterKey === input.emitterKey && (input.signalId ? entry.id === input.signalId : entry.name === input.name));
-    if (!emitter || !signal) throw new Error("Эмитент не объявлял этот сигнал в текущей сцене.");
+    if (!emitter || !signal) throw new Error(localizedMessage("Эмитент не объявлял этот сигнал в текущей сцене."));
     const parameters = validateSignalValues(signal.parameters, input.parameters ?? {}), id = input.id ?? randomId();
     const inherited = input.context ?? {}, chain = inherited._chain ?? { count: 0 }, depth = inherited.depth ?? 0;
-    if (depth >= 32 || chain.count >= 64) throw new Error("Цепочка сигналов превысила 32 вложения или 64 вызова.");
+    if (depth >= 32 || chain.count >= 64) throw new Error(localizedMessage("Цепочка сигналов превысила 32 вложения или 64 вызова."));
     const signature = JSON.stringify([emitter.key, signal.id, parameters]);
     let receipts = this.receipts.get(scene);
     if (!receipts) this.receipts.set(scene, receipts = new Map());
     const previous = receipts.get(id);
     if (previous) {
-      if (previous.signature !== signature) throw new Error("ID сигнала уже использован с другими параметрами.");
+      if (previous.signature !== signature) throw new Error(localizedMessage("ID сигнала уже использован с другими параметрами."));
       return previous.promise;
     }
     while (receipts.size >= 200) {
       const removable = [...receipts].find(([, entry]) => entry.done);
-      if (!removable) throw new Error("Слишком много незавершённых сигналов.");
+      if (!removable) throw new Error(localizedMessage("Слишком много незавершённых сигналов."));
       receipts.delete(removable[0]);
     }
     chain.count++;
@@ -116,13 +117,13 @@ export class SceneSignals {
         const scope = {
           scene, emitter: structuredClone(emitter), subscriber: structuredClone(owner), signal: structuredClone(signal),
           transition: (groupId, stateId) => {
-            if (!current()) throw new Error("Подписка относится к прежнему запуску автоматизации.");
+            if (!current()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
             const active = getRuntime(scene, { groupId });
             return this.runtime.enter(scene, stateId, { groupId, expectedRunId: active.runId, signalContext: { ...context, depth: context.depth + 1 } });
           },
-          halt: (groupId = owner.groupId) => { if (!current()) throw new Error("Подписка остановлена."); return groupId ? this.runtime.halt(scene, { groupId }) : this.runtime.haltAll(scene); },
+          halt: (groupId = owner.groupId) => { if (!current()) throw new Error(localizedMessage("Подписка остановлена.")); return groupId ? this.runtime.halt(scene, { groupId }) : this.runtime.haltAll(scene); },
           emit: (name, values = {}) => {
-            if (!current()) throw new Error("Подписка относится к прежнему запуску автоматизации.");
+            if (!current()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
             return this.emit(scene, { emitterKey: owner.key, name, parameters: values, context: { ...context, current, depth: context.depth + 1 } });
           }
         };
@@ -140,7 +141,8 @@ export class SceneSignals {
         result.messages.push({ ownerKey: owner.key, name: owner.name, message: entry.error });
       }
     }
-    const log = this.logs.get(scene) ?? []; log.push(structuredClone(result)); this.logs.set(scene, log.slice(-100));
+    const log = this.logs.get(scene) ?? [];
+    log.push({ ...structuredClone(result), at: Date.now() }); this.logs.set(scene, log.slice(-100));
     this.onChange(scene);
     return result;
   }

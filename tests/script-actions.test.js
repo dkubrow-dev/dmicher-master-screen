@@ -1,9 +1,10 @@
+import { objectCenter } from "../dmicher-master-screen/scripts/scene-object-geometry.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeScript } from "../dmicher-master-screen/scripts/script-model.js";
 import { ObjectScriptRuntime, scriptProgressKey } from "../dmicher-master-screen/scripts/script-runtime.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } from "../dmicher-master-screen/scripts/script-movement.js";
-import { speechRecipients, createFoundryEffects, tokenCenter } from "../dmicher-master-screen/scripts/effects.js";
+import { speechRecipients, createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
 import { createCombatAdapter } from "../dmicher-master-screen/scripts/combat-adapter.js";
 import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
 const clone = structuredClone;
@@ -50,7 +51,7 @@ test("native Token depth is optional; Tile sizes convert grid spaces to pixels",
   const tile = { ...token, documentName: "Tile", width: 100, height: 100, async update(v) { Object.assign(this, v); } };
   const movement = planScriptMovement(scene, tile, { timeMode: "duration", duration: 0, size: { x: 2, y: 3, z: null, speed: 1 } });
   await advanceScriptMovement(scene, tile, movement, 0); assert.equal(tile.width, 200); assert.equal(tile.height, 300);
-  assert.deepEqual(tokenCenter(tile, scene), { x: 100, y: 150 });
+  assert.deepEqual(objectCenter(tile, scene), { x: 100, y: 150 });
 });
 test("relative rotation preserves multiple revolutions across wrapped native angles", async () => {
   const f = fixture({ steps: [step(1, "move", { duration: 4, rotation: { mode: "relative", angle: 720 } })] });

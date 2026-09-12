@@ -2,6 +2,10 @@
 
 Разработка от 12 сентября 2026 для Foundry 13/14. Обязательная зависимость — Generics 1.0.0. Номер версии сохранён; это сборка ветки разработки, не публикация удалённого релиза.
 
+- Разделены предметные модели, запись документов и представления. Формы и таблицы используют общие компоненты; старые перекрывающие стили и заменённые исполнители удалены. Отображение эмоций и облачков отделено от выполнения скриптов.
+- Исправлены ссылки при совпадении ID магазина и диалога, перенос и удаление объявлений сигналов больше не принимают произвольные JSON-поля за ссылки. Последняя страница диалога корректно удерживает рутину до закрытия. Журнал показывает текущие сигналы вместо старого источника данных.
+- Интерфейс, шаблоны, подсказки, сообщения об ошибках и справка проверены на русском и английском. Страницы диалогов и объекты сцены получили последовательные названия в коде; сохранённые протоколы сессий остаются прежними.
+
 - Параметры всех действий скрипта редактируются компактными вложенными таблицами. Переключение режима сохраняет скрытые значения; кнопка JSON синхронизирует обе формы редактирования. Координаты и размеры можно взять из текущего объекта, точку — с карты. Кнопки исходного состояния находятся на одной строке.
 - Дерево сигналов разделено на сцену, группы, токены, тайлы, рисунки, стены и прочие объекты. Магазины и диалоги имеют самостоятельные категории. Строки компактны, техническое имя вынесено в отдельный столбец. Поля входов и возвратов раскрываются в таблицу с типовыми значениями и JSON.
 - Контекстное меню и поведение работают также с рисунками, стенами, светом, звуком, заметками, шаблонами и областями в пределах их нативных возможностей. Выбор объекта в «Автоматизации» центрирует карту, активирует слой и выделяет объект рамкой. Торговля и диалоги сохраняют проверки доступа и приостанавливают рутину любого поддерживаемого объекта.
@@ -20,3 +24,5 @@
 Groups and states now share emitter-owned typed signals and reusable object scripts. The toolbar preserves automation status when selecting states. Scripts support movement, speech, effects and turn budgets. Objects may expose multiple shops and dialogues; purchase validation precedes inventory changes, and interrupted conversations can resume. Signal macros have validated interfaces and explicit ownership. Current preparation is exported without legacy migration.
 
 Script parameters and signal fields now use compact expandable tables synchronized with JSON. Mode changes preserve inactive values. The signal tree separates scene services, groups and native object types. Selecting an automation object focuses and outlines it on its native canvas layer. Context menus, scripts and interactions also support drawings, walls, lights, sounds, notes, templates and regions within their native capabilities.
+
+Domain models, document persistence and presentation now have separate responsibilities. Shared form controls and lifecycle replace duplicated code. Imports distinguish shop and dialogue identities and preserve opaque signal payloads. Final dialogue pages retain the routine pause until closed, and the journal reads current signal history. Interface text, templates, errors and help now cover Russian and English.

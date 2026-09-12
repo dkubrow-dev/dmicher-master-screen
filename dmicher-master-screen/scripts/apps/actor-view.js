@@ -1,6 +1,7 @@
+import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
-import { tokenCenter } from "../effects.js";
+import { objectCenter } from "../scene-object-geometry.js";
 import { listAvailableInteractions } from "../interaction-access.js";
 import { getRuntimes } from "../store.js";
 import { getObjectBindings } from "../scene-objects.js";
@@ -20,7 +21,7 @@ export function isTokenVisibleFrom(observerToken, targetToken, { canvas: view = 
   const source = observer.object?.vision ?? observerToken.vision;
   if (!source?.active || source.isBlinded || !observer.sight?.enabled) return false;
   const targetObject = target.object ?? targetToken;
-  const points = target.getVisibilityTestPoints?.() ?? [tokenCenter(target, view.scene)];
+  const points = target.getVisibilityTestPoints?.() ?? [objectCenter(target, view.scene)];
   const level = view.scene.levels?.get(target.level) ?? view.level;
   const tests = points.map((point) => ({ point: { ...point, elevation: point.elevation ?? target.elevation ?? 0 },
     elevation: point.elevation ?? target.elevation ?? 0, level, los: new Map() }));
@@ -51,9 +52,10 @@ function drawTexture(context, mesh, x, y, width, height) {
 }
 
 export class ActorViewApplication extends HandlebarsApplicationMixin(ApplicationV2) {
+  get title() { return localizedMessage("Ширма мастера · Актёр"); }
   static DEFAULT_OPTIONS = {
     id: "dmicher-master-screen-actor", classes: themedClasses("ms-actor-view"),
-    window: { title: "Ширма мастера · Актёр", icon: "fa-solid fa-masks-theater", resizable: true },
+    window: { icon: "fa-solid fa-masks-theater", resizable: true },
     position: { width: 880, height: 720 },
     actions: {
       selectToken: ActorViewApplication.selectToken,
@@ -82,7 +84,7 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
       this.lastSceneId = state.scene?.id;
       this.actorTokenId = tokens.find((token) => token.object?.controlled)?.id ?? tokens[0]?.id ?? null;
     }
-    return { ...context, sceneName: state.scene?.name ?? "Нет сцены", missing: !state.scene,
+    return { ...context, sceneName: state.scene?.name ?? localizedMessage("Нет сцены"), missing: !state.scene,
       tokens: tokens.map((token) => ({ id: token.id, name: token.name, selected: token.id === this.actorTokenId })),
       hasTokens: tokens.length > 0, detachable: typeof this.detachWindow === "function" };
   }
@@ -156,10 +158,10 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
     const observer = scene?.tokens?.get(this.actorTokenId);
     const status = this.element.querySelector("[data-preview-status]");
     const setStatus = (text) => { if (status) status.textContent = text; };
-    if (!scene || canvas.scene?.id !== scene.id || !observer) { setStatus("Выберите персонажа текущей карты."); this.updateInteractions([]); return; }
+    if (!scene || canvas.scene?.id !== scene.id || !observer) { setStatus(localizedMessage("Выберите персонажа текущей карты.")); this.updateInteractions([]); return; }
     const source = observer.object?.vision;
     if (scene.tokenVision && (!source?.active || !observer.sight?.enabled)) {
-      setStatus("Для предпросмотра включите зрение выбранного токена и выберите его на карте. Без источника зрения карта скрыта.");
+      setStatus(localizedMessage("Для предпросмотра включите зрение выбранного токена и выберите его на карте. Без источника зрения карта скрыта."));
       this.updateInteractions([]);
       return;
     }
@@ -213,9 +215,9 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
     context.restore();
     this.updateInteractions(visible.filter((token) => token.id !== observer.id).flatMap((token) => {
       const choices = listAvailableInteractions(scene, { type: "Token", id: token.id }, observer, game.user);
-      return choices.length ? [{ id: token.id, label: `${token.name} · Взаимодействовать` }] : [];
+      return choices.length ? [{ id: token.id, label: localizedMessage("{0} · Взаимодействовать", [token.name]) }] : [];
     }));
-    setStatus(scene.tokenVision ? "Предпросмотр выбранного персонажа: базовое зрение и прямая видимость." : "В сцене отключено зрение токенов: карта открыта, скрытые токены исключены.");
+    setStatus(scene.tokenVision ? localizedMessage("Предпросмотр выбранного персонажа: базовое зрение и прямая видимость.") : localizedMessage("В сцене отключено зрение токенов: карта открыта, скрытые токены исключены."));
   }
 
   updateInteractions(items) {

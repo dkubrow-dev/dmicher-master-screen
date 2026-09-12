@@ -1,10 +1,9 @@
-import { generics } from "../generics.js";
+import { text as t } from "../localization.js";
+import { escapeHTML as e, parameterRow as row } from "./form-fields.js";
 import { scriptStepTemplate } from "../script-model.js";
 import { readObjectGeometry, scriptObjectCapabilities } from "../script-movement.js";
 import { fieldInitialValue } from "../signal-types.js";
 
-const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
-const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const clone = (value) => structuredClone(value);
 const own = (object, key, value) => Object.defineProperty(object, key, { value, writable: true, configurable: true, enumerable: true });
@@ -30,7 +29,7 @@ export function completeScriptParameters(kind, source, document) {
 
 export function setScriptParameter(parameters, path, value) {
   const keys = Array.isArray(path) ? path : JSON.parse(path);
-  if (!keys.length || keys.some((key) => typeof key !== "string")) throw new Error("Invalid parameter path.");
+  if (!keys.length || keys.some((key) => typeof key !== "string")) throw new Error(t("Некорректный путь параметра.", "Invalid parameter path."));
   let target = parameters;
   for (const key of keys.slice(0, -1)) {
     if (!Object.hasOwn(target, key) || !record(target[key])) own(target, key, {});
@@ -42,13 +41,12 @@ export function setScriptParameter(parameters, path, value) {
 function fields(parameters, context) {
   const attrs = (path, type = "text", extra = "") => `data-script-param="${e(JSON.stringify(path))}" data-param-type="${type}" ${extra}`;
   const value = (path) => path.reduce((parent, key) => parent?.[key], parameters);
-  const row = (label, control) => `<tr><th scope="row">${e(label)}</th><td>${control}</td></tr>`;
-  const table = (rows) => `<table class="ms-script-parameter-table"><tbody>${rows}</tbody></table>`;
+  const table = (rows) => `<table class="ms-parameter-table ms-script-parameter-table"><tbody>${rows}</tbody></table>`;
   const input = (path, label, { type = "text", step = "any", min, unit = "", disabled = false, nullable = false } = {}) => row(label, `<span class="ms-script-value"><input ${attrs(path, type, nullable ? 'data-param-nullable="true"' : "")} aria-label="${e(label)}" type="${type === "number" ? "number" : "text"}" value="${e(value(path))}"${type === "number" ? ` step="${step}"${min === undefined ? "" : ` min="${min}"`}` : ""}${disabled ? " disabled" : ""}>${unit ? `<span class="ms-script-unit">${e(unit)}</span>` : ""}</span>`);
   const num = (path, label, options = {}) => input(path, label, { type: "number", ...options, ...(options.step === "1" && typeof value(path) === "number" && !Number.isInteger(value(path)) ? { step: "any" } : {}) });
   const select = (path, label, values, type = "text") => row(label, `<select ${attrs(path, type)} aria-label="${e(label)}">${values.map(([id, text]) => `<option value="${e(id)}"${value(path) === id ? " selected" : ""}>${e(text)}</option>`).join("")}</select>`);
   const check = (path, label) => row(label, `<input type="checkbox" ${attrs(path, "boolean")} aria-label="${e(label)}"${value(path) ? " checked" : ""}>`);
-  const text = (path, label) => row(label, `<textarea ${attrs(path)} aria-label="${e(label)}" rows="2">${e(value(path))}</textarea>`);
+  const textParameterRow = (path, label) => row(label, `<textarea ${attrs(path)} aria-label="${e(label)}" rows="2">${e(value(path))}</textarea>`);
   const tags = (path, label) => row(label, `<input ${attrs(path, "tags")} aria-label="${e(label)}" value="${e((value(path) ?? []).join(", "))}">`);
   const group = (key, label, rows, { enabled, supported = true } = {}) => `<tr><td colspan="2"><details class="ms-script-parameter-group" data-param-group="${e(key)}" open><summary>${e(label)}${enabled === undefined ? "" : `<input type="checkbox" data-script-param-group="${e(key)}" aria-label="${e(t(`Включить: ${label}`, `Enable: ${label}`))}"${enabled ? " checked" : ""}${supported ? "" : " disabled"}>`}</summary>${supported ? table(rows) : `<span class="ms-note">${t("Объект не поддерживает это действие.", "This object does not support this action.")}</span>`}</details></td></tr>`;
   const action = (name, label) => `<button type="button" data-screen-action="${name}" data-step="${context.stepIndex}" data-index="${context.index}">${e(label)}</button>`;
@@ -82,8 +80,8 @@ function fields(parameters, context) {
     }
     case "speech": {
       rows = num(["duration"], t("Длительность", "Duration"), sec);
-      rows += group("chat", t("Чат", "Chat"), check(["chat", "enabled"], t("Включить", "Enable")) + (parameters.chat.enabled ? select(["chat", "timing"], t("Публикация", "Publish"), [["before", t("До реплики", "Before speech")], ["after", t("После реплики", "After speech")]]) + text(["chat", "text"], t("Текст", "Text")) + tags(["chat", "allowTags"], t("Разрешённые теги", "Allowed tags")) + tags(["chat", "denyTags"], t("Исключённые теги", "Excluded tags")) + num(["chat", "range"], t("Дальность", "Range"), { min: 0, unit: t("ед.", "units") }) + check(["chat", "deleteAfter"], t("Удалить после реплики", "Delete after speech")) : ""));
-      rows += group("bubble", t("Облачко", "Bubble"), check(["bubble", "enabled"], t("Включить", "Enable")) + (parameters.bubble.enabled ? text(["bubble", "text"], t("Текст", "Text")) + num(["bubble", "fontSize"], t("Размер шрифта", "Font size"), { min: 1, step: "1", unit: "px" }) : "")); break;
+      rows += group("chat", t("Чат", "Chat"), check(["chat", "enabled"], t("Включить", "Enable")) + (parameters.chat.enabled ? select(["chat", "timing"], t("Публикация", "Publish"), [["before", t("До реплики", "Before speech")], ["after", t("После реплики", "After speech")]]) + textParameterRow(["chat", "text"], t("Текст", "Text")) + tags(["chat", "allowTags"], t("Разрешённые теги", "Allowed tags")) + tags(["chat", "denyTags"], t("Исключённые теги", "Excluded tags")) + num(["chat", "range"], t("Дальность", "Range"), { min: 0, unit: t("ед.", "units") }) + check(["chat", "deleteAfter"], t("Удалить после реплики", "Delete after speech")) : ""));
+      rows += group("bubble", t("Облачко", "Bubble"), check(["bubble", "enabled"], t("Включить", "Enable")) + (parameters.bubble.enabled ? textParameterRow(["bubble", "text"], t("Текст", "Text")) + num(["bubble", "fontSize"], t("Размер шрифта", "Font size"), { min: 1, step: "1", unit: "px" }) : "")); break;
     }
     case "emotion": rows = input(["emoji"], t("Эмоция", "Emotion")) + row(t("Выбрать", "Choose"), `<select data-script-emoji data-index="${context.index}" data-step="${context.stepIndex}" aria-label="${t("Выбрать символ", "Choose symbol")}"><option value="">—</option>${["😀", "🙂", "😐", "😟", "😠", "😱", "😴", "❓", "❗", "💬", "❤️", "⚔️"].map((emoji) => `<option>${emoji}</option>`).join("")}</select>`) + num(["duration"], t("Длительность", "Duration"), sec); break;
     case "sound": rows = input(["src"], t("Файл", "File")) + row(t("Выбрать", "Choose"), action("script-sound", t("Выбрать звук", "Choose sound"))) + num(["volume"], t("Громкость", "Volume"), { min: 0 }); break;

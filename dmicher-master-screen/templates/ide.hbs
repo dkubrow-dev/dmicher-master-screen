@@ -1,31 +1,31 @@
 <div class="ms-ide-shell">
-  <div data-dock-divider class="ms-dock-divider" role="separator" tabindex="0" aria-label="Размер панели ширмы"></div>
+  <div data-dock-divider class="ms-dock-divider" role="separator" tabindex="0" aria-label="{{dmicherScreenText "Размер панели ширмы" "Screen panel size"}}"></div>
   <header class="ms-ide-toolbar">
-    <span class="ms-ide-mode-buttons" role="group" aria-label="Режим ширмы">
-      <button type="button" data-screen-action="constructor" aria-pressed="{{isConstructor}}" title="Подготовка сцены"><i class="fa-solid fa-pen-ruler"></i><span>Конструктор</span></button>
-      <button type="button" data-screen-action="director" aria-pressed="{{isDirector}}" title="Управление событиями сцены"><i class="fa-solid fa-clapperboard"></i><span>Режиссёр</span></button>
-      <button type="button" data-screen-action="actor" title="Открыть окно Актёра" aria-label="Открыть окно Актёра"><i class="fa-solid fa-masks-theater"></i></button>
+    <span class="ms-ide-mode-buttons" role="group" aria-label="{{dmicherScreenText "Режим ширмы" "Screen mode"}}">
+      <button type="button" data-screen-action="constructor" aria-pressed="{{isConstructor}}" title="{{dmicherScreenText "Подготовка сцены" "Prepare scene"}}"><i class="fa-solid fa-pen-ruler"></i><span>{{dmicherScreenText "Конструктор" "Constructor"}}</span></button>
+      <button type="button" data-screen-action="director" aria-pressed="{{isDirector}}" title="{{dmicherScreenText "Управление сценой" "Control scene"}}"><i class="fa-solid fa-clapperboard"></i><span>{{dmicherScreenText "Режиссёр" "Director"}}</span></button>
+      <button type="button" data-screen-action="actor" title="{{dmicherScreenText "Открыть окно Актёра" "Open Actor view"}}" aria-label="{{dmicherScreenText "Открыть окно Актёра" "Open Actor view"}}"><i class="fa-solid fa-masks-theater"></i></button>
     </span>
-    <span class="ms-ide-display-buttons" role="group" aria-label="Представление ширмы">
+    <span class="ms-ide-display-buttons" role="group" aria-label="{{dmicherScreenText "Представление ширмы" "Screen presentation"}}">
       <button type="button" data-screen-action="togglePresentation" title="{{presentationTitle}}" aria-label="{{presentationTitle}}"><i class="fa-solid {{presentationIcon}}"></i></button>
-      <button type="button" data-screen-action="ideSide" data-side="right" title="Вертикальная ширма справа" aria-pressed="{{isRight}}" aria-label="Вертикальная ширма"><i class="fa-solid fa-table-columns"></i></button>
-      <button type="button" data-screen-action="ideSide" data-side="bottom" title="Горизонтальная ширма снизу" aria-pressed="{{isBottom}}" aria-label="Горизонтальная ширма"><i class="fa-solid fa-window-maximize"></i></button>
-      <button type="button" data-screen-action="close" title="Закрыть ширму" aria-label="Закрыть ширму"><i class="fa-solid fa-xmark"></i></button>
+      <button type="button" data-screen-action="ideSide" data-side="right" title="{{dmicherScreenText "Вертикальная ширма справа" "Vertical screen on the right"}}" aria-pressed="{{isRight}}" aria-label="{{dmicherScreenText "Вертикальная ширма" "Vertical screen"}}"><i class="fa-solid fa-table-columns"></i></button>
+      <button type="button" data-screen-action="ideSide" data-side="bottom" title="{{dmicherScreenText "Горизонтальная ширма снизу" "Horizontal screen at the bottom"}}" aria-pressed="{{isBottom}}" aria-label="{{dmicherScreenText "Горизонтальная ширма" "Horizontal screen"}}"><i class="fa-solid fa-window-maximize"></i></button>
+      <button type="button" data-screen-action="close" title="{{dmicherScreenText "Закрыть ширму" "Close screen"}}" aria-label="{{dmicherScreenText "Закрыть ширму" "Close screen"}}"><i class="fa-solid fa-xmark"></i></button>
     </span>
   </header>
-  <div class="ms-ide-scene-line"><strong title="{{sceneName}}">🎬 {{sceneName}}</strong><span class="ms-group-badges">{{{badgesHTML}}}</span>{{#if isDirector}}<button type="button" class="ms-ide-emergency" data-screen-action="haltScene" title="Остановить всю автоматизацию всех групп">■ Остановить всё</button>{{/if}}</div>
-  {{#if missing}}<p class="ms-note">Откройте сцену на столе Foundry.</p>{{else}}
+  <div class="ms-ide-scene-line"><strong title="{{sceneName}}">🎬 {{sceneName}}</strong><span class="ms-group-badges">{{{badgesHTML}}}</span>{{#if isDirector}}<button type="button" class="ms-ide-emergency" data-screen-action="haltScene" title="{{dmicherScreenText "Остановить всю автоматизацию всех групп" "Stop all automation in all groups"}}">■ {{dmicherScreenText "Остановить всё" "Stop all"}}</button>{{/if}}</div>
+  {{#if missing}}<p class="ms-note">{{dmicherScreenText "Откройте сцену на столе Foundry." "Open a scene on the Foundry canvas."}}</p>{{else}}
   <div class="ms-ide-zones" data-editor-context="{{contextKey}}">
-    <section class="ms-ide-zone ms-ide-main" aria-label="Основная зона">
-      <div class="ms-ide-tabs"><div class="ms-menu-levels">{{{mainMenuHTML}}}</div><button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="main" title="Показать или скрыть вкладки" aria-label="Состав основных вкладок"><i class="fa-solid fa-gear"></i></button></div>
+    <section class="ms-ide-zone ms-ide-main" aria-label="{{dmicherScreenText "Основная зона" "Main area"}}">
+      <div class="ms-ide-tabs"><div class="ms-menu-levels">{{{mainMenuHTML}}}</div><button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="main" title="{{dmicherScreenText "Показать или скрыть вкладки" "Show or hide tabs"}}" aria-label="{{dmicherScreenText "Состав основных вкладок" "Main tab visibility"}}"><i class="fa-solid fa-gear"></i></button></div>
       <div class="ms-ide-zone-content" data-main-content>
         {{{mainHTML}}}
       </div>
       <footer class="ms-ide-node-actions">{{{nodeActions}}}</footer>
     </section>
-    <div class="ms-ide-divider" data-ide-divider role="separator" tabindex="0" aria-label="Размер основной и дополнительной зон" aria-valuemin="20" aria-valuemax="80"></div>
-    <section class="ms-ide-zone ms-ide-detail" aria-label="Дополнительная зона">
-      <div class="ms-ide-tabs"><div class="ms-menu-levels">{{{detailMenuHTML}}}</div><button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="detail" title="Показать или скрыть вкладки" aria-label="Состав дополнительных вкладок"><i class="fa-solid fa-gear"></i></button></div>
+    <div class="ms-ide-divider" data-ide-divider role="separator" tabindex="0" aria-label="{{dmicherScreenText "Размер основной и дополнительной зон" "Main and secondary area sizes"}}" aria-valuemin="20" aria-valuemax="80"></div>
+    <section class="ms-ide-zone ms-ide-detail" aria-label="{{dmicherScreenText "Дополнительная зона" "Secondary area"}}">
+      <div class="ms-ide-tabs"><div class="ms-menu-levels">{{{detailMenuHTML}}}</div><button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="detail" title="{{dmicherScreenText "Показать или скрыть вкладки" "Show or hide tabs"}}" aria-label="{{dmicherScreenText "Состав дополнительных вкладок" "Secondary tab visibility"}}"><i class="fa-solid fa-gear"></i></button></div>
       <div class="ms-ide-zone-content" data-detail-content>{{{detailHTML}}}</div>
     </section>
   </div>

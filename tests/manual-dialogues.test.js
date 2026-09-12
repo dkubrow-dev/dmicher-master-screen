@@ -9,12 +9,12 @@ function fixture() {
   const player = { id: "player", role: 1, isGM: false };
   const other = { id: "other", role: 1, isGM: false };
   const dialogue = { id: "talk", name: "Manual discussion", enabled: false, range: 1, target: { type: "Token", id: "npc" },
-    conditions: { enabled: false, allowTags: ["never"] }, startNodeId: "start", nodes: [
-      { id: "start", text: "Opening", art: "", responses: [{ id: "next", label: "Continue", nextNodeId: "last" }] },
+    conditions: { enabled: false, allowTags: ["never"] }, startPageId: "start", pages: [
+      { id: "start", text: "Opening", art: "", responses: [{ id: "next", label: "Continue", nextPageId: "last" }] },
       { id: "last", text: "Conclusion", art: "", responses: [{ id: "finish", label: "Accept", signalId: "alarm.start" }] }
     ] };
-  const catalog = { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: dialogue.id, name: dialogue.name, startPageId: dialogue.startNodeId,
-    pages: dialogue.nodes.map((node) => ({ ...node, art: "npc.webp", responses: node.responses.map((response) => ({ ...response, nextPageId: response.nextNodeId })) })) }] };
+  const catalog = { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: dialogue.id, name: dialogue.name, startPageId: dialogue.startPageId,
+    pages: dialogue.pages.map((node) => ({ ...node, art: "npc.webp", responses: node.responses.map((response) => ({ ...response, nextPageId: response.nextPageId })) })) }] };
   const runtime = { halted: true, runId: "", conditionCounts: { "main:stopped:dialogue:talk": 50 }, dialogueSessions: {} };
   const scene = { id: "scene", getFlag: (_scope, key) => key === "interactionCatalog" ? catalog : undefined, tokens: new Map([["npc", { id: "npc", name: "Merchant", hidden: true, texture: { src: "npc.webp" } }]]), tiles: new Map() };
   const sent = [], opened = [];
@@ -27,7 +27,7 @@ function fixture() {
     } } });
   const selection = { sceneId: "scene", stateId: "stopped", dialogueId: "talk" };
   const invitation = (overrides = {}) => ({ id: "message", author: gm, whisper: [player.id],
-    getFlag: (_module, key) => key === "manualDialogue" ? { version: 1, manual: true, dialogue, sourceName: "Merchant" } : undefined,
+    getFlag: (_module, key) => key === "manualDialogue" ? { version: 1, manual: true, dialogue: { id: dialogue.id, name: dialogue.name, startNodeId: dialogue.startPageId, nodes: dialogue.pages.map(page => ({ ...page, responses: page.responses.map(response => ({ ...response, nextNodeId: response.nextPageId })) })) }, sourceName: "Merchant" } : undefined,
     ...overrides });
   return { gm, player, other, dialogue, runtime, sent, opened, service, selection, invitation };
 }
@@ -36,8 +36,8 @@ test("GM manual reading ignores automation state without changing halted state, 
   const f = fixture(), before = structuredClone(f.runtime);
   const view = await f.service.openManualDialogue(f.selection);
   assert.equal(view.gmPreview, true);
-  assert.equal(view.dialogue.nodes[1].responses[0].signalId, "alarm.start");
-  assert.equal(view.dialogue.nodes[0].art, "npc.webp");
+  assert.equal(view.dialogue.pages[1].responses[0].signalId, "alarm.start");
+  assert.equal(view.dialogue.pages[0].art, "npc.webp");
   assert.equal(f.sent.length, 0);
   assert.deepEqual(f.runtime, before);
 });
@@ -62,7 +62,7 @@ test("a selected recipient opens a live authenticated GM invitation only once", 
   assert.equal(await f.service.processManualInvitation(f.invitation(), f.gm.id), true);
   assert.equal(f.opened.length, 1);
   assert.equal(f.opened[0].gmPreview, false);
-  assert.equal(f.opened[0].dialogue.nodes[1].responses[0].signalId, "");
+  assert.equal(f.opened[0].dialogue.pages[1].responses[0].signalId, "");
 });
 
 test("unselected users, forged GM author, player invitations and concealed content never open windows", async () => {
@@ -78,12 +78,12 @@ test("unselected users, forged GM author, player invitations and concealed conte
 
 test("manual projection preserves literal text but excludes arbitrary action and script data", () => {
   const f = fixture();
-  f.dialogue.nodes[0].text = "<script>not executed</script>";
-  f.dialogue.nodes[0].script = "game.pause()";
+  f.dialogue.pages[0].text = "<script>not executed</script>";
+  f.dialogue.pages[0].script = "game.pause()";
   f.dialogue.actions = [{ macroUuid: "Macro.secret" }];
   const view = manualDialogueData(f.dialogue);
-  assert.equal(view.nodes[0].text, "<script>not executed</script>");
-  assert.equal(view.nodes[0].script, undefined);
+  assert.equal(view.pages[0].text, "<script>not executed</script>");
+  assert.equal(view.pages[0].script, undefined);
   assert.equal(view.actions, undefined);
 });
 
@@ -98,11 +98,11 @@ test("manual window responses navigate locally and never invoke the event bus or
   const { ManualDialogueApplication } = await import("../dmicher-master-screen/scripts/apps/manual-dialogue.js");
   globalThis.Hooks = { callAll: () => { throw new Error("must not emit"); } };
   const app = new ManualDialogueApplication({ dialogue: manualDialogueData(f.dialogue, { includeSignalIds: true }), sourceName: "NPC", invitationId: "one", gmPreview: true });
-  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "next", nodeId: "start" } });
-  assert.equal(app.nodeId, "last");
-  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", nodeId: "start" } });
+  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "next", pageId: "start" } });
+  assert.equal(app.pageId, "last");
+  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", pageId: "start" } });
   assert.equal(app.finished, false);
-  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", nodeId: "last" } });
+  ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", pageId: "last" } });
   assert.equal(app.finished, true);
   assert.equal((await app._prepareContext({})).signalId, "alarm.start");
   ManualDialogueApplication.leave.call(app);

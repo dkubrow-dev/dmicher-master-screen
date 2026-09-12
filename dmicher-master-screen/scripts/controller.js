@@ -1,3 +1,5 @@
+import { message as localizedMessage } from "./localization.js";
+import { createObjectDecorations } from "./apps/object-decorations.js";
 import { MODULE_ID, getState } from "./model.js";
 import { asArray, currentScene, getDefinition, getRuntime, getDefinitions, getRuntimes, requireGM, saveDefinition, getObjectTags, saveObjectTags } from "./store.js";
 import { generics } from "./generics.js";
@@ -14,7 +16,8 @@ import { ShopApplication } from "./apps/shop-window.js";
 import { ShopsManagerApplication } from "./apps/shops-manager.js";
 import { DialogueApplication } from "./apps/dialogue-window.js";
 import { DialogueCatalogApplication } from "./apps/dialogue-catalog.js";
-import { HelpApplication, InteractionApplication } from "./apps/help.js";
+import { HelpApplication } from "./apps/help.js";
+import { InteractionApplication } from "./apps/interaction-window.js";
 import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
@@ -36,11 +39,11 @@ export class ScreenController {
     this.objectMenu = new ObjectContextMenu();
     this.constructorIndicator = new ConstructorIndicator();
     this.workspace = new WorkspaceManager();
-    this.runtime = new GroupRuntime({ chat: generics.chat, onChange: (scene) => this.changed(scene),
+    this.runtime = new GroupRuntime({ visuals: createObjectDecorations(), chat: generics.chat, onChange: (scene) => this.changed(scene),
       isConstructor: () => this.mode === "constructor",
       emitSignal: (scene, signal) => this.signals.emit(scene, signal),
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
-    this.signals = new SceneSignals({ runtime: this.runtime, isConstructor: () => this.mode === "constructor" });
+    this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor" });
     this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
     this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
     this.hooks = [];
@@ -55,7 +58,7 @@ export class ScreenController {
     const candidateStateId = this.selected.get(`${scene?.id}:${groupId}`) ?? this.selected.get(scene?.id);
     const selectedStateId = definition?.states.some((state) => state.id === candidateStateId) ? candidateStateId : definition?.entryStateId ?? definition?.states[0]?.id;
     const objects = listNativeSceneObjects(scene).map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
-    return { scene, definition, runtime, definitions, objects, mode: this.mode, groupId, selectedStateId,
+    return { scene, definition, runtime, definitions, objects, mode: this.mode, groupId, selectedStateId, signalLog: this.signals.history(scene),
       state: definition ? getState(definition, selectedStateId) : null, tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
   }
   getPlayerTokens() {
@@ -65,8 +68,8 @@ export class ScreenController {
   }
   async setMode(mode) {
     requireGM();
-    if (!["constructor", "director", "actor"].includes(mode)) throw new Error("Неизвестный режим ширмы");
-    if (!currentScene()) throw new Error("Откройте карту сцены");
+    if (!["constructor", "director", "actor"].includes(mode)) throw new Error(localizedMessage("Неизвестный режим ширмы"));
+    if (!currentScene()) throw new Error(localizedMessage("Откройте карту сцены"));
     if (mode === "actor") {
       this.actor = generics.windows.openSingletonApplication(this.actor, () => new ActorViewApplication(this), { moduleId: MODULE_ID });
       if (!this.mode) this.mode = "actor";
@@ -91,7 +94,7 @@ export class ScreenController {
   openObjectForm(descriptor, windows, Application) {
     requireGM();
     const scene = currentScene();
-    if (!getSceneObject(scene, descriptor)) throw new Error("Объект больше не существует.");
+    if (!getSceneObject(scene, descriptor)) throw new Error(localizedMessage("Объект больше не существует."));
     const key = `${scene.id}:${descriptor.type}:${descriptor.id}`;
     const app = generics.windows.openSingletonApplication(windows.get(key), () => new Application(this, descriptor), { moduleId: MODULE_ID });
     windows.set(key, app); return app;
@@ -129,7 +132,7 @@ export class ScreenController {
     requireGM();
     const sceneId = currentScene()?.id;
     const { InteractionPreviewApplication } = await import("./apps/interaction-preview.js");
-    if (currentScene()?.id !== sceneId) throw new Error("Сцена предпросмотра изменилась.");
+    if (currentScene()?.id !== sceneId) throw new Error(localizedMessage("Сцена предпросмотра изменилась."));
     if (this.preview?.rendered) await this.preview.close();
     this.preview = generics.windows.openSingletonApplication(null,
       () => new InteractionPreviewApplication(this, { kind, assetId: id, sceneId, ...options }), { moduleId: MODULE_ID });
@@ -138,7 +141,7 @@ export class ScreenController {
   previewDialogueAsset(id, pageId) { requireGM(); return this.dialogues.openManualDialogue({ sceneId: currentScene()?.id, dialogueId: id, pageId }); }
   openScreen(presentation = "panel", { mode = this.mode === "director" ? "director" : "constructor" } = {}) {
     requireGM();
-    if (!currentScene()) throw new Error("Откройте карту сцены");
+    if (!currentScene()) throw new Error(localizedMessage("Откройте карту сцены"));
     if (!this.editor?.rendered) {
       this.editor = new MasterScreenApplication(this, { mode, presentation });
       if (presentation === "window") this.editor.reservePopup();
@@ -163,7 +166,7 @@ export class ScreenController {
     requireGM(); const scene = currentScene();
     for (const { groupId, stateId } of changes) {
       const definition = getDefinition(scene, { groupId });
-      if (!getState(definition, stateId)) throw new Error("Состояние больше не существует.");
+      if (!getState(definition, stateId)) throw new Error(localizedMessage("Состояние больше не существует."));
     }
     for (const { groupId, stateId } of changes) {
       if (getRuntime(scene, { groupId }).stateId !== stateId) await this.runtime.enter(scene, stateId, { groupId, force: true, preserveStatus: true });
@@ -174,7 +177,7 @@ export class ScreenController {
   restoreObjectInitial(descriptor) { return this.runtime.restoreInitial(currentScene(), descriptor); }
   selectGroup(groupId, { render = true } = {}) {
     const scene = currentScene();
-    if (!getDefinitions(scene).some((definition) => definition.groupId === groupId)) throw new Error("Группа не найдена");
+    if (!getDefinitions(scene).some((definition) => definition.groupId === groupId)) throw new Error(localizedMessage("Группа не найдена"));
     this.selectedGroups.set(scene.id, groupId);
     if (render) return this.editor?.refresh();
   }
@@ -194,28 +197,28 @@ export class ScreenController {
   }
   selectState(id, { render = true, resetDraft = true } = {}) {
     const { scene, definition } = this.getContext();
-    if (!getState(definition, id)) throw new Error("Состояние не найдено");
+    if (!getState(definition, id)) throw new Error(localizedMessage("Состояние не найдено"));
     this.selected.set(`${scene.id}:${definition.groupId}`, id);
     if (resetDraft) this.editor?.resetDraft();
     if (render) return this.editor?.refresh();
   }
   async saveDefinition(definition, expectedRevision = definition.revision, { sceneId } = {}) {
     const scene = currentScene();
-    if (sceneId && scene?.id !== sceneId) throw new Error("Сцена изменилась. Вернитесь к сцене редактируемого черновика.");
+    if (sceneId && scene?.id !== sceneId) throw new Error(localizedMessage("Сцена изменилась. Вернитесь к сцене редактируемого черновика."));
     await saveDefinition(scene, definition, { expectedRevision });
     this.changed(scene);
   }
   async saveState(state, { expectedRevision, sceneId, groupId } = {}) {
     const { scene, definition } = this.getContext({ groupId });
-    if (sceneId && scene?.id !== sceneId) throw new Error("Сцена изменилась. Вернитесь к сцене редактируемого черновика.");
-    if (!getState(definition, state.id)) throw new Error("Редактируемое состояние больше не существует.");
+    if (sceneId && scene?.id !== sceneId) throw new Error(localizedMessage("Сцена изменилась. Вернитесь к сцене редактируемого черновика."));
+    if (!getState(definition, state.id)) throw new Error(localizedMessage("Редактируемое состояние больше не существует."));
     definition.states = definition.states.map((entry) => entry.id === state.id ? state : entry);
     await this.saveDefinition(definition, expectedRevision ?? definition.revision, { sceneId });
   }
   captureWorkspace() { return this.workspace.capture(); }
   async saveObjectTags(type, id, tags, sceneId = currentScene()?.id) {
     const scene = currentScene();
-    if (!scene || scene.id !== sceneId) throw new Error("Сцена изменилась. Вернитесь к объекту, теги которого редактируете.");
+    if (!scene || scene.id !== sceneId) throw new Error(localizedMessage("Сцена изменилась. Вернитесь к объекту, теги которого редактируете."));
     await saveObjectTags(scene, { type, id }, tags);
     this.changed(scene);
   }
@@ -238,9 +241,9 @@ export class ScreenController {
   }
   async importScene(file) {
     requireGM();
-    if (!file || file.size > 20 * 1024 * 1024) throw new Error("JSON должен быть не больше 20 МБ");
+    if (!file || file.size > 20 * 1024 * 1024) throw new Error(localizedMessage("JSON должен быть не больше 20 МБ"));
     const result = await importBundle(JSON.parse(await file.text()));
-    ui.notifications.info(`Создана сцена «${result.scene.name}». ${result.warnings.join(" ")}`);
+    ui.notifications.info(localizedMessage("Создана сцена «{0}». {1}", [result.scene.name, result.warnings.join(" ")]));
     await result.scene.view();
     return this.setMode("constructor");
   }
@@ -248,7 +251,7 @@ export class ScreenController {
     const scene = currentScene();
     const target = objectDescriptor(rawTarget);
     actorTokenId ??= this.getActingTokenId(undefined, target.type === "Token" ? target.id : undefined);
-    if (!actorTokenId) throw new Error("Выберите своего персонажа на карте");
+    if (!actorTokenId) throw new Error(localizedMessage("Выберите своего персонажа на карте"));
     const key = `${scene.id}:${groupId}:${getRuntime(scene, { groupId }).runId}:${target.type}:${target.id}:${shopId}:${actorTokenId}:${sessionId ?? "own"}`;
     const app = generics.windows.openSingletonApplication(this.shopWindows.get(key),
       () => new ShopApplication(this, { sceneId: scene.id, groupId, target, actorTokenId, sessionId, shopId, join }), { moduleId: MODULE_ID });
@@ -259,7 +262,7 @@ export class ScreenController {
     const scene = currentScene(), target = { type: targetType, id: tokenId };
     sourceTokenId = this.getActingTokenId(sourceTokenId, targetType === "Token" ? tokenId : undefined);
     const choices = listAvailableInteractions(scene, target, scene?.tokens.get(sourceTokenId), game.user).filter((entry) => !groupId || entry.groupId === groupId);
-    if (!choices.length) throw new Error("Interaction is unavailable for this character.");
+    if (!choices.length) throw new Error(localizedMessage("Взаимодействие недоступно для этого персонажа."));
     this.interaction = new InteractionApplication(this, { sceneId: scene.id, tokenId, sourceTokenId, targetType, groupId });
     return this.interaction.render({ force: true });
   }
@@ -280,7 +283,7 @@ export class ScreenController {
   openDialogue(dialogueId, actorTokenId, { groupId, target } = {}) {
     const { scene, runtime } = this.getContext({ groupId });
     actorTokenId = this.getActingTokenId(actorTokenId);
-    if (!actorTokenId) throw new Error("Выберите персонажа игрока для разговора.");
+    if (!actorTokenId) throw new Error(localizedMessage("Выберите персонажа игрока для разговора."));
     const key = `${scene.id}:${runtime.runId}:${dialogueId}:${target?.type}:${target?.id}:${actorTokenId}`;
     const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
       () => new DialogueApplication(this.dialogues, { sceneId: scene.id, groupId: runtime.groupId, dialogueId, target, actorTokenId }), { moduleId: MODULE_ID });
@@ -290,16 +293,16 @@ export class ScreenController {
   requestNamedInteraction(interactionId, actorTokenId, { groupId = this.getContext().groupId } = {}) {
     const scene = currentScene();
     actorTokenId = this.getActingTokenId(actorTokenId);
-    if (!actorTokenId) throw new Error("Выберите персонажа игрока для взаимодействия.");
+    if (!actorTokenId) throw new Error(localizedMessage("Выберите персонажа игрока для взаимодействия."));
     return this.dialogues.requestInteraction({ sceneId: scene.id, groupId, interactionId, actorTokenId });
   }
   async moveActorToken(tokenId, position) {
     requireGM();
-    if (game.paused) throw new Error("Игра на паузе");
+    if (game.paused) throw new Error(localizedMessage("Игра на паузе"));
     const token = this.getPlayerTokens().find((entry) => entry.id === tokenId);
-    if (!token) throw new Error("Выберите персонажа игрока");
+    if (!token) throw new Error(localizedMessage("Выберите персонажа игрока"));
     const center = { x: position.x + token.object.w / 2, y: position.y + token.object.h / 2 };
-    if (token.object.checkCollision(center, { type: "move", mode: "any" })) throw new Error("Путь пересекает стену");
+    if (token.object.checkCollision(center, { type: "move", mode: "any" })) throw new Error(localizedMessage("Путь пересекает стену"));
     return token.update(position);
   }
   pickPoint() {
@@ -307,7 +310,7 @@ export class ScreenController {
     this.cancelPick?.();
     const stage = canvas.stage;
     const sceneId = currentScene()?.id;
-    ui.notifications.info("Укажите точку на карте. Escape — отмена.");
+    ui.notifications.info(localizedMessage("Укажите точку на карте. Escape — отмена."));
     return new Promise((resolve) => {
       const finish = (point) => {
         stage.off("pointertapcapture", click); document.removeEventListener("keydown", key);
