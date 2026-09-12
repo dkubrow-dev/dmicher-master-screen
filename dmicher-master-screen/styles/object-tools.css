@@ -11,15 +11,15 @@
 .dmicher-master-screen.ms-object-info > .window-content, .dmicher-master-screen.ms-object-behavior > .window-content { min-height: 0; }
 /* Legacy token editors and other standalone forms must also shrink inside a resized window. */
 .dmicher-master-screen .window-content > .ms-body { flex: 1; min-height: 0; }
-.dmicher-master-screen .ms-routine-table-scroll { overflow-x: auto; }
-.dmicher-master-screen .ms-routine-table { width: 100%; min-width: 480px; table-layout: fixed; }
-.dmicher-master-screen .ms-routine-table th:first-child { width: 32px; }
-.dmicher-master-screen .ms-routine-table th:nth-child(2) { width: 120px; }
-.dmicher-master-screen .ms-routine-table th:nth-child(4) { width: 80px; }
-.dmicher-master-screen .ms-routine-table th:last-child { width: 35px; }
-.dmicher-master-screen .ms-routine-table td, .dmicher-master-screen .ms-automation-table td { vertical-align: top; padding: 4px; }
-.dmicher-master-screen .ms-routine-table textarea { width: 100%; min-height: 115px; font-family: monospace; font-size: 12px; }
-.dmicher-master-screen .ms-routine-table select, .dmicher-master-screen .ms-routine-table input { width: 100%; }
+.dmicher-master-screen .ms-script-table-scroll { overflow-x: auto; }
+.dmicher-master-screen .ms-script-table { width: 100%; min-width: 480px; table-layout: fixed; }
+.dmicher-master-screen .ms-script-table th:first-child { width: 32px; }
+.dmicher-master-screen .ms-script-table th:nth-child(2) { width: 120px; }
+.dmicher-master-screen .ms-script-table th:nth-child(4) { width: 80px; }
+.dmicher-master-screen .ms-script-table th:last-child { width: 35px; }
+.dmicher-master-screen .ms-script-table td, .dmicher-master-screen .ms-automation-table td { vertical-align: top; padding: 4px; }
+.dmicher-master-screen .ms-script-table textarea { width: 100%; min-height: 115px; font-family: monospace; font-size: 12px; }
+.dmicher-master-screen .ms-script-table select, .dmicher-master-screen .ms-script-table input { width: 100%; }
 .dmicher-master-screen .ms-automation-table { width: 100%; }
 .dmicher-master-screen .ms-object-form label { display: flex; flex-direction: column; gap: 3px; }
 .dmicher-master-screen .ms-object-form label.ms-check { flex-direction: row; align-items: center; gap: 6px; }
@@ -31,8 +31,31 @@
 .dmicher-master-screen .ms-object-metadata dd { margin: 0; overflow-wrap: anywhere; }
 .dmicher-master-screen .ms-object-form footer { display: flex; justify-content: flex-end; gap: 8px; }
 .dmicher-master-screen .ms-object-feature { border: 1px solid var(--dmicher-border, #777); border-radius: 4px; padding: 8px; }
-.ms-routine-table .ms-routine-drag { cursor: grab; width: 22px; min-width: 22px; padding: 0; display: block; border: 0; background: transparent; }
-.ms-routine-table .ms-routine-drag:active { cursor: grabbing; }
-.ms-routine-table .is-dragging { opacity: .55; }
-.ms-routine-table .ms-routine-drop-before { box-shadow: inset 0 3px var(--dmicher-accent, #d8ae66); }
-.ms-routine-table .ms-routine-drop-after { box-shadow: inset 0 -3px var(--dmicher-accent, #d8ae66); }
+.ms-script-table .ms-script-drag { cursor: grab; width: 22px; min-width: 22px; padding: 0; display: block; border: 0; background: transparent; }
+.ms-script-table .ms-script-drag:active { cursor: grabbing; }
+.ms-script-table .is-dragging { opacity: .55; }
+.ms-script-table .ms-script-drop-before { box-shadow: inset 0 3px var(--dmicher-accent, #d8ae66); }
+.ms-script-table .ms-script-drop-after { box-shadow: inset 0 -3px var(--dmicher-accent, #d8ae66); }
+.dmicher-master-screen .ms-copy-value { flex: 0 0 24px; width: 24px; min-height: 22px; padding: 0 3px; }
+.dmicher-master-screen .ms-object-metadata dd { display: flex; align-items: start; gap: 6px; min-width: 0; }
+.dmicher-master-screen .ms-object-metadata dd > span { flex: 1; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-state-script-table { table-layout: fixed; width: 100%; }
+.dmicher-master-screen .ms-state-script-table td { vertical-align: top; padding: 5px; }
+.dmicher-master-screen .ms-state-script-table td:first-child { width: 32%; }
+.dmicher-master-screen .ms-state-script-table td:last-child button { display: inline-flex; width: auto; min-height: 24px; margin: 2px 4px; }
+.dmicher-master-screen .ms-script-block > summary { cursor: pointer; font-weight: bold; padding: 5px; }
+.dmicher-master-screen .ms-script-combat { margin: 8px 0; }
+.dmicher-master-screen [data-signal-field] { margin: 8px 0; padding: 8px; border: 1px solid var(--dmicher-border, #68717a); }
+.dmicher-master-screen [data-signal-field] label { display: flex; flex-direction: column; gap: 4px; }
+.dmicher-master-screen [data-signal-field] label.ms-check { flex-direction: row; align-items: center; }
+.dmicher-master-screen [data-signal-field] label.ms-check input { flex: 0 0 auto; width: auto; }
+.dmicher-master-screen .ms-macro-validation textarea { width: 100%; min-height: 180px; font-family: monospace; }
+.dmicher-master-screen .ms-signal-tree details { margin: 4px 0 4px 10px; }
+.dmicher-master-screen .ms-signal-tree details > summary { cursor: pointer; padding: 4px; }
+.dmicher-master-screen .ms-signal-tree summary button { display: inline-flex; width: auto; min-width: 24px; margin-left: 8px; }
+.dmicher-master-screen .ms-signal-tree table { margin: 2px 0 8px; }
+.dmicher-master-screen .ms-signal-tree td small { display: block; opacity: .7; overflow-wrap: anywhere; }
+.dmicher-master-screen [data-subscription-fields] { display: grid; gap: 8px; margin: 8px 0; }
+.dmicher-master-screen [data-subscription-fields] label { display: grid; gap: 4px; }
+.dmicher-master-screen [data-signal-fields] > label { display: flex; flex-direction: column; gap: 4px; margin-block: 6px; }
+.dmicher-master-screen [data-signal-fields] > label > :is(input, textarea) { width: 100%; }

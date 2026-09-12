@@ -4,255 +4,160 @@ import { generics } from "../generics.js";
 import { currentScene, getDefinitions, getObjectTags } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
 import { getInteractionCatalog } from "../scene-assets.js";
-import { getEventCatalog } from "../event-catalog.js";
-import { randomId, normalizeTrigger } from "../model.js";
-import { buildTriggerFields, readTriggerFields, splitTags } from "./trigger-fields.js";
-import { routineStepTemplate } from "../routine-model.js";
-import { buildRoutineFields, readRoutineFields, appendRoutineStep, removeRoutineStep, bindRoutineSorting } from "./routine-fields.js";
+import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
+import { normalizeConditions } from "../model.js";
+import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
+import { scriptStepTemplate } from "../script-model.js";
+import { buildScriptFields, readScriptFields, appendScriptStep, removeScriptStep, bindScriptSorting } from "./script-fields.js";
+import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary } from "./signal-fields.js";
 
 const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
 const clone = (value) => structuredClone(value);
 const value = (root, name) => root.querySelector(`[name="${name}"]`)?.value ?? "";
-const selected = (actual, expected) => actual === expected ? " selected" : "";
-const input = (name, label, text = "", attributes = "") => `<label>${e(label)}<input name="${name}" value="${e(text)}" ${attributes}></label>`;
-const options = (items, current, placeholder = t("Не выбрано", "Not selected")) => `<option value="">${e(placeholder)}</option>${items.map((item) => `<option value="${e(item.id)}"${selected(current, item.id)}>${e(item.name)}</option>`).join("")}`;
-const footer = () => `<footer><button type="button" data-screen-action="cancel">${t("Закрыть", "Close")}</button><button type="button" data-screen-action="save">${t("Сохранить", "Save")}</button></footer>`;
+const input = (name, label, text = "", attrs = "") => `<label>${e(label)}<input name="${name}" value="${e(text)}" ${attrs}></label>`;
+const options = (items, current, empty = t("Не выбрано", "Not selected")) => `<option value="">${e(empty)}</option>${items.map((item) => `<option value="${e(item.id)}"${current === item.id ? " selected" : ""}>${e(item.name)}</option>`).join("")}`;
+const button = (action, label, attrs = "") => `<button type="button" data-screen-action="${action}" ${attrs}>${e(label)}</button>`;
 const section = (title, body) => `<section class="ms-object-feature"><h3>${e(title)}</h3>${body}</section>`;
-const layout = (body, navigation = "") => navigation + `<div class="ms-object-scroll">${body}</div>` + footer();
+const layout = (body, nav = "") => nav + `<div class="ms-object-scroll">${body}</div><footer>${button("cancel", t("Закрыть", "Close"))}${button("save", t("Сохранить", "Save"))}</footer>`;
+const newScript = (name, stateId) => ({ ...(stateId ? { stateId } : {}), name, enabled: true, repeat: false, steps: [] });
 
-/** Edits are pinned to one scene and revision; merely opening a native object writes nothing. */
 class ObjectForm extends ScreenFormApplication {
   static PARTS = { main: { template: "modules/dmicher-master-screen/templates/object-tools.hbs", scrollable: [".ms-object-scroll"] } };
-  constructor(controller, descriptor, options = {}) {
-    super(options); this.controller = controller; this.descriptor = { type: descriptor.type, id: descriptor.id };
-    this.sceneId = currentScene()?.id; this.draft = null;
-  }
+  constructor(controller, descriptor, options = {}) { super(options); this.controller = controller; this.descriptor = { type: descriptor.type, id: descriptor.id }; this.sceneId = currentScene()?.id; this.draft = null; }
+  get ownerKey() { return `${this.descriptor.type}:${this.descriptor.id}`; }
   context() {
-    const scene = game.scenes?.get(this.sceneId) ?? (currentScene()?.id === this.sceneId ? currentScene() : null);
-    const document = scene && getSceneObject(scene, this.descriptor);
+    const scene = game.scenes?.get(this.sceneId) ?? (currentScene()?.id === this.sceneId ? currentScene() : null), document = scene && getSceneObject(scene, this.descriptor);
     if (!document) throw new Error(t("Объект больше не существует.", "The object no longer exists."));
-    const records = getObjectBindings(scene);
     if (!this.draft) {
-      this.revision = records.revision;
-      this.draft = clone(new SceneObjects(scene).get(this.descriptor) ?? { ...this.descriptor, schemeId: null,
-        tags: getObjectTags(scene, this.descriptor), notes: "", playerCharacter: false, routines: [], shop: null, dialogue: null, entry: { position: null, hidden: null }, episodes: {}, features: [] });
+      this.revision = getObjectBindings(scene).revision;
+      this.draft = clone(new SceneObjects(scene).get(this.descriptor) ?? { ...this.descriptor, groupId: null, tags: getObjectTags(scene, this.descriptor), notes: "", playerCharacter: false, initialScript: null, transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
       this.original = clone(this.draft);
     }
-    const definitions = getDefinitions(scene), definition = definitions.find((item) => item.schemeId === this.draft.schemeId);
+    const definitions = getDefinitions(scene), definition = definitions.find((item) => item.groupId === this.draft.groupId);
     return { scene, document, definitions, definition, catalog: getInteractionCatalog(scene) };
   }
   async _onRender(context, options) { await super._onRender(context, options); this.bindEvents(); }
   refresh() { if (this.rendered && !this.dirty) { this.draft = null; return this.render({ force: true }); } }
-  assertCurrentScene() {
-    if (currentScene()?.id !== this.sceneId) throw new Error(t("Вернитесь к сцене редактируемого объекта.", "Return to this object's scene before saving."));
-  }
+  assertCurrentScene() { if (currentScene()?.id !== this.sceneId) throw new Error(t("Вернитесь к сцене редактируемого объекта.", "Return to this object's scene.")); }
   async persist({ close = false } = {}) {
-    this.assertCurrentScene();
-    const scene = this.context().scene;
-    // Send only changed fields; opening another object's form is not an edit.
-    const patch = Object.fromEntries(["schemeId", "tags", "notes", "playerCharacter", "entry", "episodes", "shop", "dialogue", "features", "routines"]
-      .filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key]))
-      .map((key) => [key, clone(this.draft[key])]));
+    this.assertCurrentScene(); const scene = this.context().scene;
+    const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
     if (Object.keys(patch).length) await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true });
-    this.draft = null; this.dirty = false;
-    if (close) await this.close();
-    this.controller.changed(scene);
-    if (!close) await this.render({ force: true });
+    this.draft = null; this.dirty = false; if (close) await this.close(); this.controller.changed(scene); if (!close) await this.render({ force: true });
   }
-  async handleAction(action) {
-    if (action === "cancel") { if (await this.mayDiscard()) return this.close(); }
-    if (action === "save") { this.capture(); return this.persist(); }
-  }
+  async handleAction(action) { if (action === "cancel" && await this.mayDiscard()) return this.close(); if (action === "save") { this.capture(); return this.persist(); } }
 }
 
 export class ObjectInfoApplication extends ObjectForm {
-  static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-info"), position: { width: 470, height: 540 },
-    window: { title: "Информация об объекте", resizable: true } };
+  static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-info"), position: { width: 570, height: "auto" }, window: { resizable: true } };
+  get title() { return t("Информация об объекте", "Object information"); }
   async _prepareContext() {
     const { document, definitions } = this.context();
-    const facts = [[t("Тип", "Type"), this.descriptor.type], ["ID", document.id], ["UUID", document.uuid],
-      [t("Название", "Name"), document.name ?? document.label ?? ""], ["Actor UUID", document.actor?.uuid],
-      [t("Позиция", "Position"), Number.isFinite(document.x) ? `${document.x}, ${document.y}` : null],
-      [t("Размер", "Dimensions"), document.width !== undefined ? `${document.width} × ${document.height}` : null],
-      [t("Изображение", "Image"), document.texture?.src ?? document.img]].filter(([, text]) => text !== undefined && text !== null && text !== "");
-    return { body: layout(`<dl class="ms-object-metadata">${facts.map(([label, text]) => `<dt>${e(label)}</dt><dd>${e(text)}</dd>`).join("")}</dl>
-      <label>${t("Схема", "Scheme")}<select name="object-scheme">${options(definitions.map((item) => ({ id: item.schemeId, name: item.schemeName })), this.draft.schemeId, t("Без схемы", "Unassigned"))}</select></label>
-      ${this.descriptor.type === "Token" ? `<label class="ms-check"><input type="checkbox" name="object-player-character"${this.draft.playerCharacter ? " checked" : ""}>${t("Персонаж игрока", "Player character")}</label>` : ""}
-      ${input("object-tags", t("Теги, через запятую", "Tags, comma separated"), this.draft.tags?.join(", ") ?? "")}
-      <label>${t("Заметки мастера", "GM notes")}<textarea name="object-notes" maxlength="8000">${e(this.draft.notes)}</textarea></label>`) };
+    const facts = [[t("Название", "Name"), document.name ?? document.label ?? ""], [t("Тип", "Type"), this.descriptor.type], ["ID", document.id], ["UUID", document.uuid], ["Actor UUID", document.actor?.uuid ?? ""]];
+    return { body: layout(`<dl class="ms-object-metadata">${facts.map(([label, text]) => `<dt>${e(label)}</dt><dd><span>${e(text)}</span>${button("copy-value", "⧉", `class="ms-copy-value" data-copy-value="${e(text)}" aria-label="${e(t(`Скопировать ${label}`, `Copy ${label}`))}"`)}</dd>`).join("")}</dl>${button("native-settings", t("Настройки", "Settings"))}${this.descriptor.type === "Token" ? `<label class="ms-check"><input type="checkbox" name="object-player-character"${this.draft.playerCharacter ? " checked" : ""}>${t("Персонаж игрока", "Player character")}</label>` : ""}<label>${t("Группа", "Group")}<select name="object-group">${options(definitions.map((item) => ({ id: item.groupId, name: item.groupName })), this.draft.groupId, t("Без группы", "Unassigned"))}</select></label>${input("object-tags", t("Теги, через запятую", "Tags, comma separated"), this.draft.tags?.join(", ") ?? "")}<label>${t("Заметки мастера", "GM notes")}<textarea name="object-notes" rows="4" maxlength="8000">${e(this.draft.notes)}</textarea></label>`) };
   }
-  capture() {
-    this.draft = { ...this.draft, schemeId: value(this.element, "object-scheme") || null,
-      tags: splitTags(value(this.element, "object-tags")), notes: value(this.element, "object-notes"),
-      playerCharacter: this.descriptor.type === "Token" && this.element.querySelector('[name="object-player-character"]')?.checked === true };
-  }
+  capture() { this.draft = { ...this.draft, groupId: value(this.element, "object-group") || null, tags: splitTags(value(this.element, "object-tags")), notes: value(this.element, "object-notes"), playerCharacter: this.descriptor.type === "Token" && this.element.querySelector('[name="object-player-character"]')?.checked === true }; }
   async _onRender(context, options) {
     await super._onRender(context, options);
-    // This shortcut belongs only to this form. Native Foundry editors keep their own keys.
-    this.element.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" || event.isComposing || event.repeat || event.shiftKey || !event.target.matches("input, select, textarea")) return;
-      event.preventDefault(); event.stopPropagation();
-      if (this.saving) return;
-      this.saving = true;
-      void Promise.resolve().then(() => { this.capture(); return this.persist({ close: true }); })
-        .catch(notifyError).finally(() => { this.saving = false; });
-    }, { signal: this.events.signal });
+    this.element.addEventListener("keydown", (event) => { if (event.key !== "Enter" || event.isComposing || event.repeat || event.shiftKey || !event.target.matches("input, select, textarea")) return; event.preventDefault(); event.stopPropagation(); if (this.saving) return; this.saving = true; void Promise.resolve().then(() => { this.capture(); return this.persist({ close: true }); }).catch(notifyError).finally(() => { this.saving = false; }); }, { signal: this.events.signal });
   }
-}
-
-const stateFields = (prefix, state = {}) => `<div class="ms-object-row">${input(`${prefix}-x`, "X", state.position?.x ?? "", 'type="number" step="any"')}${input(`${prefix}-y`, "Y", state.position?.y ?? "", 'type="number" step="any"')}
-  <label>${t("Видимость", "Visibility")}<select name="${prefix}-hidden"><option value="">${t("Как есть", "Keep current")}</option><option value="false"${state.hidden === false ? " selected" : ""}>${t("Показать", "Show")}</option><option value="true"${state.hidden === true ? " selected" : ""}>${t("Скрыть", "Hide")}</option></select></label></div>
-  <div class="ms-object-row"><button type="button" data-screen-action="capture-position" data-prefix="${prefix}">${t("Взять текущее положение", "Capture current position")}</button>
-  ${prefix === "entry" ? `<button type="button" data-screen-action="restore-position">${t("Вернуть к указанному положению", "Return to specified position")}</button>` : ""}</div>`;
-function readState(root, prefix) {
-  const x = value(root, `${prefix}-x`), y = value(root, `${prefix}-y`), hidden = value(root, `${prefix}-hidden`);
-  if ((x === "") !== (y === "") || x !== "" && (![Number(x), Number(y)].every(Number.isFinite))) throw new Error(t("Укажите обе координаты или оставьте обе пустыми.", "Enter both coordinates or leave both blank."));
-  return { position: x === "" ? null : { x: Number(x), y: Number(y) }, hidden: hidden === "" ? null : hidden === "true" };
+  async handleAction(action, target) {
+    if (action === "copy-value") { const text = target.dataset.copyValue, clipboard = this.element.ownerDocument.defaultView.navigator?.clipboard; if (clipboard?.writeText) await clipboard.writeText(text); else if (game.clipboard?.copyPlainText) await game.clipboard.copyPlainText(text); else throw new Error(t("Буфер обмена недоступен.", "Clipboard is unavailable.")); return; }
+    if (action === "native-settings") { const doc = this.context().document, sheet = doc.sheet ?? doc.object?.sheet; if (!sheet?.render) throw new Error(t("У этого объекта нет окна настроек.", "This object has no configuration sheet.")); return sheet.render(true); }
+    return super.handleAction(action, target);
+  }
 }
 
 export class ObjectBehaviorApplication extends ObjectForm {
-  static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-behavior"), position: { width: 610, height: 680 },
-    window: { title: "Поведение объекта", resizable: true } };
-  tab = "transitions";
-  editEpisodeId = null;
+  static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-behavior"), position: { width: 790, height: 740 }, window: { resizable: true } };
+  tab = "transitions"; selectedScript = null; selectedFeature = null; signalDraft = null; subscriptionDraft = null; validation = null;
+  get title() { return t("Поведение объекта", "Object behavior"); }
+  activeScript() { const ref = this.selectedScript; return !ref ? null : ref.kind === "initial" ? this.draft.initialScript : ref.kind === "transition" ? this.draft.transitionScripts?.[ref.stateId] : this.draft.scripts?.find((script) => script.stateId === ref.stateId); }
+  setActiveScript(script) {
+    const ref = this.selectedScript;
+    if (ref.kind === "initial") this.draft.initialScript = script;
+    else if (ref.kind === "transition") { this.draft.transitionScripts ??= {}; if (script) this.draft.transitionScripts[ref.stateId] = script; else delete this.draft.transitionScripts[ref.stateId]; }
+    else { this.draft.scripts ??= []; const i = this.draft.scripts.findIndex((item) => item.stateId === ref.stateId); if (i >= 0) this.draft.scripts.splice(i, 1); if (script) this.draft.scripts.push(script); }
+  }
   async _prepareContext() {
     const context = this.context(), { definition } = context;
-    if (!definition) return { body: `<p>${t("Назначьте объекту схему в разделе «Информация».", "Assign the object to a scheme in Information first.")}</p><button type="button" data-screen-action="information">${t("Информация", "Information")}</button>` };
-    if (!definition.episodes.some((item) => item.id === this.editEpisodeId)) this.editEpisodeId = definition.entryEpisodeId;
-    const navigation = `<nav class="ms-object-tabs">${[["transitions", t("Переходы", "Transitions")], ["features", t("Особенности", "Features")], ["routine", t("Рутина", "Routine")], ["automation", t("Автоматизация", "Automation")]]
-      .map(([tab, name]) => `<button type="button" data-screen-action="tab" data-tab="${tab}" aria-pressed="${this.tab === tab}">${name}</button>`).join("")}</nav>`;
-    const body = this.tab === "routine" ? buildRoutineFields(this.draft.routines ?? [], definition, this.descriptor.type, getEventCatalog(context.scene))
-      : this.tab === "automation" ? this.automationFields(context)
-      : this.tab === "features" ? this.featureFields(context) : section(t("При входе", "On location entry"), `<p class="ms-note">${t("Выполняется при первом явном запуске схемы. Переподключение не повторяет вход.", "Applied on the scheme's first explicit start. Reconnecting does not repeat entry.")}</p>${stateFields("entry", this.draft.entry)}`)
-      + section(t("Смена эпизодов", "Episode changes"), `<label>${t("Эпизод", "Episode")}<select name="behavior-episode">${definition.episodes.map((item) => `<option value="${e(item.id)}"${selected(this.editEpisodeId, item.id)}>${e(item.name)}</option>`).join("")}</select></label>${stateFields("episode", this.draft.episodes?.[this.editEpisodeId])}`);
-    return { body: layout(`${this.draft.playerCharacter ? `<p class="ms-note">${t("Персонаж игрока: автоматизация этого объекта отключена.", "Player character: automation for this object is disabled.")}</p>` : ""}${body}`, navigation) };
+    const nav = `<nav class="ms-object-tabs">${[["transitions", t("Переходы", "Transitions")], ["features", t("Особенности", "Features")], ["routine", t("Рутина", "Routine")], ["automation", t("Автоматизация", "Automation")]].map(([tab, name]) => button("tab", name, `data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")}</nav>`;
+    let body;
+    if (this.tab === "automation") {
+      const catalog = getSignalCatalog(context.scene);
+      this.macroValidation = new Map(await Promise.all(catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey).map(async (macro) => [macro.uuid, await macroValidationSummary(catalog, macro)])));
+      body = this.automationFields(context);
+    }
+    else if (this.tab === "features") body = this.featureFields(context);
+    else {
+      body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p>${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}`) : "";
+      body += definition ? this.stateScriptTable(definition, this.tab === "transitions" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
+      const script = this.activeScript();
+      if (script) body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, getSignalCatalog(context.scene), { ownerKey: this.ownerKey, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) });
+    }
+    return { body: layout(`${this.draft.playerCharacter ? `<p class="ms-note">${t("Автоматизация персонажа игрока отключена.", "Player-character automation is disabled.")}</p>` : ""}${body}`, nav) };
   }
-  featureFields({ definition, catalog, scene }) {
-    const attachment = (kind, title, assets) => {
-      const binding = this.draft[kind], policy = binding?.trigger ?? normalizeTrigger({ repeat: "always" });
-      return section(title, `<label>${e(title)}<select name="${kind}-asset">${options(assets, binding?.[`${kind}Id`], t("Не добавлен", "Not attached"))}</select></label>
-        ${input(`${kind}-range`, t("Дальность", "Range"), binding?.range ?? 5, 'type="number" min="0" step="any"')}
-        ${binding ? buildTriggerFields({ ...policy, episodeIds: binding.episodeIds ?? policy.episodeIds }, definition.episodes, { prefix: `${kind}-gate`, schemeId: definition.schemeId, schemeName: definition.schemeName }) : ""}
-        <button type="button" data-screen-action="open-asset" data-kind="${kind}">${t("Открыть в каталоге", "Open in catalog")}</button>`);
-    };
-    return attachment("shop", t("Магазин", "Shop"), catalog.shops) + attachment("dialogue", t("Диалог", "Dialogue"), catalog.dialogues);
+  scriptEntry(script, kind, stateId = "") { const attrs = `data-kind="${kind}" data-state-id="${e(stateId)}"`; return `<span>${e(script?.name || "—")}</span>${button("edit-script", script ? t("Править", "Edit") : t("Создать", "Create"), attrs)}${script ? button("delete-script", "×", attrs) : ""}`; }
+  stateScriptTable(group, kind) { return section(t("Состояния", "States"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Скрипт", "Script")}</th></tr></thead><tbody>${group.states.map((state) => `<tr><td>${e(state.name)}</td><td>${this.scriptEntry(kind === "transition" ? this.draft.transitionScripts?.[state.id] : this.draft.scripts?.find((script) => script.stateId === state.id), kind, state.id)}</td></tr>`).join("")}</tbody></table>`); }
+  featureFields({ definition, catalog }) {
+    if (!definition) return `<p>${t("Назначьте объекту группу.", "Assign the object to a group.")}</p>`;
+    let html = ["shop", "dialogue"].map((kind) => section(kind === "shop" ? t("Магазины", "Shops") : t("Диалоги", "Dialogues"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Инструменты", "Tools")}</th></tr></thead><tbody>${definition.states.map((state) => `<tr><td>${e(state.name)}</td><td>${(this.draft[`${kind}s`] ?? []).map((entry, index) => ({ entry, index })).filter(({ entry }) => !entry.stateIds?.length || entry.stateIds.includes(state.id)).map(({ entry, index }) => `<div>${e(catalog[`${kind}s`].find((asset) => asset.id === entry[`${kind}Id`])?.name ?? entry[`${kind}Id`])}${button("edit-feature", t("Править", "Edit"), `data-kind="${kind}" data-index="${index}"`)}${button("remove-feature", "×", `data-kind="${kind}" data-index="${index}"`)}</div>`).join("")}${button("add-feature", "+", `data-kind="${kind}" data-state-id="${e(state.id)}"`)}</td></tr>`).join("")}</tbody></table>`)).join("");
+    const ref = this.selectedFeature, binding = ref && this.draft[`${ref.kind}s`]?.[ref.index];
+    if (binding) html += section(t("Настройка взаимодействия", "Interaction settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(catalog[`${ref.kind}s`], binding[`${ref.kind}Id`])}</select></label>${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
+    return html;
   }
-  automationFields({ definition, scene }) {
-    const events = getEventCatalog(scene), eventOptions = events.events.map((item) => ({ id: item.name, name: item.name }));
-    const macros = events.macros.map((item) => ({ id: item.uuid, name: game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.name ?? item.uuid }));
-    const features = (this.draft.features ?? []).map((feature) => {
-      const fieldPrefix = `feature-${feature.id}`;
-      const details = `<label>${t("При событии", "On event")}<select name="${fieldPrefix}-event">${options(eventOptions, feature.eventName)}</select></label>`
-          + (feature.kind === "macro" ? `<label>${t("Макрос", "Macro")}<select name="${fieldPrefix}-macro">${options(macros, feature.macroUuid)}</select></label>` : `<label>${t("Вызвать триггер", "Invoke trigger")}<select name="${fieldPrefix}-trigger">${options(events.triggers, feature.triggerId)}</select></label><label>${t("Параметры триггера (JSON)", "Trigger parameters (JSON)")}<textarea name="${fieldPrefix}-parameters">${e(JSON.stringify(feature.parameters ?? {}, null, 2))}</textarea></label>`);
-      return `<tr data-object-feature="${e(feature.id)}"><td>${feature.kind === "macro" ? t("Макрос", "Macro") : t("Триггер", "Trigger")}
-        <label class="ms-check"><input type="checkbox" name="${fieldPrefix}-enabled"${feature.enabled !== false ? " checked" : ""}>${t("Включён", "Enabled")}</label></td><td>${details}<div>${definition.episodes.map((episode) => `<label class="ms-check"><input type="checkbox" name="${fieldPrefix}-episode" value="${e(episode.id)}"${feature.episodeIds?.includes(episode.id) ? " checked" : ""}>${e(episode.name)}</label>`).join("")}</div><small>${t("Пустой список эпизодов — во всех эпизодах схемы.", "No episodes selected means all episodes in the scheme.")}</small></td><td><button type="button" data-screen-action="remove-feature" data-id="${e(feature.id)}">${t("Удалить", "Remove")}</button></td></tr>`;
-    }).join("");
-    return `<table class="ms-automation-table"><thead><tr><th>${t("Действие", "Action")}</th><th>${t("Настройки", "Settings")}</th><th></th></tr></thead><tbody>${features}</tbody></table>`
-      + `<div class="ms-object-row"><button type="button" data-screen-action="add-feature" data-kind="macro">+ ${t("Макрос", "Macro")}</button><button type="button" data-screen-action="add-feature" data-kind="trigger">+ ${t("Триггер", "Trigger")}</button></div>`;
+  automationFields({ scene }) {
+    const catalog = getSignalCatalog(scene), signals = catalog.signals.filter((signal) => signal.emitterKey === this.ownerKey), macros = catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey);
+    const scripts = [this.draft.initialScript, ...Object.values(this.draft.transitionScripts ?? {}), ...(this.draft.scripts ?? [])].filter(Boolean);
+    let html = section(t("Сигналы объекта", "Object signals"), `<table><tbody>${signals.map((signal) => `<tr><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
+    if (this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
+    html += section(t("Макросы объекта", "Object macros"), `<div data-object-macro-drop><table><tbody>${macros.map((macro) => `<tr><td>${e(macroName(macro.uuid))}<small>${e(scripts.filter((script) => script.steps.some((step) => step.kind === "macro" && step.parameters.macroUuid === macro.uuid)).map((script) => script.name).join(", "))}</small></td><td>${e(this.macroValidation?.get(macro.uuid)?.text ?? "")}</td><td>${button("edit-object-macro", t("Править", "Edit"), `data-uuid="${e(macro.uuid)}"`)}${button("remove-object-macro", "×", `data-uuid="${e(macro.uuid)}"`)}</td></tr>`).join("")}</tbody></table><p class="ms-note">${t("Перетащите макрос Foundry сюда. Подписки проверяются при сохранении.", "Drop a Foundry macro here. Subscriptions are validated when saved.")}</p>${button("create-object-macro", `+ ${t("Макрос", "Macro")}`)}</div>`);
+    html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog));
+    if (this.subscriptionDraft) html += renderSubscriptionFields(this.subscriptionDraft, catalog, { fixedOwner: this.ownerKey });
+    return html + renderMacroValidation(this.validation);
   }
   capture() {
-    if (!this.context().definition) return;
-    const root = this.element;
-    if (this.tab === "transitions") {
-      this.draft.entry = readState(root, "entry"); this.draft.episodes ??= {};
-      this.draft.episodes[this.editEpisodeId] = { ...this.draft.episodes[this.editEpisodeId], ...readState(root, "episode") }; return;
-    }
-    if (this.tab === "routine") { this.draft.routines = readRoutineFields(root, this.draft.routines ?? []); return; }
-    if (this.tab === "features") {
-      for (const kind of ["shop", "dialogue"]) {
-        const id = value(root, `${kind}-asset`), previous = this.draft[kind];
-        const trigger = root.querySelector(`[name="${kind}-gate-enabled"]`) ? readTriggerFields(root, `${kind}-gate`) : previous?.trigger ?? normalizeTrigger({ repeat: "always" });
-        this.draft[kind] = id ? { ...previous, [`${kind}Id`]: id, episodeIds: trigger.episodeIds, range: Number(value(root, `${kind}-range`)), trigger } : null;
-      }
-      return;
-    }
-    this.draft.features = (this.draft.features ?? []).map((feature) => {
-      const prefix = `feature-${feature.id}`, next = { ...feature,
-        enabled: root.querySelector(`[name="${prefix}-enabled"]`)?.checked === true,
-        episodeIds: [...root.querySelectorAll(`[name="${prefix}-episode"]:checked`)].map((item) => item.value) };
-      next.eventName = value(root, `${prefix}-event`);
-      if (feature.kind === "macro") next.macroUuid = value(root, `${prefix}-macro`);
-      else { next.triggerId = value(root, `${prefix}-trigger`); next.parameters = JSON.parse(value(root, `${prefix}-parameters`) || "{}"); }
-      return next;
-    });
+    if (!this.draft || !this.element) return;
+    if (["routine", "transitions"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
+    if (this.tab === "features" && this.selectedFeature && this.element.querySelector('[name="feature-asset"]')) { const ref = this.selectedFeature, conditions = readConditionFields(this.element, "feature-conditions"); this.draft[`${ref.kind}s`][ref.index] = { ...this.draft[`${ref.kind}s`][ref.index], [`${ref.kind}Id`]: value(this.element, "feature-asset"), stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions }; }
+    if (this.tab === "automation") { if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
   }
   async _onRender(context, options) {
-    await super._onRender(context, options);
-    if (this.tab === "routine") bindRoutineSorting(this.element, this.draft.routines ?? [], () => { this.dirty = true; }, { signal: this.events.signal });
-    this.element.addEventListener("change", (event) => {
-      if (event.target.matches("[data-routine-definition]")) {
-        try {
-          this.capture();
-          const step = this.draft.routines[Number(event.target.dataset.index)].steps[Number(event.target.dataset.step)], catalog = getEventCatalog(this.context().scene);
-          if (step.kind === "macro") step.parameters.macroUuid = event.target.value;
-          else {
-            const trigger = catalog.triggers.find((item) => item.id === event.target.value), targetEvent = catalog.events.find((item) => item.id === trigger?.eventId);
-            if (trigger && targetEvent) step.parameters = { eventName: targetEvent.name, triggerId: trigger.id,
-              parameters: Object.fromEntries(trigger.parameters.map((parameter) => [parameter.name, parameter.type === "boolean" ? false : parameter.type === "string" ? "".padEnd(parameter.minLength ?? 0, " ") : Math.min(parameter.max ?? Infinity, Math.max(0, parameter.min ?? 0))])) };
-          }
-          this.dirty = true; void this.render({ force: true });
-        } catch (error) { notifyError(error); }
-        return;
-      }
-      if (event.target.matches("[data-routine-kind]")) {
-        try {
-          this.capture();
-          const routine = this.draft.routines[Number(event.target.dataset.index)], step = routine.steps[Number(event.target.dataset.step)];
-          step.parameters = routineStepTemplate(step.kind).parameters; this.dirty = true; void this.render({ force: true });
-        } catch (error) { notifyError(error); }
-        return;
-      }
-      if (event.target.name?.match(/^routine-\d+-episode$/)) {
-        try { this.capture(); void this.render({ force: true }); } catch (error) { notifyError(error); }
-        return;
-      }
-      if (!["behavior-episode", "shop-asset", "dialogue-asset"].includes(event.target.name)) return;
-      try { this.capture(); if (event.target.name === "behavior-episode") this.editEpisodeId = event.target.value; void this.render({ force: true }); }
-      catch (error) { notifyError(error); }
-    }, { signal: this.events.signal });
+    await super._onRender(context, options); const listeners = { signal: this.events.signal };
+    if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
+    this.element.addEventListener("change", (event) => { const target = event.target; try {
+      if (target.matches("[data-script-kind],[data-script-definition],[data-script-emoji]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; if (target.matches("[data-script-kind]")) step.parameters = scriptStepTemplate(step.kind).parameters; else if (target.matches("[data-script-emoji]")) step.parameters.emoji = target.value; else if (step.kind === "macro") step.parameters.macroUuid = target.value; else { step.parameters.signalId = target.value; const signal = getSignalCatalog(this.context().scene).signals.find((row) => row.id === target.value); step.parameters.parameters = Object.fromEntries((signal?.parameters ?? []).map((field) => [field.name, Object.hasOwn(field, "default") ? field.default : field.nullable ? null : field.type === "string" ? "" : field.type === "boolean" ? false : 0])); } this.dirty = true; void this.render({ force: true }); }
+      else if (target.matches('[name="field-type"],[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
+    } catch (error) { notifyError(error); } }, listeners);
+    this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);
+    this.element.addEventListener("drop", (event) => { if (!event.target.closest("[data-object-macro-drop]")) return; event.preventDefault(); void this.attachMacro(event).catch(notifyError); }, listeners);
   }
-  async handleAction(action, button) {
+  async attachMacro(event) { const data = JSON.parse(event.dataTransfer.getData("text/plain")), macro = data.uuid && await fromUuid(data.uuid); if (macro?.documentName !== "Macro") throw new Error(t("Перетащите макрос Foundry.", "Drop a Foundry macro.")); this.capture(); await new SignalCatalog(this.context().scene).attachMacro(this.ownerKey, macro.uuid); return this.render({ force: true }); }
+  async handleAction(action, target) {
     if (action === "information") return this.controller.openObjectInfo(this.descriptor);
-    if (["add-routine", "remove-routine", "add-routine-step", "remove-routine-step", "routine-point"].includes(action)) {
-      this.capture();
-      this.draft.routines ??= [];
-      const routines = this.draft.routines, index = Number(button.dataset.index), routine = routines[index], stepIndex = Number(button.dataset.step);
-      if (action === "add-routine") {
-        const episode = this.context().definition.episodes.find((episode) => !routines.some((item) => item.episodeId === episode.id));
-        if (episode) routines.push({ episodeId: episode.id, repeat: false, steps: [] });
-      }
-      if (action === "remove-routine") routines.splice(index, 1);
-      if (action === "add-routine-step") appendRoutineStep(routine);
-      if (action === "remove-routine-step") removeRoutineStep(routine, stepIndex);
-      if (action === "routine-point") {
-        const point = await this.controller.pickPoint();
-        if (point) Object.assign(routine.steps[stepIndex].parameters, { x: point.x, y: point.y });
-      }
-      this.dirty = true; return this.render({ force: true });
-    }
-    if (action === "restore-position") {
-      this.assertCurrentScene(); this.capture();
-      if (!game.user?.isGM) throw new Error(t("Требуются права мастера.", "GM permission is required."));
-      const position = this.draft.entry.position, document = this.context().document;
-      if (!position || !Number.isFinite(document.x) || !Number.isFinite(document.y)) throw new Error(t("Сначала укажите координаты X и Y.", "Specify X and Y coordinates first."));
-      // An explicit GM action moves this document only; it does not start a scheme or save preparation.
-      await document.update({ x: position.x, y: position.y }); return;
-    }
-    if (["tab", "add-feature", "remove-feature", "open-asset", "capture-position"].includes(action)) {
-      this.capture();
-      if (action === "tab") this.tab = button.dataset.tab;
-      if (action === "add-feature") { this.draft.features ??= []; this.draft.features.push({ id: randomId(), kind: button.dataset.kind, enabled: true, episodeIds: [], eventName: "", parameters: {} }); this.dirty = true; }
-      if (action === "remove-feature") { this.draft.features = this.draft.features.filter((item) => item.id !== button.dataset.id); this.dirty = true; }
-      if (action === "capture-position") {
-        const document = this.context().document;
-        if (!Number.isFinite(document.x) || !Number.isFinite(document.y)) throw new Error(t("У объекта нет координат X/Y.", "This object has no X/Y position."));
-        const destination = button.dataset.prefix === "entry" ? this.draft.entry : this.draft.episodes[this.editEpisodeId];
-        destination.position = { x: document.x, y: document.y }; destination.hidden = typeof document.hidden === "boolean" ? document.hidden : null; this.dirty = true;
-      }
-      if (action === "open-asset") return this.controller.openAsset(button.dataset.kind, this.draft[button.dataset.kind]?.[`${button.dataset.kind}Id`]);
-      return this.render({ force: true });
-    }
-    return super.handleAction(action, button);
+    if (["cancel", "save"].includes(action)) return super.handleAction(action, target);
+    this.capture(); const context = this.context(), catalog = new SignalCatalog(context.scene);
+    if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; }
+    else if (["edit-script", "delete-script"].includes(action)) { this.selectedScript = { kind: target.dataset.kind, stateId: target.dataset.stateId }; if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; } else if (!this.activeScript()) { this.setActiveScript(newScript(this.selectedScript.kind === "initial" ? t("Исходное состояние", "Initial state") : context.definition.states.find((state) => state.id === this.selectedScript.stateId)?.name ?? t("Скрипт", "Script"), this.selectedScript.kind === "routine" ? this.selectedScript.stateId : null)); this.dirty = true; } }
+    else if (action === "restore-initial") { await this.persist(); return this.controller.restoreObjectInitial(this.descriptor); }
+    else if (["add-script-step", "remove-script-step", "script-point", "script-sound"].includes(action)) { const script = this.activeScript(), step = script.steps[Number(target.dataset.step)]; if (action === "add-script-step") appendScriptStep(script); else if (action === "remove-script-step") removeScriptStep(script, Number(target.dataset.step)); else if (action === "script-point") { const point = await this.controller.pickPoint(); if (point) step.parameters.position = { ...(step.parameters.position ?? { speed: 5 }), x: point.x, y: point.y }; } else { const Picker = foundry.applications.apps?.FilePicker?.implementation ?? globalThis.FilePicker; new Picker({ type: "audio", current: step.parameters.src ?? "", callback: (src) => { step.parameters.src = src; this.dirty = true; void this.render({ force: true }); } }).browse(); return; } this.dirty = true; }
+    else if (["add-feature", "edit-feature", "remove-feature"].includes(action)) { const kind = target.dataset.kind, entries = this.draft[`${kind}s`] ??= []; if (action === "add-feature") { entries.push({ [`${kind}Id`]: context.catalog[`${kind}s`][0]?.id ?? "", stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) }); this.selectedFeature = { kind, index: entries.length - 1 }; this.dirty = true; } else if (action === "edit-feature") this.selectedFeature = { kind, index: Number(target.dataset.index) }; else { entries.splice(Number(target.dataset.index), 1); this.selectedFeature = null; this.dirty = true; } }
+    else if (action === "open-asset") { const ref = this.selectedFeature; return this.controller.openAsset(ref.kind, this.draft[`${ref.kind}s`][ref.index][`${ref.kind}Id`]); }
+    else if (action === "new-object-signal") this.signalDraft = { emitterKey: this.ownerKey, name: t("Новый сигнал", "New signal"), description: "", parameters: [], returns: [] };
+    else if (action === "edit-object-signal") this.signalDraft = clone(catalog.list().signals.find((signal) => signal.id === target.dataset.id));
+    else if (action === "remove-object-signal") { await catalog.removeSignal(target.dataset.id); this.signalDraft = null; }
+    else if (action === "save-object-signal") { this.signalDraft = await catalog.saveSignal(this.signalDraft); this.controller.changed(context.scene); }
+    else if (action === "addSignalField") this.signalDraft[target.dataset.direction].push({ name: `field${this.signalDraft[target.dataset.direction].length + 1}`, type: "string", nullable: false });
+    else if (action === "removeSignalField") this.signalDraft[target.dataset.direction].splice(Number(target.dataset.index), 1);
+    else if (action === "create-object-macro") { const Macro = foundry.documents.Macro?.implementation ?? globalThis.Macro; const macro = await Macro.create({ name: t("Макрос объекта", "Object macro"), type: "script", scope: "global", command: "" }, { renderSheet: true }); if (macro) await catalog.attachMacro(this.ownerKey, macro.uuid); }
+    else if (action === "edit-object-macro") return (await fromUuid(target.dataset.uuid))?.sheet?.render(true);
+    else if (action === "remove-object-macro") await catalog.removeMacro(this.ownerKey, target.dataset.uuid);
+    else if (action === "newSignalSubscription") { this.subscriptionDraft = { ownerKey: this.ownerKey, signalId: "", macroUuid: "", enabled: true }; this.validation = null; }
+    else if (action === "editSignalSubscription") { this.subscriptionDraft = clone(catalog.list().subscriptions.find((row) => row.id === target.dataset.id)); this.validation = null; }
+    else if (action === "deleteSignalSubscription") { await catalog.removeSubscription(target.dataset.id); this.subscriptionDraft = null; }
+    else if (action === "saveSignalSubscription") { try { this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft); this.validation = { valid: true }; } catch (error) { this.validation = { valid: false, error: error.message, snippet: error.snippet }; notifyError(error); } }
+    else return super.handleAction(action, target);
+    return this.render({ force: true });
   }
 }

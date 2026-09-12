@@ -17,51 +17,51 @@ const { ShopsManagerApplication } = await import("../dmicher-master-screen/scrip
 const { DialogueApplication } = await import("../dmicher-master-screen/scripts/apps/dialogue-window.js");
 const { DialogueCatalogApplication } = await import("../dmicher-master-screen/scripts/apps/dialogue-catalog.js");
 
-test("shop window pins the source scheme while the GM changes their selection", async () => {
+test("shop window pins the source group while the GM changes their selection", async () => {
   const calls = [], session = { sessionId: "s", userId: "gm", actorTokenId: "hero", runId: "east-run", draft: { giveItemIds: [], take: [] } };
   const controller = { shop: { getContext: (...args) => { calls.push(args); return { runtime: { runId: "east-run", shopSessions: { merchant: session } } }; } } };
-  const window = new ShopApplication(controller, { sceneId: "map", tokenId: "merchant", actorTokenId: "hero", schemeId: "east", sessionId: "s", join: true });
+  const window = new ShopApplication(controller, { sceneId: "map", tokenId: "merchant", actorTokenId: "hero", groupId: "east", sessionId: "s", join: true });
   await window.ensureSession();
   assert.ok(calls.every(args => args[2] === "east"));
-  assert.equal(window.intent().schemeId, "east");
+  assert.equal(window.intent().groupId, "east");
   assert.match(window.options.id, /map-east-east-run/);
 });
 
-test("GM shop manager joins and releases the selected scheme's session for a repeated token ID", async () => {
+test("GM shop manager joins and releases the selected group's session for a repeated token ID", async () => {
   const calls = [], scene = { id: "map" };
-  const shops = ["west", "east"].map(schemeId => ({ tokenId: "merchant", schemeId, session: { sessionId: `s-${schemeId}`, actorTokenId: "hero", expiresAt: Date.now() + 60000 } }));
+  const shops = ["west", "east"].map(groupId => ({ tokenId: "merchant", groupId, session: { sessionId: `s-${groupId}`, actorTokenId: "hero", expiresAt: Date.now() + 60000 } }));
   const controller = { getContext: () => ({ isGM: true, scene }), shop: { listSceneShops: () => shops, releaseSession: async intent => calls.push(intent) }, openShop: (...args) => calls.push(args) };
   const window = new ShopsManagerApplication(controller); window.sceneId = "map";
-  await window.handleAction("join", { schemeId: "east", tokenId: "merchant", sessionId: "s-east" });
-  assert.equal(calls[0][1].schemeId, "east");
-  await window.handleAction("release", { schemeId: "east", tokenId: "merchant", sessionId: "s-east" });
-  assert.equal(calls[1].schemeId, "east");
-  await assert.rejects(window.handleAction("join", { schemeId: "west", tokenId: "merchant", sessionId: "s-east" }));
+  await window.handleAction("join", { groupId: "east", tokenId: "merchant", sessionId: "s-east" });
+  assert.equal(calls[0][1].groupId, "east");
+  await window.handleAction("release", { groupId: "east", tokenId: "merchant", sessionId: "s-east" });
+  assert.equal(calls[1].groupId, "east");
+  await assert.rejects(window.handleAction("join", { groupId: "west", tokenId: "merchant", sessionId: "s-east" }));
 });
 
-test("dialogue start, answer and leave retain the originating scheme", async () => {
+test("dialogue start, answer and leave retain the originating group", async () => {
   const calls = [];
   const view = { sessionId: "s", nodeId: "first", step: 0, status: "active", responses: [] };
-  const service = { getContext: (_scene, _dialogue, schemeId) => { assert.equal(schemeId, "east"); return { runtime: { runId: "run" } }; },
+  const service = { getContext: (_scene, _dialogue, groupId) => { assert.equal(groupId, "east"); return { runtime: { runId: "run" } }; },
     requestStart: async intent => { calls.push(intent); return view; }, requestAnswer: async intent => { calls.push(intent); return view; }, leaveSession: async intent => calls.push(intent) };
-  const window = new DialogueApplication(service, { sceneId: "map", dialogueId: "talk", actorTokenId: "hero", schemeId: "east" });
+  const window = new DialogueApplication(service, { sceneId: "map", dialogueId: "talk", actorTokenId: "hero", groupId: "east" });
   await window._prepareContext({});
   await DialogueApplication.answer.call(window, null, { dataset: { responseId: "answer" } });
   await window.close();
   assert.equal(calls.length, 3);
-  assert.ok(calls.every(intent => intent.schemeId === "east"));
+  assert.ok(calls.every(intent => intent.groupId === "east"));
   assert.match(window.options.id, /map-east-run-talk/);
 });
 
 test("manual dialogue catalog lists scene assets independently of their binding and director selection", async () => {
-  const west = defaultDefinition(), east = { ...defaultDefinition(), schemeId: "east", schemeName: "East" };
+  const west = defaultDefinition(), east = { ...defaultDefinition(), groupId: "east", groupName: "East" };
   const flags = { definitions: { main: west, east },
     interactionCatalog: { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: "talk", name: "East only", startPageId: "start",
       pages: [{ id: "start", name: "Start", text: "East", art: "", responses: [] }] }] },
-    objectBindings: { schemaVersion: 1, revision: 0, bindings: { "Token:merchant": { type: "Token", id: "merchant", schemeId: "east",
-      dialogue: { dialogueId: "talk", episodeIds: ["calm"], range: 5, trigger: {} } } } } };
+    objectBindings: { schemaVersion: 1, revision: 0, bindings: { "Token:merchant": { type: "Token", id: "merchant", groupId: "east",
+      dialogue: { dialogueId: "talk", stateIds: ["calm"], range: 5, trigger: {} } } } } };
   const scene = { id: "map", name: "Map", tokens: new Map([["merchant", { id: "merchant", name: "Merchant" }]]), tiles: new Map(), getFlag: (_module, key) => flags[key] };
-  const sent = [], controller = { getContext: () => ({ isGM: true, scene, definition: west, selectedEpisodeId: "calm" }), dialogues: { openManualDialogue: descriptor => sent.push(descriptor) } };
+  const sent = [], controller = { getContext: () => ({ isGM: true, scene, definition: west, selectedStateId: "calm" }), dialogues: { openManualDialogue: descriptor => sent.push(descriptor) } };
   const window = new DialogueCatalogApplication(controller);
   await window._prepareContext({});
   const context = await window._prepareContext({});

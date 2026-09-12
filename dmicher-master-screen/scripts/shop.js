@@ -5,6 +5,7 @@ import { getInteractionCatalog } from "./scene-assets.js";
 import { objectDescriptor, objectKey, sceneObject, validateObjectAccess } from "./interaction-access.js";
 import { generics } from "./generics.js";
 import { createShopSessions, requireShopSession, sessionIsLive, shopKey } from "./shop-sessions.js";
+import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
 export { shopKey } from "./shop-sessions.js";
 
 const copy = (value) => structuredClone(value);
@@ -26,9 +27,9 @@ export async function importShopEntry(uuid, { stock = 1 } = {}) {
   if (!Number.isInteger(Number(stock)) || Number(stock) < 0 || Number(stock) > 9999) fail("Остаток: целое число от 0 до 9999.");
   return { id: id(), data: itemTransferData(item), stock: Number(stock) };
 }
-export function getShopContext(sceneId, source, schemeId = "main") {
-  const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { schemeId }) : null;
-  const target = objectDescriptor(source), resolved = scene && runtime ? resolveObjectShop(scene, target, { schemeId, episodeId: runtime.episodeId }) : null;
+export function getShopContext(sceneId, source, groupId = "main", selectedShopId) {
+  const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
+  const target = objectDescriptor(source), resolved = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;
   const shopId = resolved?.asset.id, token = sceneObject(scene, target);
   const inventories = scene?.getFlag?.(MODULE_ID, "shopInventories");
   const inventory = shopId && (inventories?.[shopId]
@@ -36,7 +37,7 @@ export function getShopContext(sceneId, source, schemeId = "main") {
       .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId])[0]);
   if (runtime && inventory) { runtime.shops ??= {}; runtime.shops[shopId] = copy(inventory); }
   return { scene, runtime, token, target, shopId, asset: resolved?.asset,
-    behavior: resolved ? { ...runtime.episode?.tokens?.[target.id], enabled: runtime.episode?.tokens?.[target.id]?.enabled !== false, shop: resolved.config } : null };
+    behavior: resolved ? { enabled: !runtime.disabledObjects?.includes(objectKey(target)), shop: resolved.config } : null };
 }
 async function saveInventory(current, inventory) {
   if (!current.scene.setFlag) return;
@@ -53,12 +54,12 @@ export function shopEntries(context) {
 }
 export function validateTradeContext(context, intent, user) {
   const { scene, runtime, token, behavior } = context;
-  if ((intent.schemeId ?? "main") !== (runtime?.schemeId ?? "main")) fail("Запрос относится к другой схеме магазина.");
-  if (intent.shopId && intent.shopId !== shopKey(context)) fail("Назначение магазина изменилось. Откройте взаимодействие заново.");
+  if ((intent.groupId ?? "main") !== (runtime?.groupId ?? "main")) fail("Запрос относится к другой группе магазина.");
+  if (!intent.shopId || intent.shopId !== shopKey(context)) fail("Назначение магазина изменилось. Откройте взаимодействие заново.");
   if (context.target && objectKey(intent.target ?? intent.tokenId) !== objectKey(context.target)) fail("Объект магазина изменился.");
   if (!behavior?.enabled || !behavior.shop?.enabled) fail("Этот магазин сейчас недоступен.");
   const descriptor = { ...behavior.shop, id: token?.id, target: context.target ?? { type: "Token", id: token?.id } };
-  return validateObjectAccess({ scene, runtime, descriptor, target: token, triggerType: "shop" }, intent.actorTokenId, user, intent.runId).actor;
+  return validateObjectAccess({ scene, runtime, descriptor, target: token, conditionType: "shop" }, intent.actorTokenId, user, intent.runId).actor;
 }
 export function normalizeExchange(intent) {
   const string = (value) => {
@@ -79,8 +80,8 @@ export function normalizeExchange(intent) {
   if (!["Token", "Tile"].includes(target?.type)) fail("Неизвестный тип объекта магазина.");
   const tokenId = string(target.id);
   return { kind: "exchange", requestId: string(intent.requestId), sceneId: string(intent.sceneId), tokenId,
-    ...(intent.target ? { target: { type: target.type, id: tokenId } } : {}), ...(intent.shopId ? { shopId: string(intent.shopId) } : {}),
-    actorTokenId: string(intent.actorTokenId), sessionId: string(intent.sessionId), schemeId: string(intent.schemeId ?? "main"), runId: string(intent.runId), giveItemIds, take };
+    target: { type: target.type, id: tokenId }, shopId: string(intent.shopId),
+    actorTokenId: string(intent.actorTokenId), sessionId: string(intent.sessionId), groupId: string(intent.groupId ?? "main"), runId: string(intent.runId), giveItemIds, take };
 }
 function prepare(current, intent, user, validate) {
   const actor = validate(current, intent, user), entries = shopEntries(current);
@@ -98,11 +99,11 @@ function trim(receipts) {
 }
 
 /** One elected GM serializes changes. Pending/processing receipts are never automatically replayed. */
-export function createShopService({ onChange = () => {}, context = getShopContext, save = saveRuntime,
+export function createShopService({ emitSignal, onChange = () => {}, context = getShopContext, save = saveRuntime,
   lock = withSceneLock, authority = isAuthority, validate = validateTradeContext } = {}) {
-  const submitted = new Map(), sent = new Map();
+  const submitted = new Map(), sent = new Map(), decisions = new Map();
   const chat = generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "commerce-requests" });
-  const sessions = createShopSessions({ context, save, lock, authority, validate, chat, onChange,
+  const sessions = createShopSessions({ context, save, lock, authority, validate, chat, onChange, emitSignal,
     validateOffer: (current, draft, user) => {
       if (Array.isArray(draft.giveItemIds) && Array.isArray(draft.take) && !draft.giveItemIds.length && !draft.take.length) return { giveItemIds: [], take: [] };
       const clean = normalizeExchange(draft);
@@ -112,7 +113,7 @@ export function createShopService({ onChange = () => {}, context = getShopContex
   const receiptKey = (userId, intent) => `${userId}:${intent.requestId}`;
   const publish = async (message, receipt) => {
     if (!message?.update) return;
-    const labels = { pending: "Предложение ожидает решения мастера.", processing: "Обмен выполняется.", done: "Обмен выполнен.",
+    const labels = { pending: "Предложение ожидает решения мастера.", validating: "Проверяются условия покупки.", processing: "Обмен выполняется.", done: "Обмен выполнен.",
       rejected: "Предложение отклонено.", failed: "Обмен отменён.", uncertain: "Нужна сверка мастером; автоматическое повторение запрещено." };
     let content = `<section class="ms-trade-card"><p>${escape(labels[receipt.status] ?? receipt.status)}</p>`;
     if (receipt.summary) content += `<p>Персонаж отдаёт: ${escape(receipt.summary.give || "ничего")}.<br>Получает: ${escape(receipt.summary.take || "ничего")}.</p>`;
@@ -145,7 +146,7 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       for (const { entry, count } of takes) {
         for (let index = 0; index < count; index++) {
           if (!authority()) fail("Исполняющий мастер изменился.");
-          validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), intent, user);
+          validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
           const data = itemTransferData(entry.data);
           data.flags ??= {};
           data.flags[MODULE_ID] = { ...data.flags[MODULE_ID], exchange: { key, effectId: receipt.effectId, index: created.length } };
@@ -160,13 +161,13 @@ export function createShopService({ onChange = () => {}, context = getShopContex
         entry.stock -= count;
       }
       for (const source of sourceSnapshots) entries.push({ id: id(), data: itemTransferData(source.data), stock: 1 });
-      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), intent, user);
+      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
       checkSources();
       runtime.shops ??= {};
       runtime.shops[shopKey(current)] = { items: entries };
       await save(current.scene, runtime);
       if (!authority()) fail("Исполняющий мастер изменился.");
-      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), intent, user);
+      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
       if (sources.length) {
         // Foundry does not offer a cross-document transaction. Recheck immediately before
         // our delete so a concurrent sheet edit is preserved and the exchange is rolled back.
@@ -175,7 +176,7 @@ export function createShopService({ onChange = () => {}, context = getShopContex
         await actor.deleteEmbeddedDocuments("Item", sources.map((source) => source.id));
         if (sources.some((source) => actor.items.has(source.id))) fail("Система не удалила часть исходных предметов.");
       }
-      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), intent, user);
+      validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
       await saveInventory(current, runtime.shops[shopKey(current)]);
       receipt.status = "done";
       delete runtime.shopSessions[shopKey(current)];
@@ -219,13 +220,42 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       return copy(receipt);
     }
   };
+  const completeApproval = async (scene, intent, user, key, session) => {
+    // Subscriber macros may read/write this scene. Await them outside the inventory
+    // lock, then rebuild the exchange from current stock and documents under it.
+    let outcome;
+    try { outcome = await notifyInteractionSignal(emitSignal, scene, interactionSignal(scene, "Shop", intent.shopId, session, "beforePurchase", { suffix: `${intent.requestId}.beforePurchase`, validation: true })); }
+    catch (error) { outcome = { allowed: false, error: error.message }; }
+    const result = await lock(scene, async () => {
+      if (!authority()) fail("Исполняющий мастер изменился.");
+      const current = context(intent.sceneId, intent.target, intent.groupId, intent.shopId), receipt = current.runtime.tradeRequests?.[key];
+      if (!receipt || receipt.status !== "validating") return copy(receipt ?? { status: "failed", error: "Состояние обмена изменилось во время проверки." });
+      try {
+        if (outcome?.allowed !== true || ["failed", "stale"].includes(outcome?.status)) fail(deniedMessage(outcome, outcome?.error ?? "Подписчик не разрешил покупку."));
+        requireShopSession(current, intent, user);
+        prepare(current, intent, user, validate);
+        return await execute(current, intent, user, key, receipt);
+      } catch (error) {
+        const runtime = copy(current.runtime);
+        runtime.tradeRequests[key] = { ...receipt, status: "failed", error: error.message };
+        if (runtime.shopSessions?.[intent.shopId]?.sessionId === intent.sessionId) runtime.shopSessions[intent.shopId].status = "editing";
+        await save(scene, runtime); globalThis.ui?.notifications?.error(error.message);
+        return copy(runtime.tradeRequests[key]);
+      }
+    });
+    if (result.status === "done") {
+      await notifyInteractionSignal(emitSignal, scene, interactionSignal(scene, "Shop", intent.shopId, session, "purchased", { suffix: `${intent.requestId}.purchased` }));
+      await notifyInteractionSignal(emitSignal, scene, interactionSignal(scene, "Shop", intent.shopId, session, "closed"));
+    }
+    onChange(scene); return result;
+  };
   const receive = async (intent, user, message = null) => {
     intent = normalizeExchange(intent);
-    const initial = context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main");
+    const initial = context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId);
     if (!initial.scene) fail("Сцена магазина не найдена.");
-    return lock(initial.scene, async () => {
+    const staged = await lock(initial.scene, async () => {
       if (!authority()) fail("Исполняющий мастер изменился.");
-      const current = context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), key = receiptKey(user.id, intent);
+      const current = context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), key = receiptKey(user.id, intent);
       const previous = current.runtime.tradeRequests?.[key];
       if (previous) return copy(previous);
       const plan = prepare(current, intent, user, validate);
@@ -234,49 +264,55 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       if (session.status !== "editing") fail("Предыдущее предложение этой сессии ещё не завершено.");
       const receipt = { status: "pending", userId: user.id, messageId: message?.id ?? null, intent,
         summary: { give: plan.sources.map((item) => item.name).join(", "), take: plan.takes.map(({ entry, count }) => `${entry.data.name} × ${count}`).join(", ") } };
-      if (current.behavior.shop.requireGMApproval !== false && !user.isGM) {
-        const runtime = copy(current.runtime); runtime.tradeRequests ??= {};
-        if (Object.values(runtime.tradeRequests).filter((item) => item.status === "pending" && item.userId === user.id).length >= 10) fail("Сначала дождитесь решения мастера по предыдущим предложениям.");
-        runtime.tradeRequests[key] = receipt;
-        runtime.shopSessions[shopKey(current)].status = "pending";
-        runtime.shopSessions[shopKey(current)].draft = { giveItemIds: copy(intent.giveItemIds), take: copy(intent.take) };
-        await save(current.scene, runtime); onChange(current.scene);
-        return copy(receipt);
-      }
-      return execute(current, intent, user, key, receipt);
+      const approvalRequired = current.behavior.shop.requireGMApproval !== false && !user.isGM;
+      const runtime = copy(current.runtime); runtime.tradeRequests ??= {};
+      if (Object.values(runtime.tradeRequests).filter((item) => item.status === "pending" && item.userId === user.id).length >= 10) fail("Сначала дождитесь решения мастера по предыдущим предложениям.");
+      receipt.status = approvalRequired ? "pending" : "validating";
+      runtime.tradeRequests[key] = receipt;
+      runtime.shopSessions[shopKey(current)].status = "pending";
+      runtime.shopSessions[shopKey(current)].draft = { giveItemIds: copy(intent.giveItemIds), take: copy(intent.take) };
+      await save(current.scene, runtime); onChange(current.scene);
+      return approvalRequired ? copy(receipt) : { receipt: copy(receipt), session: copy(session), key };
     });
+    return staged.receipt ? completeApproval(initial.scene, intent, user, staged.key, staged.session) : staged;
   };
-  const decide = async (messageId, approved) => {
+  const decideOnce = async (messageId, approved) => {
     if (!authority() || !game.user?.isGM) fail("Решение доступно ведущему мастеру.");
     const message = game.messages.get(messageId), claimed = message?.getFlag?.(MODULE_ID, "trade");
     if (!claimed) fail("Запрос обмена не найден.");
     const authorId = typeof message.author === "string" ? message.author : message.author?.id;
-    const initial = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.schemeId ?? "main");
+    const initial = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.groupId ?? "main", claimed.shopId);
     if (!initial.scene) fail("Сцена обмена не найдена.");
-    const result = await lock(initial.scene, async () => {
-      const current = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.schemeId ?? "main"), key = receiptKey(authorId, claimed);
+    let closed;
+    const staged = await lock(initial.scene, async () => {
+      const current = context(claimed.sceneId, claimed.target ?? claimed.tokenId, claimed.groupId ?? "main", claimed.shopId), key = receiptKey(authorId, claimed);
       const receipt = current.runtime.tradeRequests?.[key];
       if (!receipt || receipt.userId !== authorId || receipt.messageId !== messageId) fail("Нет подтверждённого сервером запроса обмена для этого сообщения.");
       if (receipt.status !== "pending") return copy(receipt);
       const persistedShopId = receipt.intent.shopId ?? shopKey(current);
       if (!approved) {
         const runtime = copy(current.runtime); runtime.tradeRequests[key].status = "rejected";
-        if (runtime.shopSessions?.[persistedShopId]?.sessionId === receipt.intent.sessionId) delete runtime.shopSessions[persistedShopId];
+        if (runtime.shopSessions?.[persistedShopId]?.sessionId === receipt.intent.sessionId) {
+          closed = runtime.shopSessions[persistedShopId]; delete runtime.shopSessions[persistedShopId];
+        }
         await save(current.scene, runtime); onChange(current.scene);
         return copy(runtime.tradeRequests[key]);
       }
-      // Execute only the persisted authenticated intent, never flags edited after the request was accepted.
-      try { return await execute(current, receipt.intent, game.users.get(receipt.userId), key, receipt); }
-      catch (error) {
-        const runtime = copy(current.runtime);
-        runtime.tradeRequests[key] = { ...receipt, status: "failed", error: error.message };
-        if (runtime.shopSessions?.[persistedShopId]?.sessionId === receipt.intent.sessionId) delete runtime.shopSessions[persistedShopId];
-        await save(current.scene, runtime);
-        return copy(runtime.tradeRequests[key]);
-      }
+      const runtime = copy(current.runtime);
+      runtime.tradeRequests[key].status = "validating";
+      const session = copy(runtime.shopSessions?.[persistedShopId]);
+      await save(current.scene, runtime);
+      return { receipt: copy(runtime.tradeRequests[key]), session, key };
     });
+    const result = staged.receipt ? await completeApproval(initial.scene, staged.receipt.intent, game.users.get(staged.receipt.userId), staged.key, staged.session) : staged;
+    if (closed) await notifyInteractionSignal(emitSignal, initial.scene, interactionSignal(initial.scene, "Shop", closed.shopId, closed, "closed"));
     await publish(message, result);
     return result;
+  };
+  const decide = (messageId, approved) => {
+    if (decisions.has(messageId)) return decisions.get(messageId);
+    const task = decideOnce(messageId, approved).finally(() => decisions.delete(messageId));
+    decisions.set(messageId, task); return task;
   };
   return Object.freeze({
     ...sessions,
@@ -284,22 +320,22 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       if (!scene) return [];
       const definitions = getDefinitions(scene), states = getRuntimes(scene), bindings = Object.values(getObjectBindings(scene).bindings);
       return getInteractionCatalog(scene).shops.map((asset) => {
-        const owners = bindings.filter((binding) => binding.shop?.shopId === asset.id);
+        const owners = bindings.filter((binding) => binding.shops?.some((reference) => reference.shopId === asset.id));
         const occupiedState = states.find((state) => sessionIsLive(state.shopSessions?.[asset.id]));
         const fallbackState = states.find((state) => state.shopSessions?.[asset.id]);
         const source = occupiedState ?? fallbackState;
         const session = source?.shopSessions?.[asset.id];
         const availableOwner = owners.find((owner) => {
-          const runtime = states.find((state) => state.schemeId === owner.schemeId);
-          return runtime?.runId && !runtime.halted && !runtime.episode?.stop
-            && resolveObjectShop(scene, owner, { schemeId: owner.schemeId, episodeId: runtime.episodeId });
+          const runtime = states.find((state) => state.groupId === owner.groupId);
+          return runtime?.runId && !runtime.halted && !runtime.state?.stop
+            && resolveObjectShop(scene, owner, { groupId: owner.groupId, stateId: runtime.stateId }, asset.id);
         });
         const owner = owners.find((owner) => objectKey(owner) === objectKey(session?.target)) ?? availableOwner ?? owners[0];
         const target = session?.target ?? (owner ? { type: owner.type, id: owner.id } : null);
-        const schemeId = source?.schemeId ?? owner?.schemeId;
+        const groupId = source?.groupId ?? owner?.groupId;
         const receipts = states.flatMap((state) => Object.values(state.tradeRequests ?? {}).filter((receipt) => receipt.intent?.shopId === asset.id));
-        return { shopId: asset.id, tokenId: target?.id ?? asset.id, target, schemeId,
-          schemeName: definitions.find((entry) => entry.schemeId === schemeId)?.schemeName ?? "",
+        return { shopId: asset.id, tokenId: target?.id ?? asset.id, target, groupId,
+          groupName: definitions.find((entry) => entry.groupId === groupId)?.groupName ?? "",
           npcName: asset.name, img: asset.img || sceneObject(scene, target)?.texture?.src, enabled: Boolean(availableOwner),
           sources: owners.map((binding) => ({ type: binding.type, id: binding.id, name: sceneObject(scene, binding)?.name ?? binding.id })),
           session: session ? { ...copy(session), id: session.sessionId, userName: game.users.get(session.userId)?.name,
@@ -315,7 +351,7 @@ export function createShopService({ onChange = () => {}, context = getShopContex
       if (sent.has(key)) return game.messages.get(sent.get(key)) ?? { status: "pending" };
       const task = (async () => {
         if (authority() && game.user.isGM) return receive(intent, game.user);
-        validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.schemeId ?? "main"), intent, game.user);
+        validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, game.user);
         const gms = asArray(game.users).filter((user) => user.active && Number(user.role) === 4).map((user) => user.id);
         if (!gms.length) fail("Для обмена нужен подключённый мастер.");
         const messages = await chat.create({ author: game.user.id, content: "<p>Ширма: предложение обмена отправлено мастеру.</p>",

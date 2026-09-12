@@ -201,9 +201,10 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
         context.fillStyle = token.id === observer.id ? "#b4d8f3" : "#c6b394";
         context.beginPath(); context.arc(token.x + width / 2, token.y + height / 2, Math.min(width, height) / 3, 0, Math.PI * 2); context.fill();
       }
-      const binding = bindings[`Token:${token.id}`], runtime = runtimes.find((entry) => entry.schemeId === binding?.schemeId);
-      const emoji = runtime?.routineStates?.[token.id]?.emoji;
-      if (emoji && !binding.playerCharacter && !runtime.halted && !runtime.episode?.stop && !runtime.disabledTokens?.includes(token.id)) {
+      const binding = bindings[`Token:${token.id}`], runtime = runtimes.find((entry) => entry.groupId === binding?.groupId);
+      const visuals = Object.entries(runtime?.scriptStates ?? {}).filter(([key, value]) => key.startsWith(`Token:${token.id}:`) && value);
+      const emoji = visuals.toSorted((a, b) => Number(b[1].emojiAt ?? 0) - Number(a[1].emojiAt ?? 0))[0]?.[1]?.emoji;
+      if (emoji && !binding.playerCharacter && !runtime.halted && !runtime.disabledObjects?.includes(`Token:${token.id}`)) {
         context.font = `${Math.max(20, width / 3)}px sans-serif`;
         context.textAlign = "center";
         context.fillText(emoji, token.x + width / 2, token.y);

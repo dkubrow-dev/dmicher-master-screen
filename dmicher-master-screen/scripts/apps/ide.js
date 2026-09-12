@@ -1,10 +1,10 @@
 import { EditorApplication } from "./editor.js";
 import { ScreenLayout, MAIN_TABS, DETAIL_TABS } from "./screen-layout.js";
-import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderEventTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, eventSources, renderObjectList } from "./ide-view.js";
+import { TAB_LABELS, OTHER_BLOCKS, renderSceneTree, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
-import { renderSchemeBadges, updateSceneNavigationBadges } from "./scheme-badges.js";
-import { SchemeEditor } from "../scheme-editor.js";
-import { EventCatalog } from "../event-catalog.js";
+import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
+import { GroupEditor } from "../group-editor.js";
+import { SignalCatalog } from "../signal-catalog.js";
 import { getDefinitions, getRuntimes } from "../store.js";
 import { randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
@@ -12,6 +12,8 @@ import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
 import { bindIDEMenus } from "./ide-menu.js";
+import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary } from "./signal-fields.js";
+const t = (ru,en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 
 const esc = generics.utilities.escapeHTML;
 const clone = (value) => structuredClone(value);
@@ -22,7 +24,7 @@ const nextName = (entries, base, key = "name") => { const names = new Set(entrie
 const notify = (error) => { console.error("dmicher-master-screen |", error); globalThis.ui?.notifications?.error(error.message); };
 const actionButton = (action, label, extra = "") => `<button type="button" data-screen-action="${action}" ${extra}>${label}</button>`;
 
-/** The IDE owns navigation and draft forms. The existing episode editors remain isolated under Other. */
+/** The IDE owns navigation and draft forms. The existing state editors remain isolated under Other. */
 export class MasterScreenApplication extends EditorApplication {
   static PARTS = { main: { template: "modules/dmicher-master-screen/templates/ide.hbs", scrollable: ["[data-main-content]", "[data-detail-content]"] } };
 
@@ -35,13 +37,13 @@ export class MasterScreenApplication extends EditorApplication {
       void this.render({ force: true }).catch(notify);
     } });
     this.layout.presentation = presentation;
-    this.selection = { kind: null, id: null, schemeId: null };
+    this.selection = { kind: null, id: null, groupId: null };
     this.parameterDraft = null;
     this.parameterRevision = null;
     this.selectionSceneId = null;
     this.tabStates = new Map();
     this.menuBranch = menuParent(this.layout.preferences.mainTab);
-    this.foldedSchemes = new Set();
+    this.foldedGroups = new Set();
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
     this.assetPageIds = new Map();
@@ -83,15 +85,14 @@ export class MasterScreenApplication extends EditorApplication {
   refresh() {
     const scene = this.controller.getContext().scene;
     if (this.rendered && this.selectionSceneId !== scene?.id) return this.render({ force: true });
-    const badges = this.element?.querySelector(".ms-scheme-badges");
-    if (badges) badges.innerHTML = renderSchemeBadges(getDefinitions(scene), getRuntimes(scene));
+    const badges = this.element?.querySelector(".ms-group-badges");
+    if (badges) badges.innerHTML = renderGroupBadges(getDefinitions(scene), getRuntimes(scene));
     return super.refresh();
   }
 
   onDraftInput(event) {
     if (event.target.matches("[data-tab-visibility]")) return false;
     if (event.target.closest("[data-ide-parameters]")) return true;
-    if (event.target.hasAttribute("data-trigger-value")) return false;
     return super.onDraftInput(event);
   }
 
@@ -100,7 +101,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (inputs.length) this.pendingTabInputs = inputs;
     try {
       if (this.element?.querySelector("[data-ide-parameters]")) this.parameterDraft = this.readParameterDraft();
-      else if (this.element?.querySelector("[data-episode-fields]")) this.draft = this.readEpisode();
+      else if (this.element?.querySelector("[data-state-fields]")) this.draft = this.readState();
     } catch (error) { if (!this.dirty) throw error; }
   }
 
@@ -110,22 +111,22 @@ export class MasterScreenApplication extends EditorApplication {
     if (!this.selectionSceneId) return;
     const context = this.controller.getContext();
     this.tabStates.set(this.stateKey(), { selection: clone(this.selection), parameterDraft: clone(this.parameterDraft), parameterRevision: this.parameterRevision, dirty: this.dirty,
-      draft: clone(this.draft), draftRevision: this.draftRevision, episodeDirty: this.episodeDirty, otherBlock: this.otherBlock, contextKey: this.contextKey,
-      inputs: this.dirty ? (this.snapshotInputs().length ? this.snapshotInputs() : this.pendingTabInputs) : null, schemeId: context.scene?.id === this.selectionSceneId ? context.schemeId : this.selection.schemeId,
-      episodeId: context.scene?.id === this.selectionSceneId ? context.selectedEpisodeId : this.selection.episodeId });
+      draft: clone(this.draft), draftRevision: this.draftRevision, stateDirty: this.stateDirty, otherBlock: this.otherBlock, contextKey: this.contextKey,
+      inputs: this.dirty ? (this.snapshotInputs().length ? this.snapshotInputs() : this.pendingTabInputs) : null, groupId: context.scene?.id === this.selectionSceneId ? context.groupId : this.selection.groupId,
+      stateId: context.scene?.id === this.selectionSceneId ? context.selectedStateId : this.selection.stateId });
   }
   restoreTabState(tab, sceneId = this.selectionSceneId) {
     const saved = this.tabStates.get(this.stateKey(tab, sceneId));
-    if (saved?.schemeId) {
+    if (saved?.groupId) {
       const context = this.controller.getContext();
-      if (context.definitions?.some((definition) => definition.schemeId === saved.schemeId)) {
-        this.controller.selectScheme(saved.schemeId, { render: false });
-        if (this.controller.getContext().definition.episodes.some((episode) => episode.id === saved.episodeId)) this.controller.selectEpisode(saved.episodeId, { render: false, resetDraft: false });
+      if (context.definitions?.some((definition) => definition.groupId === saved.groupId)) {
+        this.controller.selectGroup(saved.groupId, { render: false });
+        if (this.controller.getContext().definition.states.some((state) => state.id === saved.stateId)) this.controller.selectState(saved.stateId, { render: false, resetDraft: false });
       }
     }
-    this.selection = clone(saved?.selection ?? { kind: null, id: null, schemeId: this.controller.getContext().schemeId });
+    this.selection = clone(saved?.selection ?? { kind: null, id: null, groupId: this.controller.getContext().groupId });
     this.parameterDraft = clone(saved?.parameterDraft ?? null); this.parameterRevision = saved?.parameterRevision ?? null;
-    this.draft = clone(saved?.draft ?? null); this.draftRevision = saved?.draftRevision ?? null; this.episodeDirty = saved?.episodeDirty ?? false;
+    this.draft = clone(saved?.draft ?? null); this.draftRevision = saved?.draftRevision ?? null; this.stateDirty = saved?.stateDirty ?? false;
     this.dirty = saved?.dirty ?? false; this.otherBlock = saved?.otherBlock ?? null; this.contextKey = saved?.contextKey ?? "";
     this.pendingInputs = null; this.pendingTabInputs = saved?.inputs ?? null;
   }
@@ -159,75 +160,75 @@ export class MasterScreenApplication extends EditorApplication {
     const base = await super._prepareContext(options);
     if (parameterDirty) this.dirty = true;
     const { preferences } = this.layout;
-    const catalog = current.scene ? new EventCatalog(current.scene).list() : { events: [], triggers: [], macros: [] };
+    const catalog = current.scene ? new SignalCatalog(current.scene).list() : { emitters: [], signals: [], subscriptions: [], macros: [] };
     const assets = current.scene ? new SceneAssets(current.scene).list() : { shops: [], dialogues: [], revision: 0 };
     const objectState = current.scene ? new SceneObjects(current.scene).list() : { bindings: {}, revision: 0 };
     const bindings = Object.values(objectState.bindings), objects = current.scene ? listNativeSceneObjects(current.scene) : [];
     this.objectsRevision = objectState.revision;
     const definitions = current.scene ? getDefinitions(current.scene) : [];
     const runtimes = current.scene ? getRuntimes(current.scene) : [];
-    const selectedDefinition = definitions.find((definition) => definition.schemeId === this.selection.schemeId);
+    const selectedDefinition = definitions.find((definition) => definition.groupId === this.selection.groupId);
     let selected;
-    if (this.selection.kind === "scheme") selected = definitions.find((definition) => definition.schemeId === this.selection.id);
-    if (this.selection.kind === "episode") selected = selectedDefinition?.episodes.find((episode) => episode.id === this.selection.id);
-    if (this.selection.kind === "event") selected = catalog.events.find((event) => event.id === this.selection.id);
-    if (this.selection.kind === "trigger") selected = catalog.triggers.find((trigger) => trigger.id === this.selection.id);
-    if (this.selection.kind === "macro") selected = catalog.macros.find((macro) => macro.uuid === this.selection.id);
+    if (this.selection.kind === "group") selected = definitions.find((definition) => definition.groupId === this.selection.id);
+    if (this.selection.kind === "state") selected = selectedDefinition?.states.find((state) => state.id === this.selection.id);
+    if (this.selection.kind === "signal") selected = catalog.signals.find((signal) => signal.id === this.selection.id);
+    if (this.selection.kind === "emitter") selected = catalog.emitters.find((emitter) => emitter.key === this.selection.id);
+    if (this.selection.kind === "macro") selected = catalog.macros.find((macro) => macroKey(macro) === this.selection.id);
     if (this.selection.kind === "shop") selected = assets.shops.find((shop) => shop.id === this.selection.id);
     if (this.selection.kind === "dialogue") selected = assets.dialogues.find((dialogue) => dialogue.id === this.selection.id);
     if (!this.dirty || !this.parameterDraft) {
       this.parameterDraft = selected ? clone(selected) : null;
-      this.parameterRevision = ["scheme", "episode"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
+      this.parameterRevision = ["group", "state"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
     }
     const activeMain = preferences.mainTab, activeDetail = preferences.detailTab;
     this.toolRows = [];
     let mainHTML = "", detailHTML = "", nodeActions = "";
     if (activeMain === "scene") {
       mainHTML = renderSceneTree(definitions, runtimes, this.selection, this.mode);
-      if (!definitions.length) mainHTML = '<p class="ms-note">В этой сцене пока нет схем. Создайте схему — в ней появится первый эпизод.</p>';
-      if (this.mode === "constructor") nodeActions = actionButton("addScheme", "Создать схему") + (definitions.length ? actionButton("addSceneEpisode", "+ Эпизод") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить") : "") + generics.components.renderJSONControls({ id: "scheme-list", importLabel: "Импорт схемы", exportLabel: "Экспорт схемы" });
+      if (!definitions.length) mainHTML = '<p class="ms-note">В этой сцене пока нет групп. Создайте группу — в ней появится первый состояние.</p>';
+      if (this.mode === "constructor") nodeActions = actionButton("addGroup", "Создать группу") + (definitions.length ? actionButton("addSceneState", "+ Состояние") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить") : "") + generics.components.renderJSONControls({ id: "group-list", importLabel: "Импорт группы", exportLabel: "Экспорт группы" });
     }
-    if (activeMain === "events") {
-      mainHTML = renderEventTree(catalog, this.selection, this.mode);
-      if (this.mode === "constructor") nodeActions = actionButton("addEvent", "+ Событие") + actionButton("addTypedTrigger", "+ Триггер") + actionButton("editSelected", "Править") + actionButton("deleteSelected", "Удалить") + generics.components.renderJSONControls({ id: "event-list", importLabel: "Импорт", exportLabel: "Экспорт" });
+    if (activeMain === "signals") {
+      mainHTML = renderSignalTree(catalog, this.selection, this.mode, definitions);
+      if (this.mode === "constructor") nodeActions = actionButton("addSignal", t("+ \u0421\u0438\u0433\u043d\u0430\u043b", "+ Signal")) + actionButton("editSelected", t("\u041f\u0440\u0430\u0432\u0438\u0442\u044c", "Edit")) + actionButton("deleteSelected", t("\u0423\u0434\u0430\u043b\u0438\u0442\u044c", "Delete"));
     }
     if (activeMain === "macros") {
-      mainHTML = renderMacroList(catalog, this.selection, (uuid) => globalThis.game?.macros?.get(uuid.split(".").pop()));
+      this.selectedMacroOwner ??= `Scene:${current.scene.id}`;
+      const validation = new Map(await Promise.all(catalog.macros.map(async (macro) => [macroKey(macro), await macroValidationSummary(catalog, macro)])));
+      mainHTML = renderMacroList(catalog, this.selection, (uuid) => globalThis.game?.macros?.get(uuid.split(".").pop()), this.selectedMacroOwner, validation);
       if (this.mode === "constructor") nodeActions = actionButton("createMacro", "+ Макрос") + actionButton("deleteSelected", "Убрать из ширмы");
     }
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
     if (["shops", "dialogues"].includes(activeMain)) {
       const kind = activeMain === "shops" ? "shop" : "dialogue";
-      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[kind]?.[`${kind}Id`] === entry.id).length} об.` }));
+      const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[`${kind}s`]?.some((link) => link[`${kind}Id`] === entry.id)).length} об.` }));
       mainHTML = renderObjectList(rows, this.selection, kind);
       nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? "+ Магазин" : "+ Диалог") + actionButton("deleteSelected", "Удалить") + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: "Импорт", exportLabel: "Экспорт" }) : "")
         + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? "Состояния магазинов" : "Просмотр и ручной показ");
     }
-    if (activeMain === "sources") { this.toolRows = eventSources(definitions, current.scene, { assets, bindings }); mainHTML = renderObjectList(this.toolRows, this.selection, "sources"); }
+
     if (activeDetail === "reference") {
-      const page = { scene: "constructor", events: "events", macros: "macros", shops: "shops", dialogues: "dialogues", sources: "events", other: "start" }[activeMain];
+      const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.</p>${actionButton("contextHelp", "Открыть справку", `data-page="${page}"`)}`;
     } else if (["shops", "dialogues"].includes(activeMain)) {
       detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.assetPageIds.get(`${current.scene?.id}:${this.selection.id}`), mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
-    } else if (activeMain === "sources") {
-      const row = this.toolRows.find((entry) => this.selection.kind === activeMain && entry.id === this.selection.id);
-      detailHTML = '<p class="ms-note">Выберите элемент в основной зоне.</p>';
-      if (row) {
-        detailHTML = `<h3>${esc(row.name)}</h3><p class="ms-note">${esc(row.schemeName)} · ${esc(row.episodeName ?? current.episode?.name ?? "")}</p>`;
-        if (activeMain === "sources") detailHTML += `<p>Порождаемые события: ${esc(row.detail)}</p><p class="ms-note">Список отражает подготовленные источники; открытие списка ничего не запускает.</p>` + (this.mode === "constructor" ? actionButton("configureTool", "Открыть настройку источника") : "");
-      }
-      if (!definitions.length) detailHTML = '<p class="ms-note">Сначала создайте схему во вкладке «Сцена». Настройки инструментов принадлежат её эпизоду.</p>';
     } else if (activeMain === "other") {
       if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.</p>${actionButton("shops", "Магазины")}${actionButton("dialogues", "Диалоги и действия")}`;
       else {
-        detailHTML = await this.episodeTool(this.otherBlock, base);
+        detailHTML = await this.stateTool(this.otherBlock, base);
       }
     } else {
       detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, runtimes, mode: this.mode });
-      if (this.selection.kind === "scheme" && selected) detailHTML += renderOwnedObjects(selected.schemeId, bindings, objects, this.mode !== "constructor");
+      if (["signal", "macro"].includes(this.selection.kind) && selected) {
+        const rows = catalog.subscriptions.filter((row) => this.selection.kind === "signal" ? row.signalId === selected.id : row.ownerKey === selected.ownerKey && row.macroUuid === selected.uuid);
+        detailHTML += renderSubscriptions(rows, catalog);
+        if (this.subscriptionDraft) detailHTML += renderSubscriptionFields(this.subscriptionDraft, catalog, this.subscriptionConstraints());
+        detailHTML += renderMacroValidation(this.subscriptionValidation);
+      }
+      if (this.selection.kind === "group" && selected) detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
     }
     return { ...base, mainHTML, detailHTML, nodeActions,
-      badgesHTML: renderSchemeBadges(definitions, runtimes),
+      badgesHTML: renderGroupBadges(definitions, runtimes),
       mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail),
       isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
       presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
@@ -247,7 +248,7 @@ export class MasterScreenApplication extends EditorApplication {
       input.value = item.value; if (["checkbox", "radio"].includes(item.type)) input.checked = item.checked;
     }
     if (detailInputs.length) this.pendingTabInputs = null;
-    for (const id of this.foldedSchemes) this.applyFold(id);
+    for (const id of this.foldedGroups) this.applyFold(id);
     const selectionKey = `${this.selectionSceneId}:${this.layout.preferences.mainTab}:${JSON.stringify(this.selection)}`;
     if (selectionKey !== this.revealedSelection) {
       const content = this.element.querySelector("[data-main-content]"), row = content?.querySelector('[aria-selected="true"], .is-selected');
@@ -269,7 +270,7 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.bindJSON();
     const listeners = { signal: this.events.signal };
-    const symbol = this.element.querySelector('[name="schemeSymbol"]');
+    const symbol = this.element.querySelector('[name="groupSymbol"]');
     const constrainSymbol = (event) => {
       if (event?.isComposing) return;
       const segments = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(symbol.value)];
@@ -281,7 +282,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.element.addEventListener("click", (event) => {
       const row = event.target.closest("[data-select-kind]");
       if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
-      event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.schemeId).catch(notify);
+      event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId).catch(notify);
     }, listeners);
     this.menuObserver?.disconnect();
     this.menuController?.dispose(); this.menuController = bindIDEMenus(this.element);
@@ -293,19 +294,20 @@ export class MasterScreenApplication extends EditorApplication {
     if (Observer) { this.menuObserver = new Observer(updateOverflow); for (const strip of this.element.querySelectorAll("[data-menu-strip]")) this.menuObserver.observe(strip); }
     this.element.addEventListener("scroll", updateOverflow, { ...listeners, capture: true }); updateOverflow();
     this.element.addEventListener("change", (event) => {
-      if (event.target.matches('[name="responseNextPage"], [name="responseEvent"]') && event.target.value) {
-        const row = event.target.closest("[data-asset-response]"), other = row?.querySelector(event.target.name === "responseNextPage" ? '[name="responseEvent"]' : '[name="responseNextPage"]');
-        if (other) other.value = "";
-      } else if (event.target.matches("[data-tab-visibility]")) {
+      if (event.target.matches("[data-tab-visibility]")) {
         void this.setTabVisible(event.target.dataset.tabVisibility, event.target.value, event.target.checked).catch(notify);
-      } else if (event.target.matches('[name="parameterType"], [name="subscriberKind"], [name="subscriberAction"], [name="subscriberScheme"], [name="shopDisplay"]')) {
+      } else if (event.target.matches('[name="macroOwner"]')) {
+        this.selectedMacroOwner = event.target.value;
+      } else if (event.target.matches('[name="subscription-owner"]')) {
+        this.captureSubscription(); void this.render({ force: true });
+      } else if (event.target.matches('[name="field-type"], [name="shopDisplay"]')) {
         try { this.captureParameterDraft(); this.dirty = true; void this.render({ force: true }); } catch (error) { notify(error); }
       }
     }, listeners);
     this.element.addEventListener("dragstart", (event) => {
       const node = event.target.closest("[data-ide-kind][draggable=true], [data-macro-uuid]");
       if (!node) return;
-      const payload = node.dataset.macroUuid ? { type: "Macro", uuid: node.dataset.macroUuid } : { type: "DmicherScreenNode", sceneId: this.selectionSceneId, kind: node.dataset.ideKind, id: node.dataset.ideId, schemeId: node.dataset.schemeId };
+      const payload = node.dataset.macroUuid ? { type: "Macro", uuid: node.dataset.macroUuid } : { type: "DmicherScreenNode", sceneId: this.selectionSceneId, kind: node.dataset.ideKind, id: node.dataset.ideId, groupId: node.dataset.groupId };
       event.dataTransfer.setData("text/plain", JSON.stringify(payload)); event.dataTransfer.effectAllowed = "copyMove";
     }, listeners);
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-ide-kind], [data-macro-drop], [data-macro-subscriber-drop]")) event.preventDefault(); }, listeners);
@@ -319,39 +321,19 @@ export class MasterScreenApplication extends EditorApplication {
   readParameterDraft() {
     const root = this.element?.querySelector("[data-ide-parameters]");
     const draft = clone(this.parameterDraft);
-    if (!root || !draft || draft.builtin) return draft;
+    if (!root || !draft) return draft;
     if (["shop", "dialogue"].includes(this.selection.kind)) return this.mode === "constructor" ? readAssetForm(root, draft, this.selection.kind) : draft;
     const description = (input, name, original) => { const text = fieldValue(input, name); return text === localizedDescription(original) ? clone(original ?? "") : text; };
-    if (["scheme", "episode", "event", "trigger"].includes(this.selection.kind)) draft.description = description(root, "description", draft.description);
-    if (["scheme", "episode"].includes(this.selection.kind)) {
-      const key = this.selection.kind === "scheme" ? "schemeName" : "name";
+    if (["group", "state"].includes(this.selection.kind)) draft.description = description(root, "description", draft.description);
+    if (["group", "state"].includes(this.selection.kind)) {
+      const key = this.selection.kind === "group" ? "groupName" : "name";
       draft[key] = fieldValue(root, key).trim();
       draft.background = fieldValue(root, "background"); draft.textColor = fieldValue(root, "textColor");
-      if (this.selection.kind === "scheme") draft.symbol = fieldValue(root, "schemeSymbol");
-      if (this.selection.kind === "scheme") draft.entryEpisodeId = fieldValue(root, "entryEpisodeId");
-      if (this.selection.kind === "episode") draft.stop = checkbox(root, "stop");
+      if (this.selection.kind === "group") draft.symbol = fieldValue(root, "groupSymbol");
+      if (this.selection.kind === "group") draft.entryStateId = fieldValue(root, "entryStateId");
+
     }
-    if (this.selection.kind === "event") {
-      draft.name = fieldValue(root, "eventName").trim();
-      draft.subscribers = [...root.querySelectorAll("[data-subscriber-index]")].map((row) => {
-        const previous = draft.subscribers[Number(row.dataset.subscriberIndex)] ?? {};
-        return { ...previous, id: previous.id ?? randomId(), kind: fieldValue(row, "subscriberKind"), macroUuid: fieldValue(row, "subscriberMacro"), triggerId: fieldValue(row, "subscriberTrigger"),
-          action: fieldValue(row, "subscriberAction"), schemeId: fieldValue(row, "subscriberScheme", "main"), parameters: plainJSON(fieldValue(row, "subscriberParameters", "{}")),
-          text: fieldValue(row, "subscriberText", previous.text ?? ""), audience: { gms: checkbox(row, "subscriberGMs"), interactor: checkbox(row, "subscriberInteractor"), nearby: checkbox(row, "subscriberNearby"), range: Number(fieldValue(row, "subscriberRange", "30")), visibleOnly: checkbox(row, "subscriberVisible") } };
-      });
-    }
-    if (this.selection.kind === "trigger") {
-      draft.name = fieldValue(root, "triggerName").trim(); draft.eventId = fieldValue(root, "triggerEventId");
-      draft.parameters = [...root.querySelectorAll("[data-parameter-index]")].map((row) => {
-        const previous = draft.parameters[Number(row.dataset.parameterIndex)] ?? {};
-        const result = { name: fieldValue(row, "parameterName").trim(), type: fieldValue(row, "parameterType"), required: previous.required, description: description(row, "parameterDescription", previous.description) };
-        for (const key of ["min", "max", "minLength", "maxLength", "decimals"]) {
-          const value = fieldValue(row, key); if (value !== "") result[key] = Number(value);
-        }
-        return result;
-      });
-    }
-    if (this.selection.kind === "macro") draft.triggerIds = [...root.querySelectorAll('[name="macroTrigger"]:checked')].map((input) => input.value);
+    if (this.selection.kind === "signal") return readSignalFields(root, draft);
     return draft;
   }
 
@@ -361,16 +343,17 @@ export class MasterScreenApplication extends EditorApplication {
     return scene;
   }
 
-  async selectNode(kind, id, schemeId) {
+  async selectNode(kind, id, groupId) {
     if (!(await this.mayDiscard())) return;
     this.resetDraft(); this.parameterDraft = null;
-    if (["scheme", "episode"].includes(kind)) {
-      this.controller.selectScheme(schemeId ?? id, { render: false });
-      if (kind === "episode") this.controller.selectEpisode(id, { render: false });
+    this.subscriptionDraft = null; this.subscriptionValidation = null;
+    if (["group", "state"].includes(kind)) {
+      this.controller.selectGroup(groupId ?? id, { render: false });
+      if (kind === "state") this.controller.selectState(id, { render: false });
     }
     const tool = this.toolRows?.find((entry) => entry.id === id);
-    if (tool?.schemeId) { this.controller.selectScheme(tool.schemeId, { render: false }); this.controller.selectEpisode(tool.episodeId, { render: false }); }
-    this.selection = { kind, id, schemeId: schemeId || this.controller.getContext().schemeId, episodeId: tool?.episodeId };
+    if (tool?.groupId) { this.controller.selectGroup(tool.groupId, { render: false }); this.controller.selectState(tool.stateId, { render: false }); }
+    this.selection = { kind, id, groupId: groupId || this.controller.getContext().groupId, stateId: tool?.stateId };
     this.layout.preferences.detailTab = "parameters";
     this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter((tab) => tab !== "parameters");
     this.layout.save();
@@ -396,15 +379,15 @@ export class MasterScreenApplication extends EditorApplication {
 
   async assignObject(descriptor, remove = false) {
     const scene = this.assertScene(), service = new SceneObjects(scene), existing = service.get(descriptor);
-    if (this.mode !== "constructor" || this.selection.kind !== "scheme") throw new Error("Выберите схему в Конструкторе.");
+    if (this.mode !== "constructor" || this.selection.kind !== "group") throw new Error("Выберите группу в Конструкторе.");
     let allowReassign = false;
-    if (remove && await this.inlineChoice("Отвязать объект от схемы? Его назначения магазинов, диалогов и поведения этой схемы будут сняты.", [{ value: "yes", label: "Отвязать" }, { value: "cancel", label: "Отмена" }]) !== "yes") return;
-    if (!remove && existing?.schemeId && existing.schemeId !== this.selection.id) {
-      allowReassign = await this.inlineChoice("Объект уже принадлежит другой схеме. Переназначить его выбранной схеме?", [{ value: "yes", label: "Переназначить" }, { value: "cancel", label: "Отмена" }]) === "yes";
+    if (remove && await this.inlineChoice("Отвязать объект от группы? Его назначения магазинов, диалогов и поведения этой группы будут сняты.", [{ value: "yes", label: "Отвязать" }, { value: "cancel", label: "Отмена" }]) !== "yes") return;
+    if (!remove && existing?.groupId && existing.groupId !== this.selection.id) {
+      allowReassign = await this.inlineChoice("Объект уже принадлежит другой группе. Переназначить его выбранной группе?", [{ value: "yes", label: "Переназначить" }, { value: "cancel", label: "Отмена" }]) === "yes";
       if (!allowReassign) return;
     }
     this.captureParameterDraft();
-    await service.save(descriptor, { schemeId: remove ? null : this.selection.id }, { expectedRevision: this.objectsRevision, allowReassign: remove || allowReassign });
+    await service.save(descriptor, { groupId: remove ? null : this.selection.id }, { expectedRevision: this.objectsRevision, allowReassign: remove || allowReassign });
     this.controller.changed(scene); return this.render({ force: true });
   }
 
@@ -417,11 +400,11 @@ export class MasterScreenApplication extends EditorApplication {
     return this.render({ force: true });
   }
 
-  async episodeTool(id, base) {
-    if (!this.controller.getContext().definition && id !== "sceneIO") return '<p class="ms-note">Сначала создайте схему во вкладке «Сцена».</p>';
+  async stateTool(id, base) {
+    if (!this.controller.getContext().definition && id !== "sceneIO") return '<p class="ms-note">Сначала создайте группу во вкладке «Сцена».</p>';
     if (id === "sceneIO") return `<div>${actionButton("export", "Экспорт сцены")}${actionButton("import", "Импорт сцены")}<input type="file" data-import-file accept=".json,application/json" hidden></div>`;
     const renderTemplate = foundry.applications.handlebars?.renderTemplate ?? globalThis.renderTemplate;
-    return renderTemplate("modules/dmicher-master-screen/templates/episode-tools.hbs", { ...base, blocks: { [id]: true } });
+    return renderTemplate("modules/dmicher-master-screen/templates/state-tools.hbs", { ...base, blocks: { [id]: true } });
   }
 
   openMenuSettings(zone) {
@@ -442,31 +425,29 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   applyFold(id) {
-    const folded = this.foldedSchemes.has(id);
-    for (const row of this.element.querySelectorAll('[data-ide-kind="episode"]')) if (row.dataset.schemeId === id) row.hidden = folded;
-    for (const button of this.element.querySelectorAll('[data-screen-action="foldScheme"]')) if (button.dataset.schemeId === id) { button.textContent = folded ? "▸" : "▾"; button.setAttribute("aria-expanded", String(!folded)); }
+    const folded = this.foldedGroups.has(id);
+    for (const row of this.element.querySelectorAll('[data-ide-kind="state"]')) if (row.dataset.groupId === id) row.hidden = folded;
+    for (const button of this.element.querySelectorAll('[data-screen-action="foldGroup"]')) if (button.dataset.groupId === id) { button.textContent = folded ? "▸" : "▾"; button.setAttribute("aria-expanded", String(!folded)); }
   }
 
   async mutateParameters(change) {
     this.parameterDraft = this.readParameterDraft();
-    if (this.parameterDraft?.builtin) throw new Error("Встроенное определение нельзя изменять.");
+    if (this.parameterDraft?.builtin && this.selection.kind !== "signal") throw new Error("Встроенное определение нельзя изменять.");
     await change(this.parameterDraft); this.dirty = true; return this.render({ force: true });
   }
 
   async saveParameters() {
     const scene = this.assertScene(), draft = this.readParameterDraft();
-    if (!draft || draft.builtin) throw new Error("Выберите изменяемый элемент.");
-    const schemes = new SchemeEditor(scene), catalog = new EventCatalog(scene);
+    if (!draft || draft.builtin && this.selection.kind !== "signal") throw new Error("Выберите изменяемый элемент.");
+    const groups = new GroupEditor(scene), catalog = new SignalCatalog(scene);
     const options = { expectedRevision: this.parameterRevision };
-    if (["scheme", "episode"].includes(this.selection.kind)) {
+    if (["group", "state"].includes(this.selection.kind)) {
       try { draft.background = generics.components.normalizeHexColor(draft.background); draft.textColor = generics.components.normalizeHexColor(draft.textColor); }
       catch { throw new Error("Цвет фона и текста указывается в формате #RRGGBB."); }
     }
-    if (this.selection.kind === "scheme") await schemes.updateScheme(this.selection.id, { schemeName: draft.schemeName, symbol: draft.symbol, entryEpisodeId: draft.entryEpisodeId, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
-    if (this.selection.kind === "episode") await schemes.updateEpisode(this.selection.schemeId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor, events: draft.events, stop: draft.stop }, options);
-    if (this.selection.kind === "event") await catalog.saveEvent(draft, options);
-    if (this.selection.kind === "trigger") await catalog.saveTrigger(draft, options);
-    if (this.selection.kind === "macro") await catalog.saveMacro(draft, options);
+    if (this.selection.kind === "group") await groups.updateGroup(this.selection.id, { groupName: draft.groupName, symbol: draft.symbol, entryStateId: draft.entryStateId, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
+    if (this.selection.kind === "state") await groups.updateState(this.selection.groupId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
+    if (this.selection.kind === "signal") await catalog.saveSignal(draft, options);
     if (this.selection.kind === "shop") await new SceneAssets(scene).saveShop(draft, options);
     if (this.selection.kind === "dialogue") await new SceneAssets(scene).saveDialogue(draft, options);
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);
@@ -511,7 +492,7 @@ export class MasterScreenApplication extends EditorApplication {
           if (draft.startPageId === page.id) draft.startPageId = draft.pages[0].id;
           this.assetPageIds.set(key, draft.pages[0].id);
         }
-        if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: "Новый ответ", nextPageId: "", eventName: "" });
+        if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: "Новый ответ", nextPageId: "", signalId: "", parameters: {} });
         if (action === "removeAssetResponse") page.responses.splice(Number(button.dataset.index), 1);
       });
     }
@@ -535,17 +516,17 @@ export class MasterScreenApplication extends EditorApplication {
       const row = this.toolRows.find((entry) => entry.id === this.selection.id); if (!row) return;
       if (row.objectTarget) return this.controller.openObjectBehavior(row.objectTarget);
       if (row.type === "dialogue") return this.openAsset("dialogue", row.assetId);
-      if (row.type === "interaction") { await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "dialogues"; return this.render({ force: true }); }
-      if (row.type === "episode") { await this.switchMainTab("scene"); return this.selectNode("episode", row.episodeId, row.schemeId); }
-      await this.switchMainTab("other"); this.controller.selectScheme(row.schemeId, { render: false }); this.controller.selectEpisode(row.episodeId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });
+      if (row.type === "interaction") { await this.switchMainTab("other"); this.controller.selectGroup(row.groupId, { render: false }); this.controller.selectState(row.stateId, { render: false }); this.otherBlock = "dialogues"; return this.render({ force: true }); }
+      if (row.type === "state") { await this.switchMainTab("scene"); return this.selectNode("state", row.stateId, row.groupId); }
+      await this.switchMainTab("other"); this.controller.selectGroup(row.groupId, { render: false }); this.controller.selectState(row.stateId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });
     }
-    if (action === "selectNode") return this.selectNode(button.dataset.kind, button.dataset.id, button.dataset.schemeId);
+    if (action === "selectNode") return this.selectNode(button.dataset.kind, button.dataset.id, button.dataset.groupId);
     if (action === "selectOther") {
       if (!(await this.mayDiscard())) return;
       this.resetDraft(); this.parameterDraft = null; this.otherBlock = button.dataset.id;
       return this.render({ force: true });
     }
-    if (action === "foldScheme") { const id = button.dataset.schemeId; if (this.foldedSchemes.has(id)) this.foldedSchemes.delete(id); else this.foldedSchemes.add(id); this.applyFold(id); return; }
+    if (action === "foldGroup") { const id = button.dataset.groupId; if (this.foldedGroups.has(id)) this.foldedGroups.delete(id); else this.foldedGroups.add(id); this.applyFold(id); return; }
     if (action === "contextHelp") return this.controller.openHelp().navigate(button.dataset.page);
     if (action === "editSelected") {
       this.captureParameterDraft();
@@ -556,62 +537,51 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "discardParameters") { this.resetDraft(); this.parameterDraft = null; return this.render({ force: true }); }
     if (action === "saveParameters") return this.saveParameters();
-    if (action === "addSubscriber") return this.mutateParameters((draft) => draft.subscribers.push({ id: randomId(), kind: "builtin", action: "pause", schemeId: this.selection.schemeId, parameters: {} }));
-    if (action === "removeSubscriber") return this.mutateParameters((draft) => { draft.subscribers.splice(Number(button.dataset.index), 1); });
-    if (action === "moveSubscriber") return this.mutateParameters((draft) => { const from = Number(button.dataset.index), to = from + Number(button.dataset.delta); if (to < 0 || to >= draft.subscribers.length) return; draft.subscribers.splice(to, 0, draft.subscribers.splice(from, 1)[0]); });
-    if (action === "addParameter") return this.mutateParameters((draft) => draft.parameters.push({ name: nextName(draft.parameters, "field").replaceAll(" ", "_"), type: "string" }));
-    if (action === "removeParameter") return this.mutateParameters((draft) => { draft.parameters.splice(Number(button.dataset.index), 1); });
-    if (action === "addEpisodeEvent") {
-      const eventId = fieldValue(this.element, "newEpisodeEvent");
-      const chosen = new EventCatalog(this.assertScene()).list().events.find((entry) => entry.id === eventId);
-      if (!chosen) throw new Error("Выберите событие.");
-      return this.mutateParameters((draft) => { draft.events ??= []; if (!draft.events.includes(chosen.name)) draft.events.push(chosen.name); });
-    }
-    if (action === "removeEpisodeEvent") return this.mutateParameters((draft) => { draft.events.splice(Number(button.dataset.index), 1); });
-    if (action === "enterNode") return this.controller.transition(button.dataset.id, { schemeId: button.dataset.schemeId });
-    if (action === "enterSelectedEpisode") return this.controller.transition(this.selection.id, { schemeId: this.selection.schemeId });
-    if (action === "haltSelectedScheme") return this.controller.haltScheme(this.selection.schemeId);
-    if (action === "resumeSelectedScheme") return this.controller.resumeScheme(fieldValue(this.element, "resumeEpisode"), this.selection.schemeId);
-    if (action === "invokeTrigger") return this.invokeTrigger();
+    if (await this.signalAction(action, button)) return;
+    if (action === "enterNode") return this.controller.transition(button.dataset.id, { groupId: button.dataset.groupId });
+    if (action === "enterSelectedState") return this.controller.transition(this.selection.id, { groupId: this.selection.groupId });
+    if (action === "haltSelectedGroup") return this.controller.haltGroup(this.selection.groupId);
+    if (action === "resumeSelectedGroup") return this.controller.resumeGroup(fieldValue(this.element, "resumeState"), this.selection.groupId);
     if (action === "editMacro") {
       const macro = await fromUuid(button.dataset.uuid ?? this.selection.id);
       if (!macro || macro.documentName !== "Macro") throw new Error("Макрос недоступен. Проверьте каталог Foundry.");
       return macro.sheet.render(true);
     }
-    if (["addScheme", "addSceneEpisode", "addEvent", "addTypedTrigger", "createMacro", "addShopAsset", "addDialogueAsset", "deleteSelected"].includes(action)) return this.changeStructure(action);
+    if (action === "addSignal") this.pendingSignalEmitter = button.dataset.emitterKey;
+    if (["addGroup", "addSceneState", "addSignal", "createMacro", "addShopAsset", "addDialogueAsset", "deleteSelected"].includes(action)) return this.changeStructure(action);
     return super.handleAction(action, button, event);
   }
 
   async changeStructure(action) {
     if (this.mode !== "constructor") throw new Error("Изменение структуры доступно в Конструкторе.");
     if (!(await this.mayDiscard())) return;
-    const scene = this.assertScene(), schemes = new SchemeEditor(scene), catalog = new EventCatalog(scene), definitions = schemes.list(), data = catalog.list();
+    const scene = this.assertScene(), groups = new GroupEditor(scene), catalog = new SignalCatalog(scene), definitions = groups.list(), data = catalog.list();
     let selection;
     if (action === "addShopAsset") { const assets = new SceneAssets(scene), entry = await assets.saveShop({ name: nextName(assets.list().shops, "Новый магазин"), items: [], display: "list", requireGMApproval: true, img: "" }); selection = ["shop", entry.id]; }
     if (action === "addDialogueAsset") { const assets = new SceneAssets(scene), id = randomId(), entry = await assets.saveDialogue({ name: nextName(assets.list().dialogues, "Новый диалог"), startPageId: id, pages: [{ id, name: "Начало", text: "", art: "", responses: [] }] }); selection = ["dialogue", entry.id]; }
-    if (action === "addScheme") { const entry = await schemes.createScheme({ name: nextName(definitions, "Новая схема", "schemeName") }); selection = ["scheme", entry.schemeId, entry.schemeId]; }
-    if (action === "addSceneEpisode") { const definition = definitions.find((item) => item.schemeId === this.selection.schemeId) ?? definitions[0]; if (!definition) throw new Error("Сначала создайте схему."); const entry = await schemes.createEpisode(definition.schemeId, { name: nextName(definition.episodes, "Новый эпизод") }); selection = ["episode", entry.id, definition.schemeId]; }
-    if (action === "addEvent") { const entry = await catalog.saveEvent({ name: nextName(data.events, "Новое событие"), subscribers: [] }); selection = ["event", entry.id]; }
-    if (action === "addTypedTrigger") {
-      const eventId = this.selection.kind === "event" ? this.selection.id : data.triggers.find((entry) => entry.id === this.selection.id)?.eventId;
-      if (!eventId) throw new Error("Выберите событие для нового триггера.");
-      const entry = await catalog.saveTrigger({ name: nextName(data.triggers, "Новый триггер"), eventId, parameters: [] }); selection = ["trigger", entry.id];
+    if (action === "addGroup") { const entry = await groups.createGroup({ name: nextName(definitions, "Новая группа", "groupName") }); selection = ["group", entry.groupId, entry.groupId]; }
+    if (action === "addSceneState") { const definition = definitions.find((item) => item.groupId === this.selection.groupId) ?? definitions[0]; if (!definition) throw new Error("Сначала создайте группу."); const entry = await groups.createState(definition.groupId, { name: nextName(definition.states, "Новое состояние") }); selection = ["state", entry.id, definition.groupId]; }
+    if (action === "addSignal") {
+      const emitterKey = this.pendingSignalEmitter ?? (this.selection.kind === "emitter" ? this.selection.id : this.parameterDraft?.emitterKey);
+      this.pendingSignalEmitter = null;
+      if (!emitterKey) throw new Error(t("Выберите эмитента или нажмите + в его строке.", "Select an emitter or press + in its row."));
+      const entry = await catalog.saveSignal({ emitterKey, name: nextName(data.signals.filter((row) => row.emitterKey === emitterKey), t("Новый сигнал", "New signal")), description: "", parameters: [], returns: [] });
+      selection = ["signal", entry.id];
     }
     if (action === "createMacro") {
       const Macro = foundry.documents.Macro?.implementation ?? globalThis.Macro;
       const macro = await Macro.create({ name: "Новый макрос ширмы", type: "script", scope: "global", command: "" }, { renderSheet: true });
       if (!macro) return;
-      await catalog.saveMacro({ uuid: macro.uuid, triggerIds: [] }); selection = ["macro", macro.uuid];
+      const ownerKey = this.selectedMacroOwner ?? `Scene:${scene.id}`; await catalog.attachMacro(ownerKey, macro.uuid); selection = ["macro", macroKey({ownerKey,uuid:macro.uuid})];
     }
     if (action === "deleteSelected") {
       if (this.parameterDraft?.builtin) throw new Error("Встроенные определения нельзя удалять.");
       const confirmed = await this.inlineChoice("Удалить выбранный элемент?", [{ value: "delete", label: "Удалить" }, { value: "cancel", label: "Отмена" }]);
       if (confirmed !== "delete") return;
-      if (this.selection.kind === "scheme") await schemes.deleteScheme(this.selection.id);
-      else if (this.selection.kind === "episode") await schemes.deleteEpisode(this.selection.schemeId, this.selection.id);
-      else if (this.selection.kind === "event") await catalog.deleteEvent(this.selection.id);
-      else if (this.selection.kind === "trigger") await catalog.deleteTrigger(this.selection.id);
-      else if (this.selection.kind === "macro") await catalog.removeMacro(this.selection.id);
+      if (this.selection.kind === "group") await groups.deleteGroup(this.selection.id);
+      else if (this.selection.kind === "state") await groups.deleteState(this.selection.groupId, this.selection.id);
+      else if (this.selection.kind === "signal") await catalog.removeSignal(this.selection.id);
+      else if (this.selection.kind === "macro") await catalog.removeMacro(this.parameterDraft.ownerKey,this.parameterDraft.uuid);
       else if (this.selection.kind === "shop") await new SceneAssets(scene).deleteShop(this.selection.id);
       else if (this.selection.kind === "dialogue") await new SceneAssets(scene).deleteDialogue(this.selection.id);
       else throw new Error("Выберите удаляемый элемент.");
@@ -621,19 +591,28 @@ export class MasterScreenApplication extends EditorApplication {
     this.controller.changed(scene);
   }
 
-  async invokeTrigger() {
-    const scene = this.assertScene(), catalog = new EventCatalog(scene).list();
-    const trigger = catalog.triggers.find((entry) => entry.id === this.selection.id), parent = catalog.events.find((entry) => entry.id === trigger?.eventId);
-    if (!trigger || !parent) throw new Error("Выберите триггер события.");
-    const payload = { type: trigger.name };
-    for (const parameter of trigger.parameters) {
-      const input = [...this.element.querySelectorAll("[data-trigger-value]")].find((item) => item.dataset.triggerValue === parameter.name);
-      if (parameter.required === false && input?.value === "" && parameter.type !== "boolean") continue;
-      if (!input?.checkValidity()) throw new Error(`Проверьте параметр «${parameter.name}».`);
-      payload[parameter.name] = parameter.type === "boolean" ? input.checked : parameter.type === "string" ? input.value : Number(input.value);
+  subscriptionConstraints() {
+    return this.selection.kind === "signal" ? { fixedSignal: this.selection.id } : { fixedOwner: this.parameterDraft?.ownerKey };
+  }
+  captureSubscription() {
+    if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, new SignalCatalog(this.assertScene()).list(), this.subscriptionConstraints());
+  }
+  async signalAction(action, button) {
+    const actions = ["addSignalField", "removeSignalField", "removeTreeSignal", "newSignalSubscription", "editSignalSubscription", "deleteSignalSubscription", "saveSignalSubscription"];
+    if (!actions.includes(action)) return false;
+    if (this.mode !== "constructor") throw new Error(t("Изменения доступны в Конструкторе.", "Editing is available in Constructor."));
+    this.captureParameterDraft(); this.captureSubscription(); const catalog = new SignalCatalog(this.assertScene());
+    if (action === "addSignalField") { this.parameterDraft[button.dataset.direction].push({ name: `field${this.parameterDraft[button.dataset.direction].length + 1}`, type: "string", nullable: false }); this.dirty = true; }
+    if (action === "removeSignalField") { const fields = this.parameterDraft[button.dataset.direction], index = Number(button.dataset.index); if (!fields[index]?.builtin) fields.splice(index, 1); this.dirty = true; }
+    if (action === "removeTreeSignal") { await catalog.removeSignal(button.dataset.id); if (this.selection.id === button.dataset.id) { this.parameterDraft = null; this.selection = { kind: null, id: null, groupId: this.selection.groupId }; this.dirty = false; } }
+    if (action === "newSignalSubscription") { this.subscriptionDraft = { ownerKey: this.parameterDraft?.ownerKey ?? catalog.list().emitters[0]?.key, emitterKey: this.parameterDraft?.emitterKey, signalId: this.selection.kind === "signal" ? this.selection.id : "", macroUuid: this.parameterDraft?.uuid ?? "", enabled: true }; this.subscriptionValidation = null; }
+    if (action === "editSignalSubscription") { this.subscriptionDraft = clone(catalog.list().subscriptions.find((row) => row.id === button.dataset.id)); this.subscriptionValidation = null; }
+    if (action === "deleteSignalSubscription") { await catalog.removeSubscription(button.dataset.id); this.subscriptionDraft = null; }
+    if (action === "saveSignalSubscription") {
+      try { this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft); this.subscriptionValidation = { valid: true }; this.parameterRevision = catalog.list().revision; }
+      catch (error) { this.subscriptionValidation = { valid: false, error: error.message, snippet: error.snippet }; notify(error); }
     }
-    await this.controller.events.invoke(scene, parent.name, payload);
-    ui.notifications.info("Событие принято.");
+    await this.render({ force: true }); return true;
   }
 
   inlineChoice(title, choices) {
@@ -651,42 +630,36 @@ export class MasterScreenApplication extends EditorApplication {
   async dropIDE(event, target) {
     if (this.mode !== "constructor") return;
     let data; try { data = JSON.parse(event.dataTransfer.getData("text/plain")); } catch { return; }
-    const scene = this.assertScene(), catalog = new EventCatalog(scene), schemes = new SchemeEditor(scene);
+    const scene = this.assertScene(), catalog = new SignalCatalog(scene), groups = new GroupEditor(scene);
     if (data.type === "Macro" || data.uuid?.startsWith("Macro.")) {
       const macro = await fromUuid(data.uuid);
       if (macro?.documentName !== "Macro") throw new Error("Перетащите макрос Foundry.");
-      if (target.hasAttribute("data-macro-subscriber-drop")) {
-        if (!catalog.list().macros.some((entry) => entry.uuid === macro.uuid)) {
-          await catalog.saveMacro({ uuid: macro.uuid, triggerIds: [] }, { expectedRevision: this.parameterRevision });
-          this.parameterRevision++;
-        }
-        return this.mutateParameters((draft) => { const row = draft.subscribers[Number(target.dataset.subscriberIndex)]; Object.assign(row, { kind: "macro", macroUuid: macro.uuid }); });
-      }
       if (!(await this.mayDiscard())) return;
-      await catalog.saveMacro(catalog.list().macros.find((entry) => entry.uuid === macro.uuid) ?? { uuid: macro.uuid, triggerIds: [] });
-      this.resetDraft(); return this.selectNode("macro", macro.uuid);
+      const ownerKey = this.selectedMacroOwner ?? `Scene:${scene.id}`;
+      await catalog.attachMacro(ownerKey,macro.uuid);
+      this.resetDraft(); return this.selectNode("macro",macroKey({ownerKey,uuid:macro.uuid}));
     }
     if (data.type !== "DmicherScreenNode" || data.sceneId !== scene.id || !(await this.mayDiscard())) return;
-    if (data.kind === "scheme" && target.dataset.ideKind === "scheme") {
-      const ids = schemes.list().map((entry) => entry.schemeId), from = ids.indexOf(data.id), to = ids.indexOf(target.dataset.ideId);
-      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await schemes.reorderSchemes(ids); }
-    } else if (data.kind === "episode") {
-      const destination = target.dataset.schemeId;
-      if (data.schemeId === destination) {
-        const ids = schemes.get(destination).episodes.map((entry) => entry.id), from = ids.indexOf(data.id), to = target.dataset.ideKind === "episode" ? ids.indexOf(target.dataset.ideId) : ids.length - 1;
-        if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await schemes.reorderEpisodes(destination, ids); }
+    if (data.kind === "group" && target.dataset.ideKind === "group") {
+      const ids = groups.list().map((entry) => entry.groupId), from = ids.indexOf(data.id), to = ids.indexOf(target.dataset.ideId);
+      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await groups.reorderGroups(ids); }
+    } else if (data.kind === "state") {
+      const destination = target.dataset.groupId;
+      if (data.groupId === destination) {
+        const ids = groups.get(destination).states.map((entry) => entry.id), from = ids.indexOf(data.id), to = target.dataset.ideKind === "state" ? ids.indexOf(target.dataset.ideId) : ids.length - 1;
+        if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await groups.reorderStates(destination, ids); }
       } else {
-        const result = await this.inlineChoice("Эпизод в другой схеме: скопировать или переместить?", [{ value: "copy", label: "Скопировать" }, { value: "move", label: "Переместить" }, { value: "cancel", label: "Отмена" }]);
+        const result = await this.inlineChoice("Состояние в другой группе: скопировать или переместить?", [{ value: "copy", label: "Скопировать" }, { value: "move", label: "Переместить" }, { value: "cancel", label: "Отмена" }]);
         if (result === "cancel") return;
-        const entry = await schemes.transferEpisode(data.schemeId, destination, data.id, { copy: result === "copy" });
-        this.resetDraft(); await this.selectNode("episode", entry.id, destination);
+        const entry = await groups.transferState(data.groupId, destination, data.id, { copy: result === "copy" });
+        this.resetDraft(); await this.selectNode("state", entry.id, destination);
       }
     }
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene); return this.render({ force: true });
   }
 
   bindJSON() {
-    for (const id of ["selection", "event-list", "scheme-list", "asset-selection", "shop-list", "dialogue-list"]) {
+    for (const id of ["selection", "group-list", "asset-selection", "shop-list", "dialogue-list"]) {
       if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
       const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);
       const assert = () => { const scene = this.assertScene(); if (scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error("Выбор изменился. Повторите импорт или экспорт."); return scene; };
@@ -696,23 +669,19 @@ export class MasterScreenApplication extends EditorApplication {
         exportValue: () => {
           const scene = assert();
           if (this.dirty) throw new Error("Сначала сохраните изменения, затем экспортируйте.");
-          if (id === "scheme-list") { if (!originalSelection.schemeId) throw new Error("Выберите схему для экспорта."); return new SchemeEditor(scene).exportScheme(originalSelection.schemeId); }
-          if (originalSelection.kind === "scheme") return new SchemeEditor(scene).exportScheme(originalSelection.id);
-          if (originalSelection.kind === "episode") return new SchemeEditor(scene).exportEpisode(originalSelection.schemeId, originalSelection.id);
-          if (originalSelection.kind === "event") return new EventCatalog(scene).exportEvent(originalSelection.id);
-          if (originalSelection.kind === "trigger") return new EventCatalog(scene).exportTrigger(originalSelection.id);
+          if (id === "group-list") { if (!originalSelection.groupId) throw new Error("Выберите группу для экспорта."); return new GroupEditor(scene).exportGroup(originalSelection.groupId); }
+          if (originalSelection.kind === "group") return new GroupEditor(scene).exportGroup(originalSelection.id);
+          if (originalSelection.kind === "state") return new GroupEditor(scene).exportState(originalSelection.groupId, originalSelection.id);
           if (originalSelection.kind === "shop") return new SceneAssets(scene).exportShop(originalSelection.id);
           if (originalSelection.kind === "dialogue") return new SceneAssets(scene).exportDialogue(originalSelection.id);
-          throw new Error("Выберите схему, эпизод, пользовательское событие или триггер.");
+          throw new Error("Выберите группу, состояние, пользовательское событие или триггер.");
         },
         importValue: async (value) => {
           const scene = assert();
           if (!(await this.mayDiscard())) return;
           let selection;
-          if (value.kind === "scheme") { const entry = await new SchemeEditor(scene).importScheme(value); selection = ["scheme", entry.schemeId, entry.schemeId]; }
-          if (value.kind === "episode") { const entry = await new SchemeEditor(scene).importEpisode(originalSelection.schemeId, value); selection = ["episode", entry.id, originalSelection.schemeId]; }
-          if (value.kind === "event") { const entry = await new EventCatalog(scene).importEvent(value); selection = ["event", entry.id]; }
-          if (value.kind === "trigger") { const entry = await new EventCatalog(scene).importTrigger(value); selection = ["trigger", entry.id]; }
+          if (value.kind === "group") { const entry = await new GroupEditor(scene).importGroup(value); selection = ["group", entry.groupId, entry.groupId]; }
+          if (value.kind === "state") { const entry = await new GroupEditor(scene).importState(originalSelection.groupId, value); selection = ["state", entry.id, originalSelection.groupId]; }
           if (value.kind === "shop") { const entry = await new SceneAssets(scene).importShop(value); selection = ["shop", entry.id]; }
           if (value.kind === "dialogue") { const entry = await new SceneAssets(scene).importDialogue(value); selection = ["dialogue", entry.id]; }
           this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);

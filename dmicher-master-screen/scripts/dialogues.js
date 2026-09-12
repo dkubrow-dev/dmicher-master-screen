@@ -2,30 +2,27 @@ import { MODULE_ID } from "./model.js";
 import { getRuntime, saveRuntime, withSceneLock, isAuthority } from "./store.js";
 import { requestGMReply } from "./gm-request.js";
 import { resolveObjectDialogue } from "./scene-objects.js";
-import { objectKey, validateObjectAccess, interactionTriggerId } from "./interaction-access.js";
+import { objectKey, validateObjectAccess, interactionConditionId, sceneObject } from "./interaction-access.js";
 import { generics } from "./generics.js";
-import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
+import { consumeCondition, getConditionGate, getConditionKey } from "./interaction-conditions.js";
 import { createManualDialogueService } from "./manual-dialogues.js";
-import { EVENT_NAME } from "./event-catalog.js";
+import { findSignal } from "./signal-catalog.js";
+import { validateParameters } from "./signal-types.js";
+import { interactionSignal, notifyInteractionSignal } from "./interaction-signals.js";
 import { beginInteractionPause, freezeInteractionClock, dialogueSessionIsLive, INTERACTION_LEASE_MS } from "./interaction-pause.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
 const random = () => foundry.utils.randomID();
-const targetOf = (scene, descriptor) => descriptor?.type === "Token" ? scene.tokens.get(descriptor.id)
-  : descriptor?.type === "Tile" ? scene.tiles.get(descriptor.id) : null;
-
-export function getDialogueContext(sceneId, dialogueId, schemeId = "main", source) {
-  const scene = game.scenes.get(sceneId), runtime = scene ? getRuntime(scene, { schemeId }) : null;
-  const resolved = source && scene && runtime ? resolveObjectDialogue(scene, source, { schemeId, episodeId: runtime.episodeId }) : null;
-  const dialogue = resolved && resolved.asset.id === dialogueId ? resolved.config : null;
-  return { scene, runtime, dialogue, target: scene && dialogue ? targetOf(scene, dialogue.target) : null };
+export function getDialogueContext(sceneId, dialogueId, groupId = "main", source) {
+  const scene = game.scenes.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
+  const resolved = source && scene && runtime && dialogueId ? resolveObjectDialogue(scene, source, { groupId, stateId: runtime.stateId }, dialogueId) : null;
+  const dialogue = resolved?.config ?? null;
+  return { scene, runtime, dialogue, target: scene && dialogue ? sceneObject(scene, dialogue.target) : null };
 }
-
-export function validateDialogueAccess({ scene, runtime, descriptor, target, triggerType = "dialogue" }, actorTokenId, user, runId) {
-  return validateObjectAccess({ scene, runtime, descriptor, target, triggerType }, actorTokenId, user, runId);
+export function validateDialogueAccess({ scene, runtime, descriptor, target, conditionType = "dialogue" }, actorTokenId, user, runId) {
+  return validateObjectAccess({ scene, runtime, descriptor, target, conditionType }, actorTokenId, user, runId);
 }
-
 function visibleSession(session, dialogue, target) {
   const node = dialogue.nodes.find((entry) => entry.id === session.nodeId);
   return { sessionId: session.sessionId, dialogueId: dialogue.id, actorTokenId: session.actorTokenId, target: clone(dialogue.target),
@@ -33,169 +30,172 @@ function visibleSession(session, dialogue, target) {
     title: dialogue.name, text: node?.text ?? "", art: node?.art || target.texture?.src || target.actor?.img || "",
     responses: session.status === "active" ? (node?.responses ?? []).map(({ id, label }) => ({ id, label })) : [] };
 }
-
-/** Stateful conversations and direct scene interactions share only authenticated input transport. */
-export function createDialogueService({ emitEvent, onChange = () => {}, context = getDialogueContext,
+/** The command lease is persisted before awaiting subscribers. A second lock checks
+ * ownership, the live run and the exact response again before advancing the dialogue. */
+export function createDialogueService({ emitSignal, onChange = () => {}, context = getDialogueContext,
   runtimeOf = getRuntime, save = saveRuntime, lock = withSceneLock, authority = isAuthority, validate = validateDialogueAccess } = {}) {
   const chat = generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "scene-input" });
-  const inFlight = new Map(), knownSessions = new Map();
-  const sessionKey = (userId, actorTokenId) => `${userId}:${actorTokenId}`;
-  const process = async (command, user, commandId) => {
-    const initial = context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target);
+  const inFlight = new Map(), commands = new Map(), knownSessions = new Map();
+  const slot = (userId, actorTokenId, dialogueId, target) => `${userId}:${actorTokenId}:${dialogueId}:${objectKey(target)}`;
+  const remember = (state, key, response) => {
+    state.dialogueCommands ??= {}; state.dialogueCommands[key] = clone(response);
+    for (const old of Object.keys(state.dialogueCommands).slice(0, -200)) delete state.dialogueCommands[old];
+  };
+  const customSignal = (scene, emitterKey, signalId, parameters, session, suffix) => {
+    const descriptor = findSignal(scene, { emitterKey, signalId });
+    if (!descriptor) fail("Сигнал не объявлен этим эмитентом.");
+    return { id: `${session.sessionId}.${session.step}.${suffix}`, emitterKey, signalId, name: descriptor.name,
+      parameters: validateParameters(descriptor, parameters ?? {}), context: { runId: session.runId, groupId: session.groupId } };
+  };
+  const processOnce = async (command, user, commandId) => {
+    const initial = context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target);
     if (!initial.scene) fail("Сцена не найдена.");
-    const events = [];
-    const releasePause = command.kind === "start" ? beginInteractionPause(initial.scene, command.target ?? initial.dialogue?.target) : () => {};
-    const result = await lock(initial.scene, async () => {
-      if (!authority()) fail("Исполняющий мастер изменился.");
-      const state = clone(runtimeOf(initial.scene, { schemeId: command.schemeId ?? "main" }));
-      state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
-      const commandKey = `${user.id}:${commandId}`;
-      if (state.dialogueCommands[commandKey]) return clone(state.dialogueCommands[commandKey]);
-      let response;
-      const emit = (name, session, payload, suffix = "response") => {
-        if (!EVENT_NAME.test(name)) fail("Некорректное имя события взаимодействия.");
-        events.push({ id: `${session.sessionId ?? commandId}.${session.step ?? 0}.${suffix}`, name,
-          source: command.kind === "interaction" ? "interaction" : "dialogue", runId: state.runId,
-          actorTokenId: session.actorTokenId, payload });
-      };
-      if (command.kind === "interaction") {
-        const descriptor = state.episode?.interactions?.find((entry) => entry.id === command.interactionId);
-        const target = descriptor ? targetOf(initial.scene, descriptor.target) : null;
-        const actorToken = validate({ scene: initial.scene, runtime: state, descriptor, target, triggerType: "interaction" }, command.actorTokenId, user, command.runId);
-        const triggerKey = getTriggerKey(state, "interaction", descriptor.id);
-        const gate = getTriggerGate(initial.scene, state, descriptor.trigger, actorToken, { triggerKey });
-        if (!gate.allowed) fail(gate.reason);
-        const payload = { interactionId: descriptor.id, target: clone(descriptor.target), userId: user.id };
-        emit(descriptor.eventName, { actorTokenId: command.actorTokenId }, payload, "interaction");
-        consumeTrigger(state, triggerKey, descriptor.trigger);
-        response = { status: "completed", interactionId: descriptor.id };
-      } else if (command.kind === "leave") {
-        const found = Object.values(state.dialogueSessions).find((session) => session.sessionId === command.sessionId && session.userId === user.id);
-        if (found) { found.status = "left"; found.step++; }
-        response = { status: "left", sessionId: command.sessionId };
-      } else {
-        let session, dialogue, admittedTrigger = null;
+    const scene = initial.scene, commandKey = `${user.id}:${commandId}`, signals = [], signalErrors = [];
+    const release = command.kind === "start" ? beginInteractionPause(scene, command.target) : () => {};
+    let staged;
+    try {
+      staged = await lock(scene, async () => {
+        if (!authority()) fail("Исполняющий мастер изменился.");
+        const state = clone(runtimeOf(scene, { groupId: command.groupId ?? "main" }));
+        state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
+        const previous = state.dialogueCommands[commandKey];
+        if (previous) { if (previous.status === "processing") fail("Исход предыдущего ответа ещё не подтверждён. Откройте диалог заново."); return { response: clone(previous) }; }
+        if (command.kind === "interaction") {
+          const descriptor = state.state?.interactions?.find((entry) => entry.id === command.interactionId), target = sceneObject(scene, descriptor?.target);
+          const actor = validate({ scene, runtime: state, descriptor, target, conditionType: "interaction" }, command.actorTokenId, user, command.runId);
+          const conditionKey = getConditionKey(state, "interaction", descriptor.id), gate = getConditionGate(scene, state, descriptor.conditions, actor, { conditionKey });
+          if (!gate.allowed) fail(gate.reason);
+          signals.push(customSignal(scene, objectKey(descriptor.target), descriptor.signalId, descriptor.parameters, { sessionId: commandId, step: 0, runId: state.runId, groupId: state.groupId }, "interaction"));
+          consumeCondition(state, conditionKey, descriptor.conditions);
+          const response = { status: "completed", interactionId: descriptor.id }; remember(state, commandKey, response); await save(scene, state); return { response };
+        }
+        let session, dialogue, target;
         if (command.kind === "start") {
-          dialogue = context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target).dialogue;
-          const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
-          validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, command.actorTokenId, user, command.runId);
-          session = state.dialogueSessions[sessionKey(user.id, command.actorTokenId)];
-          if (!(["active", "finished"].includes(session?.status) && session.runId === state.runId && session.dialogueId === dialogue.id
-            && objectKey(session.target) === objectKey(dialogue.target))) {
-            const triggerKey = getTriggerKey(state, "dialogue", interactionTriggerId(dialogue));
-            const gate = getTriggerGate(initial.scene, state, dialogue.trigger, initial.scene.tokens.get(command.actorTokenId), { triggerKey });
+          if (!command.dialogueId) fail("Нужно выбрать конкретный диалог.");
+          ({ dialogue, target } = context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target));
+          validate({ scene, runtime: state, descriptor: dialogue, target }, command.actorTokenId, user, command.runId);
+          const key = slot(user.id, command.actorTokenId, dialogue.id, dialogue.target);
+          session = state.dialogueSessions[key];
+          const continuing = session && ["active", "interrupted"].includes(session.status) && session.runId === state.runId;
+          if (!continuing) {
+            const conditionKey = getConditionKey(state, "dialogue", interactionConditionId(dialogue));
+            const gate = getConditionGate(scene, state, dialogue.conditions, scene.tokens.get(command.actorTokenId), { conditionKey });
             if (!gate.allowed) fail(gate.reason);
-            admittedTrigger = triggerKey;
-            session = { sessionId: random(), userId: user.id, actorTokenId: command.actorTokenId, dialogueId: dialogue.id,
-              target: clone(dialogue.target), actorId: initial.scene.tokens.get(command.actorTokenId)?.actor?.id,
-              schemeId: state.schemeId, runId: state.runId, nodeId: dialogue.startNodeId, step: 0, status: "active" };
-            state.dialogueSessions[sessionKey(user.id, command.actorTokenId)] = session;
+            session = { sessionId: random(), userId: user.id, actorTokenId: command.actorTokenId, dialogueId: dialogue.id, target: clone(dialogue.target),
+              actorId: scene.tokens.get(command.actorTokenId)?.actor?.id, groupId: state.groupId, runId: state.runId, nodeId: dialogue.startNodeId, step: 0, status: "active" };
+            state.dialogueSessions[key] = session; consumeCondition(state, conditionKey, dialogue.conditions);
+            signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "opened"));
+          } else if (session.status === "interrupted") {
+            session.status = "active"; session.step++; signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "opened"));
           }
           if (dialogue.target.type === "Token") freezeInteractionClock(state, dialogue.target.id);
-        } else if (["answer", "renew"].includes(command.kind)) {
-          session = Object.values(state.dialogueSessions).find((entry) => entry.sessionId === command.sessionId && entry.userId === user.id);
-          if (!dialogueSessionIsLive(session)) fail("Разговор уже завершён.");
-          if (command.kind === "answer" && (session.status !== "active" || session.nodeId !== command.nodeId || session.step !== command.step)) fail("Этот ответ относится к предыдущему шагу разговора.");
+        } else {
+          session = Object.values(state.dialogueSessions).find((entry) => entry?.sessionId === command.sessionId && entry.userId === user.id);
+          if (!session) fail("Разговор не найден или принадлежит другому игроку.");
+          if (command.dialogueId && command.dialogueId !== session.dialogueId) fail("Ответ относится к другому диалогу.");
           if (command.target && objectKey(command.target) !== objectKey(session.target)) fail("Ответ относится к другому объекту.");
-          dialogue = context(command.sceneId, session.dialogueId, command.schemeId ?? "main", session.target).dialogue;
-        } else fail("Неизвестное действие диалога.");
-        const target = dialogue ? targetOf(initial.scene, dialogue.target) : null;
-        if (session.actorId !== initial.scene.tokens.get(session.actorTokenId)?.actor?.id) fail("Персонаж взаимодействия изменился.");
-        if (objectKey(session.target) !== objectKey(dialogue?.target)) fail("Разговор относится к другому объекту.");
-        validate({ scene: initial.scene, runtime: state, descriptor: dialogue, target }, session.actorTokenId, user, session.runId);
+          if (command.kind === "leave") {
+            if (["active", "processing", "interrupted"].includes(session.status)) { session.status = "left"; session.step++; signals.push(interactionSignal(scene, "Dialogue", session.dialogueId, session, "closed")); }
+            const response = { status: "left", sessionId: session.sessionId }; remember(state, commandKey, response); await save(scene, state); return { response };
+          }
+          if (!["answer", "renew"].includes(command.kind)) fail("Неизвестное действие диалога.");
+          if (!dialogueSessionIsLive(session) || session.status !== "active") fail("Разговор уже завершён или ответ ещё обрабатывается.");
+          ({ dialogue, target } = context(command.sceneId, session.dialogueId, command.groupId ?? "main", session.target));
+        }
+        if (session.actorId !== scene.tokens.get(session.actorTokenId)?.actor?.id) fail("Персонаж взаимодействия изменился.");
+        if (!dialogue || objectKey(session.target) !== objectKey(dialogue.target)) fail("Диалог этого объекта больше недоступен.");
+        validate({ scene, runtime: state, descriptor: dialogue, target }, session.actorTokenId, user, session.runId);
         const node = dialogue.nodes.find((entry) => entry.id === session.nodeId);
         if (!node) fail("Текущий шаг разговора не найден.");
-        let selected = null;
+        session.expiresAt = Date.now() + INTERACTION_LEASE_MS;
         if (command.kind === "answer") {
-          selected = node.responses.find((entry) => entry.id === command.responseId);
+          if (session.nodeId !== command.nodeId || session.step !== command.step) fail("Ответ относится к предыдущему шагу разговора.");
+          const selected = node.responses.find((entry) => entry.id === command.responseId);
           if (!selected) fail("Такого ответа нет на текущем шаге.");
-          if (selected.nextNodeId && selected.eventName) fail("Ответ должен либо продолжать диалог, либо завершать его событием.");
+          if (selected.signalId) customSignal(scene, `Dialogue:${dialogue.id}`, selected.signalId, selected.parameters, session, "answer");
+          session.status = "processing";
+          remember(state, commandKey, { status: "processing", sessionId: session.sessionId }); await save(scene, state);
+          return { session: clone(session), dialogue: clone(dialogue), selected: clone(selected) };
+        }
+        if (!node.responses.length) { session.status = "finished"; signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "closed")); }
+        const response = visibleSession(session, dialogue, target); remember(state, commandKey, response); await save(scene, state); return { response };
+      });
+    } finally { release(); }
+    if (staged.session) {
+      const original = staged.session;
+      const outcome = await notifyInteractionSignal(emitSignal, scene, interactionSignal(scene, "Dialogue", original.dialogueId, original, "response", { responseId: staged.selected.id }));
+      if (outcome.error) signalErrors.push(outcome.error);
+      staged.response = await lock(scene, async () => {
+        if (!authority()) fail("Исполняющий мастер изменился.");
+        const state = clone(runtimeOf(scene, { groupId: original.groupId }));
+        const session = Object.values(state.dialogueSessions ?? {}).find((entry) => entry?.sessionId === original.sessionId);
+        if (!session || state.runId !== original.runId || session.status !== "processing" || session.step !== original.step) fail("Диалог изменён во время обработки сигнала.");
+        const current = context(command.sceneId, session.dialogueId, original.groupId, session.target), dialogue = current.dialogue;
+        try {
+          if (outcome.status === "stale") fail("Автоматизация остановлена во время ответа.");
+          validate({ scene, runtime: state, descriptor: dialogue, target: current.target }, session.actorTokenId, user, session.runId);
+          const selected = dialogue.nodes.find((node) => node.id === session.nodeId)?.responses.find((entry) => entry.id === staged.selected.id);
+          if (JSON.stringify(selected) !== JSON.stringify(staged.selected)) fail("Ответ изменён мастером во время обработки.");
           session.step++;
           if (selected.nextNodeId) {
-            if (!dialogue.nodes.some((entry) => entry.id === selected.nextNodeId)) fail("Следующий шаг разговора не найден.");
+            if (!dialogue.nodes.some((node) => node.id === selected.nextNodeId)) fail("Следующий шаг разговора не найден.");
             session.nodeId = selected.nextNodeId;
-          } else session.status = "finished";
+          }
+          session.status = outcome.interrupt ? "interrupted" : outcome.exit || !selected.nextNodeId ? "finished" : "active";
+          if (!outcome.interrupt && selected.signalId) signals.push(customSignal(scene, `Dialogue:${dialogue.id}`, selected.signalId, selected.parameters, session, "answer"));
+          if (session.status === "active" && !dialogue.nodes.find((node) => node.id === session.nodeId)?.responses.length) session.status = "finished";
+          if (session.status === "finished") signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "closed"));
+          const response = visibleSession(session, dialogue, current.target); remember(state, commandKey, response); await save(scene, state); return response;
+        } catch (error) {
+          session.status = "interrupted"; session.step++;
+          const response = { sessionId: session.sessionId, status: "interrupted", failure: error.message }; remember(state, commandKey, response); await save(scene, state); return response;
         }
-        const currentNode = dialogue.nodes.find((entry) => entry.id === session.nodeId);
-        if (!currentNode.responses?.length) session.status = "finished";
-        const payload = { dialogueId: dialogue.id, responseId: selected?.id ?? null, target: clone(dialogue.target), userId: user.id };
-        if (selected?.eventName && !(selected.eventName === "dialogue.finished" && session.status === "finished")) emit(selected.eventName, session, payload);
-        if (session.status === "finished" && !session.finishedEmitted) {
-          emit("dialogue.finished", session, payload, "finished"); session.finishedEmitted = true;
-        }
-        if (admittedTrigger) consumeTrigger(state, admittedTrigger, dialogue.trigger);
-        session.expiresAt = Date.now() + INTERACTION_LEASE_MS;
-        response = visibleSession(session, dialogue, target);
-      }
-      state.dialogueCommands[commandKey] = clone(response);
-      for (const old of Object.keys(state.dialogueCommands).slice(0, -200)) delete state.dialogueCommands[old];
-      await save(initial.scene, state);
-      return response;
-    }).finally(releasePause);
-    // SceneEvents admits work using the same Scene lock, so emit only after releasing it.
-    for (const event of events) {
-      try {
-        if (typeof emitEvent !== "function") fail("Исполнитель событий сцены не подключён.");
-        await emitEvent(initial.scene, event);
-      } catch (error) {
-        result.error = `Состояние сохранено, но событие «${event.name}» не зарегистрировано: ${error.message}`;
-        await lock(initial.scene, async () => {
-          const state = clone(runtimeOf(initial.scene, { schemeId: command.schemeId ?? "main" })); state.error = result.error;
-          if (state.dialogueCommands?.[`${user.id}:${commandId}`]) state.dialogueCommands[`${user.id}:${commandId}`].error = result.error;
-          await save(initial.scene, state);
-        });
-      }
+      });
     }
-    onChange(initial.scene);
-    return clone(result);
+    for (const signal of signals) { const outcome = await notifyInteractionSignal(emitSignal, scene, signal); if (outcome.error) signalErrors.push(outcome.error); }
+    if (signalErrors.length) {
+      staged.response.error = [...new Set(signalErrors)].join("; ");
+      await lock(scene, async () => {
+        if (!authority()) return;
+        const state = clone(runtimeOf(scene, { groupId: command.groupId ?? "main" }));
+        if (!state.dialogueCommands?.[commandKey]) return;
+        state.error = staged.response.error; remember(state, commandKey, staged.response); await save(scene, state);
+      });
+    }
+    onChange(scene); return clone(staged.response);
   };
-
+  const process = (command, user, commandId) => {
+    const key = `${command.sceneId}:${user.id}:${commandId}`;
+    if (commands.has(key)) return commands.get(key);
+    const task = processOnce(command, user, commandId).finally(() => commands.delete(key)); commands.set(key, task); return task;
+  };
   const send = async (raw) => {
-    const command = { ...raw, schemeId: raw.schemeId ?? "main" };
-    const key = JSON.stringify(command);
+    const command = { ...raw, groupId: raw.groupId ?? "main" }, key = JSON.stringify(command);
     if (inFlight.has(key)) return inFlight.get(key);
     const task = (async () => {
       let response;
       if (authority() && game.user.isGM) response = await process(command, game.user, random());
-      else {
-        response = await requestGMReply(chat, { command, commandFlag: "dialogueCommand", responseFlag: "dialogueResult",
-          content: "<p>Ширма: взаимодействие со сценой.</p>", kind: "dialogue-command",
-          timeoutMessage: "Мастер не ответил. Состояние разговора можно восстановить повторным открытием." });
-        if (response.failure) throw new Error(response.failure);
-      }
-      if (response.sessionId) {
-        knownSessions.set(response.sessionId, clone(response));
-        if (knownSessions.size > 200) knownSessions.delete(knownSessions.keys().next().value);
-      }
+      else response = await requestGMReply(chat, { command, commandFlag: "dialogueCommand", responseFlag: "dialogueResult", content: "<p>Ширма: взаимодействие со сценой.</p>", kind: "dialogue-command", timeoutMessage: "Мастер не ответил. Состояние разговора можно восстановить повторным открытием." });
+      if (response.failure) throw new Error(response.failure);
+      if (response.sessionId) { knownSessions.set(response.sessionId, clone(response)); if (knownSessions.size > 200) knownSessions.delete(knownSessions.keys().next().value); }
       return response;
     })();
-    inFlight.set(key, task);
-    try { return await task; } finally { inFlight.delete(key); }
+    inFlight.set(key, task); try { return await task; } finally { inFlight.delete(key); }
   };
-  return Object.freeze({
-    ...createManualDialogueService(),
-    getContext: context,
-    requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.schemeId ?? "main", command.target).runtime?.runId }),
-    requestInteraction: (command) => send({ ...command, kind: "interaction", runId: context(command.sceneId, null, command.schemeId ?? "main").runtime?.runId }),
-    requestAnswer: (command) => {
-      const known = knownSessions.get(command.sessionId);
-      return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step });
-    },
-    leaveSession: (command) => send({ ...command, kind: "leave" }),
-    renewSession: (command) => send({ ...command, kind: "renew" }),
+  return Object.freeze({ ...createManualDialogueService(), getContext: context,
+    requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target).runtime?.runId }),
+    requestInteraction: (command) => send({ ...command, kind: "interaction", runId: command.runId ?? context(command.sceneId, null, command.groupId ?? "main").runtime?.runId }),
+    requestAnswer: (command) => { const known = knownSessions.get(command.sessionId); return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step }); },
+    leaveSession: (command) => send({ ...command, kind: "leave" }), renewSession: (command) => send({ ...command, kind: "renew" }),
     async processCommand(message, initiatingUserId) {
       const command = message.getFlag?.(MODULE_ID, "dialogueCommand");
       if (!command || !authority()) return false;
       const authorId = typeof message.author === "string" ? message.author : message.author?.id;
       if (authorId !== initiatingUserId || !message.whisper?.includes(game.user.id)) return true;
-      const user = game.users.get(authorId);
-      if (!user) return true;
-      let result;
-      try { result = await process(clone(command), user, message.id); }
-      catch (error) { result = { failure: error.message }; }
-      await message.update({ [`flags.${MODULE_ID}.dialogueResult`]: result,
-        content: `<p>${generics.utilities.escapeHTML(result.failure ?? result.error ?? "Ширма: взаимодействие обработано.")}</p>` });
-      if (!result.failure && !result.error) setTimeout(() => { void message.delete().catch(() => {}); }, 2000);
+      const user = game.users.get(authorId); if (!user) return true;
+      let result; try { result = await process(clone(command), user, message.id); } catch (error) { result = { failure: error.message }; }
+      await message.update({ [`flags.${MODULE_ID}.dialogueResult`]: result, content: `<p>${generics.utilities.escapeHTML(result.failure ?? "Ширма: взаимодействие обработано.")}</p>` });
+      if (!result.failure) setTimeout(() => { void message.delete().catch(() => {}); }, 2000);
       return true;
     }
   });

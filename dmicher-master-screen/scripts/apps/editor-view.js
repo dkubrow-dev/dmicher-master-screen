@@ -6,25 +6,25 @@ export function requireNumber(value, label, { min = 0, max = Infinity } = {}) {
   return result;
 }
 
-export function buildTriggerRows({ runtime, definition, tokens }) {
+export function buildConditionRows({ runtime, definition, tokens }) {
   const labels = { shop: "Магазин", dialogue: "Диалог", interaction: "Действие", zone: "Зона" };
-  const rows = new Map(), episode = runtime.episode;
+  const rows = new Map(), state = runtime.state;
   const add = (type, id, name, policy) => {
-    const key = `${runtime.schemeId ?? "main"}:${runtime.episodeId}:${type}:${id}`;
-    rows.set(key, { key, count: runtime.triggerCounts?.[key] ?? 0, episodeName: episode.name, name, typeLabel: labels[type],
-      canToggle: true, enabled: runtime.triggerEnabledOverrides?.[key] ?? policy?.enabled !== false });
+    const key = `${runtime.groupId ?? "main"}:${runtime.stateId}:${type}:${id}`;
+    rows.set(key, { key, count: runtime.conditionCounts?.[key] ?? 0, stateName: state.name, name, typeLabel: labels[type],
+      canToggle: true, enabled: runtime.conditionEnabledOverrides?.[key] ?? policy?.enabled !== false });
   };
-  if (episode) {
-    for (const shop of episode.shops ?? []) add("shop", `${shop.target.type}:${shop.target.id}`, shop.name, shop.trigger);
-    for (const zone of episode.zones ?? []) add("zone", zone.id, zone.label || zone.id, zone.trigger);
-    for (const dialogue of episode.dialogues ?? []) add("dialogue", `${dialogue.target.type}:${dialogue.target.id}`, dialogue.name, dialogue.trigger);
-    for (const action of episode.interactions ?? []) add("interaction", action.id, action.name, action.trigger);
+  if (state) {
+    for (const shop of state.shops ?? []) add("shop", `${shop.target.type}:${shop.target.id}:${shop.shopId}`, shop.name, shop.conditions);
+    for (const zone of state.zones ?? []) add("zone", zone.id, zone.label || zone.id, zone.conditions);
+    for (const dialogue of state.dialogues ?? []) add("dialogue", `${dialogue.target.type}:${dialogue.target.id}:${dialogue.dialogueId}`, dialogue.name, dialogue.conditions);
+    for (const action of state.interactions ?? []) add("interaction", action.id, action.name, action.conditions);
   }
-  for (const [key, count] of Object.entries(runtime.triggerCounts ?? {})) {
+  for (const [key, count] of Object.entries(runtime.conditionCounts ?? {})) {
     if (rows.has(key)) continue;
-    const [, episodeId, type, id] = key.split(":");
-    const owner = definition.episodes.find((entry) => entry.id === episodeId);
-    rows.set(key, { key, count, episodeName: owner?.name ?? episodeId, name: id, typeLabel: labels[type] ?? type, canToggle: false });
+    const [, stateId, type, id] = key.split(":");
+    const owner = definition.states.find((entry) => entry.id === stateId);
+    rows.set(key, { key, count, stateName: owner?.name ?? stateId, name: id, typeLabel: labels[type] ?? type, canToggle: false });
   }
   return [...rows.values()];
 }

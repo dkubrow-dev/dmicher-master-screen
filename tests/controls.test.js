@@ -8,7 +8,7 @@ function fixture() {
   const actions = [], errors = [];
   globalThis.game = { user: { isGM: true } };
   globalThis.ui = { notifications: { error: (message) => errors.push(message) } };
-  const controller = { openHelp: () => actions.push("help"), openScreen: (presentation) => actions.push(presentation) };
+  const controller = { openHelp: () => actions.push("help"), toggleScreen: () => actions.push("screen"), openStateChooser: () => actions.push("states"), startAll: () => actions.push("start"), haltAll: () => actions.push("stop"), isScreenOpen: () => false };
   return { actions, errors, controller };
 }
 
@@ -28,13 +28,13 @@ test("category activation uses a hidden no-op tool and never opens the first act
 
 test("all second-level actions explicitly open help, the panel or the browser window", async () => {
   const f = fixture(), control = buildControls(f.controller);
-  for (const key of ["help", "panel", "window"]) {
-    assert.equal(control.tools[key].button, true);
+  for (const key of ["help", "screen", "states", "start", "stop"]) {
+    assert.equal(control.tools[key].button, key !== "screen");
     control.tools[key].onChange({}, true);
     await flush();
   }
-  assert.deepEqual(f.actions, ["help", "panel", "window"]);
-  assert.equal(Object.values(control.tools).filter((tool) => tool.visible).length, 3);
+  assert.deepEqual(f.actions, ["help", "screen", "states", "start", "stop"]);
+  assert.equal(Object.values(control.tools).filter((tool) => tool.visible).length, 5);
   assert.notEqual(control.activeTool, "help");
 });
 
@@ -42,15 +42,15 @@ test("players have no visible category and cannot invoke a retained GM action", 
   const f = fixture(), original = buildControls(f.controller);
   game.user.isGM = false;
   assert.equal(buildControls(f.controller).visible, false);
-  original.tools.panel.onChange({}, true);
+  original.tools.screen.onChange({}, true);
   await flush();
   assert.deepEqual(f.actions, []);
 });
 
 test("a rejected asynchronous action reports the useful error instead of leaking rejection", async () => {
   const f = fixture();
-  f.controller.openScreen = async () => { throw new Error("Mode unavailable"); };
-  buildControls(f.controller).tools.window.onChange({}, true);
+  f.controller.toggleScreen = async () => { throw new Error("Mode unavailable"); };
+  buildControls(f.controller).tools.screen.onChange({}, true);
   await flush();
   assert.deepEqual(f.errors, ["Mode unavailable"]);
 });

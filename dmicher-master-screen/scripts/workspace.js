@@ -30,7 +30,7 @@ async function renderSheet(app) {
 /** Only explicit document sheets; no arbitrary window serialization or prototype changes. */
 export class WorkspaceManager {
   constructor({ isolated = false } = {}) {
-    this.isolated = isolated; this.schemes = new Map();
+    this.isolated = isolated; this.groups = new Map();
     this.slots = new Map(); this.generation = 0; this.saving = Promise.resolve(); this.lifecycle = Promise.resolve();
     this.activeKey = null; this.activeRunId = ""; this.requestedKey = null; this.requestedRunId = "";
     this.activePlan = [];
@@ -39,7 +39,7 @@ export class WorkspaceManager {
     return apps().filter((app) => app.rendered && allowed.has((app.document ?? app.object)?.documentName))
       .map(descriptor).filter((entry) => entry.uuid);
   }
-  key(scene, state) { return `${scene.id}:${state.schemeId ?? "main"}`; }
+  key(scene, state) { return `${scene.id}:${state.groupId ?? "main"}`; }
   async persist(key, runId, entries) {
     const snapshot = structuredClone(entries);
     const user = game.user;
@@ -67,26 +67,26 @@ export class WorkspaceManager {
     return this.lifecycle;
   }
   apply(scene, state = getRuntime(scene)) {
-    if (!this.isolated && state.schemeId !== "main") {
+    if (!this.isolated && state.groupId !== "main") {
       const key = this.key(scene, state);
-      if (!this.schemes.has(key)) this.schemes.set(key, new WorkspaceManager({ isolated: true }));
-      return this.schemes.get(key).apply(scene, state);
+      if (!this.groups.has(key)) this.groups.set(key, new WorkspaceManager({ isolated: true }));
+      return this.groups.get(key).apply(scene, state);
     }
-    if (!this.isolated) for (const [key, manager] of this.schemes) if (!key.startsWith(`${scene?.id}:`)) {
-      void manager.close(); this.schemes.delete(key);
+    if (!this.isolated) for (const [key, manager] of this.groups) if (!key.startsWith(`${scene?.id}:`)) {
+      void manager.close(); this.groups.delete(key);
     }
     if (scene && isExecutionHalted(scene, state)) {
       this.generation++;
       // Keep already visible sheets and their geometry; invalidate pending presentations.
       return this.lifecycle;
     }
-    const key = scene && state.episode && state.runId ? this.key(scene, state) : null;
+    const key = scene && state.state && state.runId ? this.key(scene, state) : null;
     const runId = key ? state.runId : "";
     if (this.requestedKey === key && this.requestedRunId === runId) return this.lifecycle;
     this.requestedKey = key; this.requestedRunId = runId;
     const generation = ++this.generation;
     const current = () => {
-      const actual = scene ? getRuntime(scene, { schemeId: state.schemeId }) : null;
+      const actual = scene ? getRuntime(scene, { groupId: state.groupId }) : null;
       return generation === this.generation && (!key || (globalThis.canvas?.scene?.id === scene.id && actual.runId === runId && !isExecutionHalted(scene, actual)));
     };
     return this.queue(async () => {
@@ -100,7 +100,7 @@ export class WorkspaceManager {
       if (!key || !current()) return;
       const saved = game.user.getFlag(MODULE_ID, "workspaces")?.[key];
       const audience = game.user.isGM ? "gm" : "players";
-      const source = saved?.runId === runId ? saved.entries : state.episode.workspace?.[audience] ?? [];
+      const source = saved?.runId === runId ? saved.entries : state.state.workspace?.[audience] ?? [];
       const plan = [...new Map(source.map((entry) => [entry.uuid, structuredClone(entry)])).values()];
       const failures = [];
       this.activeKey = key; this.activeRunId = runId;
@@ -157,9 +157,9 @@ export class WorkspaceManager {
     }
   }
   close() {
-    const children = [...this.schemes.values()].map((manager) => manager.close()); this.schemes.clear();
+    const children = [...this.groups.values()].map((manager) => manager.close()); this.groups.clear();
     this.generation++;
-    const scene = globalThis.canvas?.scene, schemeId = this.activeKey?.split(":")[1] ?? "main", state = getRuntime(scene, { schemeId });
+    const scene = globalThis.canvas?.scene, groupId = this.activeKey?.split(":")[1] ?? "main", state = getRuntime(scene, { groupId });
     const key = scene && state.runId ? this.key(scene, state) : null;
     this.requestedKey = key; this.requestedRunId = state.runId;
     return this.queue(async () => {
@@ -168,7 +168,7 @@ export class WorkspaceManager {
       if (key) {
         const saved = game.user.getFlag(MODULE_ID, "workspaces")?.[key];
         const audience = game.user.isGM ? "gm" : "players";
-        const plan = saved?.runId === state.runId ? saved.entries : state.episode?.workspace?.[audience] ?? [];
+        const plan = saved?.runId === state.runId ? saved.entries : state.state?.workspace?.[audience] ?? [];
         await this.persist(key, state.runId, plan.map((entry) => ({ ...entry, closed: true })));
       }
       await this.release();

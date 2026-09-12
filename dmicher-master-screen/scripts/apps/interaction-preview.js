@@ -30,25 +30,25 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     const objects = listNativeSceneObjects(scene).filter((entry) => ["Token", "Tile"].includes(entry.type));
     const actors = [...scene.tokens.values()].filter((token) => token.actor);
     if (!this.conditions) {
-      const binding = bindings.find((entry) => entry[this.kind]?.[`${this.kind}Id`] === asset.id), scheme = definitions.find((entry) => entry.schemeId === binding?.schemeId) ?? definitions[0];
+      const binding = bindings.find((entry) => entry[`${this.kind}s`]?.some((link) => link[`${this.kind}Id`] === asset.id)), group = definitions.find((entry) => entry.groupId === binding?.groupId) ?? definitions[0];
       const actor = actors.find((entry) => entry.object?.controlled) ?? actors[0];
-      this.conditions = { schemeId: scheme?.schemeId ?? "", episodeId: scheme?.entryEpisodeId ?? scheme?.episodes[0]?.id ?? "", target: binding ? `${binding.type}:${binding.id}` : objects[0]?.key ?? "", actorTokenId: actor?.id ?? "", tags: actor ? getObjectTags(scene, { type: "Token", id: actor.id }).join(", ") : "", distance: 0, visible: true, enabled: true, used: 0, halted: false, showBlocked: true };
+      this.conditions = { groupId: group?.groupId ?? "", stateId: group?.entryStateId ?? group?.states[0]?.id ?? "", target: binding ? `${binding.type}:${binding.id}` : objects[0]?.key ?? "", actorTokenId: actor?.id ?? "", tags: actor ? getObjectTags(scene, { type: "Token", id: actor.id }).join(", ") : "", distance: 0, visible: true, enabled: true, used: 0, halted: false, showBlocked: true };
     }
-    const state = this.conditions, scheme = definitions.find((entry) => entry.schemeId === state.schemeId), actor = scene.tokens.get(state.actorTokenId)?.actor;
-    if (!scheme?.episodes.some((episode) => episode.id === state.episodeId)) state.episodeId = scheme?.entryEpisodeId ?? scheme?.episodes[0]?.id ?? "";
+    const state = this.conditions, group = definitions.find((entry) => entry.groupId === state.groupId), actor = scene.tokens.get(state.actorTokenId)?.actor;
+    if (!group?.states.some((entry) => entry.id === state.stateId)) state.stateId = group?.entryStateId ?? group?.states[0]?.id ?? "";
     const [type, id] = state.target.split(":"), descriptor = { type, id };
-    let resolved; try { resolved = (this.kind === "shop" ? resolveObjectShop : resolveObjectDialogue)(scene, descriptor, state); } catch { /* No selectable object yet. */ }
+    let resolved; try { resolved = (this.kind === "shop" ? resolveObjectShop : resolveObjectDialogue)(scene, descriptor, state, asset.id); } catch { /* No selectable object yet. */ }
     const gate = !actor ? { allowed: false, reason: "Выберите токен с персонажем (Actor)." }
-      : resolved?.asset.id !== asset.id ? { allowed: false, reason: "У выбранного объекта нет этой привязки в выбранном эпизоде." }
+      : resolved?.asset.id !== asset.id ? { allowed: false, reason: "У выбранного объекта нет этой привязки в выбранном состоянии." }
       : evaluateInteractionPreview({ config: resolved.config, kind: this.kind, ...state, tags: normalizeTags(state.tags.split(",")) });
     this.allowed = gate.allowed || state.showBlocked;
     this.inventory ??= actor ? [...(actor.items?.values?.() ?? [])].map((item) => ({ id: item.id, name: item.name, img: item.img, data: clone(item.toObject?.() ?? { name: item.name, img: item.img, type: item.type }) })) : [];
     this.localShopItems ??= clone(asset.items ?? []);
     this.currentAsset = this.kind === "shop" ? { ...asset, items: this.localShopItems } : asset;
     this.stock ??= new Map((asset.items ?? []).map((item) => [item.id, item.stock]));
-    const checks = [["visible", "Объект виден"], ["enabled", "Триггер включён"], ["halted", "Схема остановлена"], ["showBlocked", "Показать содержимое при отказе"]].map(([key, label]) => `<label class="ms-check"><input type="checkbox" name="${key}" ${state[key] ? "checked" : ""}>${label}</label>`).join("");
-    const form = `<details open class="ms-details"><summary>Имитируемые условия</summary><div class="ms-grid-two">${select("schemeId", "Схема", definitions.map((entry) => ({ id: entry.schemeId, name: entry.schemeName })), state.schemeId)}${select("episodeId", "Эпизод", scheme?.episodes ?? [], state.episodeId)}${select("target", "Объект", objects.map((entry) => ({ id: entry.key, name: entry.name })), state.target)}${select("actorTokenId", "Персонаж", actors.map((token) => ({ id: token.id, name: `${token.name} · ${token.actor.name}` })), state.actorTokenId)}</div><label class="ms-field">Имитируемые теги персонажа<input name="tags" value="${esc(state.tags)}"></label><div class="ms-grid-two"><label class="ms-field">Расстояние<input name="distance" type="number" min="0" step="any" value="${state.distance}"></label><label class="ms-field">Использований триггера<input name="used" type="number" min="0" step="1" value="${state.used}"></label></div><div class="ms-grid-two">${checks}</div>${button("applyPreview", "Применить условия и начать заново")}</details>`;
-    return { ...parent, html: `<p class="ms-preview-banner">Предпросмотр: инвентарь и остатки мира не меняются, события не отправляются.</p><h3>${esc(asset.name)}</h3>${form}<p class="ms-preview-gate" data-preview-allowed="${gate.allowed}">${gate.allowed ? "Действие доступно при выбранных условиях." : esc(gate.reason)}</p><div class="ms-preview-result">${this.allowed ? this.kind === "shop" ? this.renderShop(this.currentAsset) : this.renderDialogue(asset) : ""}<p data-preview-feedback>${esc(this.feedback)}</p></div>` };
+    const checks = [["visible", "Объект виден"], ["enabled", "Запуск разрешён"], ["halted", "Группа остановлена"], ["showBlocked", "Показать содержимое при отказе"]].map(([key, label]) => `<label class="ms-check"><input type="checkbox" name="${key}" ${state[key] ? "checked" : ""}>${label}</label>`).join("");
+    const form = `<details open class="ms-details"><summary>Имитируемые условия</summary><div class="ms-grid-two">${select("groupId", "Группа", definitions.map((entry) => ({ id: entry.groupId, name: entry.groupName })), state.groupId)}${select("stateId", "Состояние", group?.states ?? [], state.stateId)}${select("target", "Объект", objects.map((entry) => ({ id: entry.key, name: entry.name })), state.target)}${select("actorTokenId", "Персонаж", actors.map((token) => ({ id: token.id, name: `${token.name} · ${token.actor.name}` })), state.actorTokenId)}</div><label class="ms-field">Имитируемые теги персонажа<input name="tags" value="${esc(state.tags)}"></label><div class="ms-grid-two"><label class="ms-field">Расстояние<input name="distance" type="number" min="0" step="any" value="${state.distance}"></label><label class="ms-field">Произошедших запусков<input name="used" type="number" min="0" step="1" value="${state.used}"></label></div><div class="ms-grid-two">${checks}</div>${button("applyPreview", "Применить условия и начать заново")}</details>`;
+    return { ...parent, html: `<p class="ms-preview-banner">Предпросмотр: инвентарь и остатки мира не меняются, сигналы не отправляются.</p><h3>${esc(asset.name)}</h3>${form}<p class="ms-preview-gate" data-preview-allowed="${gate.allowed}">${gate.allowed ? "Действие доступно при выбранных условиях." : esc(gate.reason)}</p><div class="ms-preview-result">${this.allowed ? this.kind === "shop" ? this.renderShop(this.currentAsset) : this.renderDialogue(asset) : ""}<p data-preview-feedback>${esc(this.feedback)}</p></div>` };
   }
   renderShop(asset) {
     return `<div class="ms-shop-columns"><section><h3>Каталог магазина</h3>${asset.img ? `<img class="ms-dialogue-art" src="${esc(asset.img)}" alt="">` : ""}<div class="ms-asset-stock ${asset.display === "tiles" ? "is-tiles" : ""}"><div class="ms-stock-items">${asset.items.map((item) => `<div class="ms-stock-entry"><img src="${esc(item.data.img || "icons/svg/item-bag.svg")}" alt=""><span>${esc(item.data.name)} · ${this.stock.get(item.id) ?? 0}</span>${button("previewTake", "+", `data-id="${esc(item.id)}" ${(this.stock.get(item.id) ?? 0) <= (this.take[item.id] ?? 0) ? "disabled" : ""}`)}</div>`).join("")}</div></div></section><section><h3>Предложение персонажа</h3>${this.inventory.map((item) => button("previewGive", `${this.give.has(item.id) ? "✓ " : "+ "}${item.name}`, `data-id="${esc(item.id)}"`)).join("") || '<p>У персонажа нет предметов.</p>'}<h3>Предложение магазина</h3>${Object.entries(this.take).map(([id, count]) => `<div>${esc(asset.items.find((item) => item.id === id)?.data.name)} × ${count} ${button("previewRemoveTake", "Убрать", `data-id="${esc(id)}"`)}</div>`).join("")}${button("previewTrade", asset.requireGMApproval ? "Имитировать одобрение мастера" : "Имитировать обмен")}</section></div>`;
@@ -62,7 +62,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = this.bindEvents();
     this.element.addEventListener("change", (event) => {
-      if (!["schemeId", "actorTokenId"].includes(event.target.name)) return;
+      if (!["groupId", "actorTokenId"].includes(event.target.name)) return;
       try {
         this.readConditions();
         if (event.target.name === "actorTokenId") {
@@ -77,7 +77,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
   }
   readConditions() {
     const previous = this.conditions, field = (name) => this.element.querySelector(`[name="${name}"]`);
-    for (const key of ["schemeId", "episodeId", "target", "actorTokenId", "tags"]) previous[key] = field(key).value;
+    for (const key of ["groupId", "stateId", "target", "actorTokenId", "tags"]) previous[key] = field(key).value;
     for (const key of ["distance", "used"]) { if (!field(key).checkValidity() || !field(key).value) throw new Error("Проверьте имитируемые числовые условия."); previous[key] = Number(field(key).value); }
     for (const key of ["visible", "enabled", "halted", "showBlocked"]) previous[key] = field(key).checked;
   }
@@ -105,9 +105,9 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     if (action === "previewAnswer") {
       const response = asset.pages.find((page) => page.id === this.pageId)?.responses.find((entry) => entry.id === id); if (!response) return;
       if (response.nextPageId) this.pageId = response.nextPageId;
-      else { this.ended = true; this.feedback = response.eventName ? `Диалог завершён. В игре ответ вызовет событие «${response.eventName}». Предпросмотр его не отправляет.` : "Диалог завершён без события."; }
+      else { this.ended = true; this.feedback = response.signalId ? `Диалог завершён. В игре ответ отправит сигнал «${response.signalId}». Предпросмотр его не отправляет.` : "Диалог завершён без сигнала."; }
     }
-    if (action === "previewLeave") { this.ended = true; this.feedback = "Уход без события."; }
+    if (action === "previewLeave") { this.ended = true; this.feedback = "Уход без сигнала."; }
     if (action === "previewRestart") { this.ended = false; this.pageId = asset.startPageId; this.feedback = ""; }
     return this.render({ force: true });
   }

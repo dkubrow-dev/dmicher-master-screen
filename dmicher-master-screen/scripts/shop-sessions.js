@@ -1,9 +1,10 @@
 import { MODULE_ID } from "./model.js";
 import { getRuntimes } from "./store.js";
-import { consumeTrigger, getTriggerGate, getTriggerKey } from "./triggers.js";
-import { objectKey, interactionTriggerId } from "./interaction-access.js";
+import { consumeCondition, getConditionGate, getConditionKey } from "./interaction-conditions.js";
+import { objectKey, interactionConditionId } from "./interaction-access.js";
 import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
 import { requestGMReply } from "./gm-request.js";
+import { interactionSignal, notifyInteractionSignal } from "./interaction-signals.js";
 
 const clone = (value) => structuredClone(value);
 const leaseMs = 120_000;
@@ -18,23 +19,25 @@ export function requireShopSession(current, intent, user) {
     || session.actorTokenId !== intent.actorTokenId || session.runId !== intent.runId
     || session.actorId !== current.scene.tokens?.get(session.actorTokenId)?.actor?.id
     || objectKey(session.target) !== objectKey(intent.target ?? intent.tokenId)
-    || session.shopId !== keyOf(current)
-    || session.schemeId !== intent.schemeId || session.runId !== current.runtime.runId) fail("Сессия магазина завершилась или принадлежит другому участнику.");
+    || session.shopId !== keyOf(current) || intent.shopId !== session.shopId
+    || session.groupId !== intent.groupId || session.runId !== current.runtime.runId) fail("Сессия магазина завершилась или принадлежит другому участнику.");
   return session;
 }
 
 /** A Scene shop asset owns one lease; a waiter only identifies its admission point. */
-export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange }) {
+export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange, emitSignal }) {
   const pending = new Map();
   const process = async (command, user) => {
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail("Неизвестная команда магазина.");
-    const initial = context(command.sceneId, command.target ?? command.tokenId, command.schemeId ?? "main");
+    if (!command.shopId) fail("Нужно выбрать конкретный магазин.");
+    const initial = context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId);
     if (!initial.scene) fail("Сцена магазина не найдена.");
     const target = initial.target;
     const releasePause = command.kind === "open" ? beginInteractionPause(initial.scene, target) : () => {};
-    return lock(initial.scene, async () => {
+    let signal;
+    const result = await lock(initial.scene, async () => {
       if (!authority()) fail("Исполняющий мастер изменился.");
-      const current = context(command.sceneId, command.target ?? command.tokenId, command.schemeId ?? "main"), runtime = clone(current.runtime);
+      const current = context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId), runtime = clone(current.runtime);
       // Cancelling a persisted lease remains possible after a GM unbinds its source.
       // This path cannot move Items or acquire another lease.
       const shopId = keyOf(current) ?? (command.kind === "release" && user.isGM ? command.shopId : undefined);
@@ -44,34 +47,37 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       if (command.kind === "open") {
         const actor = validate(current, command, user);
         const allStates = current.scene.getFlag ? getRuntimes(current.scene) : [];
-        if (allStates.some((state) => state.schemeId !== runtime.schemeId && sessionIsLive(state.shopSessions?.[shopId]))) fail("Этот магазин уже обслуживается в другой схеме. Завершите ту сессию.");
+        if (allStates.some((state) => state.groupId !== runtime.groupId && sessionIsLive(state.shopSessions?.[shopId]))) fail("Этот магазин уже обслуживается в другой группе. Завершите ту сессию.");
         if (allStates.some((state) => Object.values(state.tradeRequests ?? {}).some((receipt) => ["processing", "uncertain"].includes(receipt.status) && receipt.intent?.shopId === shopId))) fail("Обмен этого магазина требует сверки мастером. Новый обмен пока недоступен.");
         if (sessionIsLive(existing) && (existing.userId !== user.id || existing.actorTokenId !== command.actorTokenId
           || existing.actorId !== actor.id || existing.shopId !== shopId || objectKey(existing.target) !== objectKey(command.target ?? command.tokenId))) fail("Этот магазин уже занят другим участником или взаимодействием через другой объект.");
         if (existing?.status === "pending" && existing.runId !== runtime.runId) fail("Предыдущее предложение магазина ещё не завершено мастером.");
         const reusing = sessionIsLive(existing) && existing.runId === runtime.runId;
-        const triggerKey = getTriggerKey(runtime, "shop", interactionTriggerId({ ...current.behavior.shop, id: current.token.id }));
-        const policy = current.behavior.shop.trigger;
-        const gate = getTriggerGate(current.scene, runtime, policy, current.scene.tokens.get(command.actorTokenId), { triggerKey, ignoreQuota: reusing });
+        const conditionKey = getConditionKey(runtime, "shop", interactionConditionId({ ...current.behavior.shop, id: current.token.id }));
+        const policy = current.behavior.shop.conditions;
+        const gate = getConditionGate(current.scene, runtime, policy, current.scene.tokens.get(command.actorTokenId), { conditionKey, ignoreQuota: reusing });
         if (!gate.allowed) fail(gate.reason);
         session = reusing ? existing : {
           sessionId: foundry.utils.randomID(), userId: user.id, actorTokenId: command.actorTokenId,
           shopId, actorId: actor.id, target: clone(current.target),
-          runId: runtime.runId, schemeId: runtime.schemeId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
+          runId: runtime.runId, groupId: runtime.groupId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
         };
-        if (!reusing) consumeTrigger(runtime, triggerKey, policy);
+        if (!reusing) { consumeCondition(runtime, conditionKey, policy); signal = interactionSignal(current.scene, "Shop", shopId, session, "opened"); }
+        runtime.shops ??= {};
+        runtime.shops[shopId] ??= { items: clone(current.behavior.shop.items ?? []) };
         if (target.type === "Token") freezeInteractionClock(runtime, target.id);
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;
         if (existing.userId !== user.id && !user.isGM) fail("Нельзя завершить чужую сессию магазина.");
         if (objectKey(existing.target) !== objectKey(command.target ?? command.tokenId)) fail("Сессия относится к другому объекту магазина.");
         delete runtime.shopSessions[shopId];
+        signal = interactionSignal(current.scene, "Shop", shopId, existing, "closed");
         for (const receipt of Object.values(runtime.tradeRequests ?? {})) {
           if (receipt.status === "pending" && receipt.intent?.sessionId === existing.sessionId) receipt.status = "rejected";
         }
         await save(current.scene, runtime); onChange(current.scene); return null;
       } else {
-        session = requireShopSession(current, { ...command, runId: existing?.runId, actorTokenId: existing?.actorTokenId, schemeId: runtime.schemeId ?? "main" }, user);
+        session = requireShopSession(current, { ...command, runId: existing?.runId, actorTokenId: existing?.actorTokenId, groupId: runtime.groupId ?? "main" }, user);
         session = clone(session);
         validate(current, { ...command, runId: session.runId, actorTokenId: session.actorTokenId }, user);
         if (command.kind === "offer") {
@@ -80,7 +86,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
           const draft = validateOffer(current, { ...command,
             giveItemIds: command.draft?.giveItemIds, take: command.draft?.take,
             actorTokenId: session.actorTokenId, runId: session.runId, sessionId: session.sessionId,
-            requestId: "draft", schemeId: runtime.schemeId ?? "main", kind: "exchange" }, user);
+            requestId: "draft", groupId: runtime.groupId ?? "main", kind: "exchange" }, user);
           session.draft = clone(draft);
           session.revision = command.revision;
         }
@@ -89,9 +95,11 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       runtime.shopSessions[shopId] = session;
       await save(current.scene, runtime); onChange(current.scene); return clone(session);
     }).finally(releasePause);
+    if (signal) await notifyInteractionSignal(emitSignal, initial.scene, signal);
+    return result;
   };
   const send = async (command) => {
-    command = { ...command, schemeId: command.schemeId ?? "main" };
+    command = { ...command, groupId: command.groupId ?? "main" };
     if (authority() && game.user.isGM) return process(command, game.user);
     const key = JSON.stringify(command);
     if (pending.has(key)) return pending.get(key);
@@ -121,7 +129,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       try { response = { session: await process(clone(command), user) }; }
       catch (error) { response = { error: error.message }; }
       await message.update({ [`flags.${MODULE_ID}.shopCommandResult`]: response, content: "<p>Ширма: состояние сессии магазина обновлено.</p>" });
-      // Routine lease traffic is not history; the private response has reached the requesting client.
+      // Script lease traffic is not history; the private response has reached the requesting client.
       if (!response.error) setTimeout(() => { void message.delete().catch(() => {}); }, 2000);
       return true;
     }

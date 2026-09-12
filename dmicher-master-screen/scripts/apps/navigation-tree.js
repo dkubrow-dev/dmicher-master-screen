@@ -1,10 +1,10 @@
 export const MAIN_MENU = Object.freeze([
-  { id: "scene", label: "Сцена" },
-  { id: "tools", label: "Инструменты", children: [{ id: "shops", label: "Магазины" }, { id: "dialogues", label: "Диалоги" }] },
-  { id: "automation", label: "Автоматизация", children: [{ id: "events", label: "События" }, { id: "macros", label: "Макросы" }, { id: "sources", label: "Источники" }] },
-  { id: "other", label: "Иное" }
+  { id: "scene", label: "Сцена", labelEn: "Scene" },
+  { id: "tools", label: "Инструменты", labelEn: "Tools", children: [{ id: "shops", label: "Магазины", labelEn: "Shops" }, { id: "dialogues", label: "Диалоги", labelEn: "Dialogues" }] },
+  { id: "automation", label: "Автоматизация", labelEn: "Automation", children: [{ id: "signals", label: "Сигналы", labelEn: "Signals" }, { id: "macros", label: "Макросы", labelEn: "Macros" }] },
+  { id: "other", label: "Иное", labelEn: "Other" }
 ]);
-export const DETAIL_MENU = Object.freeze([{ id: "parameters", label: "Параметры" }, { id: "reference", label: "Подсказка" }]);
+export const DETAIL_MENU = Object.freeze([{ id: "parameters", label: "Параметры", labelEn: "Parameters" }, { id: "reference", label: "Подсказка", labelEn: "Reference" }]);
 export const leaves = (nodes) => nodes.flatMap((node) => node.children ? leaves(node.children) : [node.id]);
 export function menuPath(nodes, id) {
   for (const node of nodes) {

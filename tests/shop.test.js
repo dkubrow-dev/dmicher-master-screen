@@ -4,11 +4,11 @@ import { createShopService, itemTransferData, validateTradeContext, shopEntries,
 import { requireShopSession } from "../dmicher-master-screen/scripts/shop-sessions.js";
 
 const MODULE_ID = "dmicher-master-screen";
-function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApproval = false, onSave = () => {} } = {}) {
+function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApproval = false, onSave = () => {}, signal = async () => ({ allowed: true, status: "done" }) } = {}) {
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   const player = { id: "player", isGM: false, role: 1, active: true };
   const stranger = { id: "stranger", isGM: false, role: 1, active: true };
-  let serial = 0, saves = 0, creates = 0, deletes = 0;
+  let serial = 0, saves = 0, creates = 0, deletes = 0, locked = false;
   const documents = new Map();
   const document = (data) => ({ ...structuredClone(data), id: data._id,
     toObject: () => structuredClone(data) });
@@ -26,16 +26,16 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
   const tags = {};
   const scene = { id: "scene", grid: { distance: 5, size: 100 }, tokens: new Map([["pc", pc], ["npc", npc]]),
     getFlag: (_module, name) => name === "objectBindings" ? { bindings: Object.fromEntries(Object.entries(tags).map(([id, values]) => [`Token:${id}`, { type: "Token", id, tags: values }])) } : undefined };
-  let runtime = { runId: "run", schemeId: "main", episodeId: "calm", disabledTokens: [], shops: {}, tradeRequests: {},
-    shopSessions: { npc: { sessionId: "lease", userId: "gm", actorTokenId: "pc", runId: "run", schemeId: "main",
+  let runtime = { runId: "run", groupId: "main", stateId: "calm", disabledObjects: [], shops: {}, tradeRequests: {},
+    shopSessions: { npc: { sessionId: "lease", userId: "gm", actorTokenId: "pc", runId: "run", groupId: "main",
       shopId: "npc", actorId: "actor", target: { type: "Token", id: "npc" },
       expiresAt: Date.now() + 120000, status: "editing", revision: 0, draft: { giveItemIds: [], take: [] } } },
-    episode: { tokens: { npc: { enabled: true, shop: { enabled: true, requireGMApproval, range: 5, items: [
+    state: { tokens: { npc: { enabled: true, shop: { enabled: true, requireGMApproval, range: 5, items: [
       { id: "entry", data: { name: "Sword", type: "gear", system: { quantity: 5 } }, stock }
     ] } } } } };
-  const context = () => ({ scene, runtime: structuredClone(runtime), token: npc, target: { type: "Token", id: "npc" }, shopId: "npc", behavior: structuredClone(runtime.episode.tokens.npc) });
+  const context = () => ({ scene, runtime: structuredClone(runtime), token: npc, target: { type: "Token", id: "npc" }, shopId: "npc", behavior: structuredClone(runtime.state.tokens.npc) });
   let queue = Promise.resolve();
-  const lock = (_scene, task) => { const result = queue.then(task); queue = result.catch(() => {}); return result; };
+  const lock = (_scene, task) => { const result = queue.then(async () => { locked = true; try { return await task(); } finally { locked = false; } }); queue = result.catch(() => {}); return result; };
   const save = async (_scene, next) => { if (++saves === failSaveAt) throw new Error("write failed"); runtime = structuredClone(next); await onSave(runtime, saves); };
   const messages = new Map();
   globalThis.game = { user: gm, users: new Map([[gm.id, gm], [player.id, player], [stranger.id, stranger]]), messages };
@@ -46,8 +46,9 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
     const message = { ...data, id: `message-${++serial}`, getFlag: (module, flag) => data.flags?.[module]?.[flag] };
     messages.set(message.id, message); return message;
   } } } };
-  const service = createShopService({ context, save, lock, authority: () => authority });
-  const intent = { sceneId: "scene", tokenId: "npc", target: { type: "Token", id: "npc" }, shopId: "npc", actorTokenId: "pc", schemeId: "main", runId: "run",
+  const emitted = [];
+  const service = createShopService({ context, save, lock, authority: () => authority, emitSignal: async (scene, packet) => { assert.equal(locked, false, "subscriber execution must release Scene lock"); emitted.push(packet); return signal(scene, packet); } });
+  const intent = { sceneId: "scene", tokenId: "npc", target: { type: "Token", id: "npc" }, shopId: "npc", actorTokenId: "pc", groupId: "main", runId: "run",
     sessionId: "lease", requestId: "request", kind: "exchange", giveItemIds: [], take: [{ entryId: "entry", count: 1 }] };
   const message = (requestId, overrides = {}, author = player) => {
     if (runtime.shopSessions.npc) runtime.shopSessions.npc.userId = author.id;
@@ -57,7 +58,7 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
       update: async function (change) { this.change = change; } };
     messages.set(record.id, record); return record;
   };
-  return { service, intent, context, actor, gm, player, stranger, pc, npc, scene, tags, document, messages,
+  return { service, intent, context, actor, gm, player, stranger, pc, npc, scene, tags, document, messages, emitted,
     runtime: () => runtime, setRuntime: (value) => { runtime = value; }, counts: () => ({ creates, deletes, saves }), message };
 }
 
@@ -116,7 +117,7 @@ test("a persisted receipt prevents duplicate creation and pending work is never 
 });
 
 test("failed stock write removes the newly created Item and restores the unchanged stock", async () => {
-  const f = fixture({ failSaveAt: 2 });
+  const f = fixture({ failSaveAt: 3 });
   assert.equal((await f.service.requestTrade(f.intent)).status, "failed");
   assert.equal(f.actor.items.size, 0);
   assert.equal(shopEntries(f.context())[0].stock, 1);
@@ -124,7 +125,7 @@ test("failed stock write removes the newly created Item and restores the unchang
 });
 
 test("failed final receipt restores a deposited Item with its original ID", async () => {
-  const f = fixture({ failSaveAt: 3 });
+  const f = fixture({ failSaveAt: 4 });
   f.actor.items.set("owned", f.document({ _id: "owned", name: "Rope", type: "gear" }));
   assert.equal((await f.service.requestTrade({ ...f.intent, giveItemIds: ["owned"], take: [] })).status, "failed");
   assert.equal(f.actor.items.has("owned"), true);
@@ -132,7 +133,7 @@ test("failed final receipt restores a deposited Item with its original ID", asyn
 });
 
 test("a failed compensation marks uncertain and retains depleted stock instead of duplicating it", async () => {
-  const f = fixture({ failSaveAt: 2 });
+  const f = fixture({ failSaveAt: 3 });
   f.actor.deleteEmbeddedDocuments = async () => { throw new Error("delete denied"); };
   assert.equal((await f.service.requestTrade(f.intent)).status, "uncertain");
   assert.equal(f.actor.items.size, 1);
@@ -148,11 +149,11 @@ test("author must match the user ID supplied by Foundry, and the GM must receive
   assert.equal(f.actor.items.size, 0);
 });
 
-test("ownership, run, scheme, range, walls, hidden NPC and disabled automation are checked at execution", () => {
+test("ownership, run, group, range, walls, hidden NPC and disabled automation are checked at execution", () => {
   const f = fixture();
   assert.throws(() => validateTradeContext(f.context(), f.intent, f.stranger));
   assert.throws(() => validateTradeContext(f.context(), { ...f.intent, runId: "old" }, f.player));
-  assert.throws(() => validateTradeContext(f.context(), { ...f.intent, schemeId: "other" }, f.player));
+  assert.throws(() => validateTradeContext(f.context(), { ...f.intent, groupId: "other" }, f.player));
   f.npc.x = 300;
   assert.throws(() => validateTradeContext(f.context(), f.intent, f.player));
   f.npc.x = 100; f.npc.hidden = true;
@@ -160,7 +161,7 @@ test("ownership, run, scheme, range, walls, hidden NPC and disabled automation a
   f.npc.hidden = false; f.pc.object.checkCollision = () => true;
   assert.throws(() => validateTradeContext(f.context(), f.intent, f.player));
   f.pc.object.checkCollision = () => false;
-  const next = f.runtime(); next.disabledTokens = ["npc"]; f.setRuntime(next);
+  const next = f.runtime(); next.disabledObjects = ["Token:npc"]; f.setRuntime(next);
   assert.throws(() => validateTradeContext(f.context(), f.intent, f.player));
 });
 
@@ -172,28 +173,28 @@ test("player double clicks produce one private authenticated request while it aw
   assert.equal(f.messages.size, 1);
   assert.deepEqual(first.whisper.sort(), [f.gm.id, f.player.id].sort());
   assert.equal(first.author, f.player.id);
-  assert.equal(first.getFlag(MODULE_ID, "trade").schemeId, "main");
+  assert.equal(first.getFlag(MODULE_ID, "trade").groupId, "main");
   assert.equal((await f.service.requestTrade(f.intent)).id, first.id);
 });
 
 test("shop trigger tag veto precedes session admission and an admitted session ignores only its consumed quota", async () => {
   const f = fixture();
   const runtime = f.runtime(); runtime.shopSessions = {};
-  runtime.episode.tokens.npc.shop.trigger = { allowTags: ["trusted"], denyTags: ["wanted"], limit: 1 };
+  runtime.state.tokens.npc.shop.conditions = { allowTags: ["trusted"], denyTags: ["wanted"], limit: 1 };
   f.setRuntime(runtime); f.tags.pc = ["TRUSTED", "Wanted"];
   await assert.rejects(f.service.requestSession(f.intent));
   assert.deepEqual(f.runtime().shopSessions, {});
-  assert.equal(f.runtime().triggerCounts, undefined);
+  assert.equal(f.runtime().conditionCounts, undefined);
   f.tags.pc = ["trusted"];
   const session = await f.service.requestSession(f.intent);
   const nextIntent = { ...f.intent, sessionId: session.sessionId };
   const key = "main:calm:shop:npc";
-  assert.equal(f.runtime().triggerCounts[key], 1);
+  assert.equal(f.runtime().conditionCounts[key], 1);
   await f.service.requestSession(nextIntent);
   await f.service.renewSession(nextIntent);
-  assert.equal(f.runtime().triggerCounts[key], 1);
+  assert.equal(f.runtime().conditionCounts[key], 1);
   assert.equal((await f.service.requestTrade(nextIntent)).status, "done");
-  assert.equal(f.runtime().triggerCounts[key], 1);
+  assert.equal(f.runtime().conditionCounts[key], 1);
   await assert.rejects(f.service.requestSession(nextIntent));
 });
 
@@ -203,12 +204,12 @@ test("parallel shop opens consume one use and rejected competitors consume none"
   f.scene.tokens.set("pc2", { ...f.pc, id: "pc2" });
   const results = await Promise.allSettled([f.service.requestSession(f.intent), f.service.requestSession({ ...f.intent, actorTokenId: "pc2" })]);
   assert.deepEqual(results.map((result) => result.status), ["fulfilled", "rejected"]);
-  assert.equal(f.runtime().triggerCounts["main:calm:shop:npc"], 1);
+  assert.equal(f.runtime().conditionCounts["main:calm:shop:npc"], 1);
 });
 
 test("new forbidden tags or emergency halt reject an approved shop offer without inventory effects", async () => {
   const f = fixture({ requireGMApproval: true });
-  const runtime = f.runtime(); runtime.episode.tokens.npc.shop.trigger = { denyTags: ["wanted"] }; f.setRuntime(runtime);
+  const runtime = f.runtime(); runtime.state.tokens.npc.shop.conditions = { denyTags: ["wanted"] }; f.setRuntime(runtime);
   const request = f.message("pending"); await f.service.processTradeRequest(request, f.player.id);
   f.tags.pc = ["wanted"];
   assert.equal((await f.service.approveTrade(request.id)).status, "failed");
@@ -236,7 +237,7 @@ test("bulk barter moves the whole offer only once after GM approval", async () =
   assert.equal(f.runtime().shopSessions.npc, undefined);
 });
 
-test("GM rejection and stale episode approval leave all inventories unchanged", async () => {
+test("GM rejection and stale state approval leave all inventories unchanged", async () => {
   const f = fixture({ requireGMApproval: true });
   const request = f.message("pending");
   await f.service.processTradeRequest(request, f.player.id);
@@ -342,13 +343,13 @@ test("offer payload cannot replace the character, run or session bound by the le
     draft: { actorTokenId: "other-pc", giveItemIds: ["foreign"], take: [] } }));
   f.actor.items.set("owned", f.document({ _id: "owned", name: "Owned", type: "gear" }));
   const session = await f.service.updateOffer({ ...f.intent, revision: 1,
-    draft: { actorTokenId: "other-pc", runId: "forged", sessionId: "forged", schemeId: "forged", kind: "other",
+    draft: { actorTokenId: "other-pc", runId: "forged", sessionId: "forged", groupId: "forged", kind: "other",
       requestId: "forged", giveItemIds: ["owned"], take: [] } });
   assert.deepEqual(session.draft, { giveItemIds: ["owned"], take: [] });
   assert.equal(session.actorTokenId, "pc"); assert.equal(session.runId, "run"); assert.equal(session.sessionId, "lease");
 });
 
-test("opening from a stale screen cannot silently acquire a shop in the new episode", async () => {
+test("opening from a stale screen cannot silently acquire a shop in the new state", async () => {
   const f = fixture();
   const next = f.runtime(); next.runId = "new-run"; next.shopSessions = {}; f.setRuntime(next);
   await assert.rejects(f.service.requestSession(f.intent));
@@ -418,7 +419,7 @@ test("an Item deleted by another action before our delete is never resurrected b
 
 test("source data is checked again after the stock write immediately before deletion", async () => {
   const f = fixture({ onSave: (_state, count) => {
-    if (count === 2) f.actor.items.set("owned", f.document({ _id: "owned", name: "Edited after write", type: "gear" }));
+    if (count === 3) f.actor.items.set("owned", f.document({ _id: "owned", name: "Edited after write", type: "gear" }));
   } });
   f.actor.items.set("owned", f.document({ _id: "owned", name: "Rope", type: "gear" }));
   const receipt = await f.service.requestTrade({ ...f.intent, giveItemIds: ["owned"], take: [] });
@@ -426,6 +427,44 @@ test("source data is checked again after the stock write immediately before dele
   assert.equal(f.actor.items.get("owned").name, "Edited after write");
   assert.equal(shopEntries(f.context()).length, 1);
   assert.equal(f.counts().deletes, 0);
+});
+test("beforePurchase veto waits outside the Scene lock and leaves both inventories untouched", async () => {
+  let release, entered;
+  const ready = new Promise((resolve) => { entered = resolve; }), delay = new Promise((resolve) => { release = resolve; });
+  const f = fixture({ signal: async (_scene, packet) => { if (packet.name === "beforePurchase") { entered(); await delay; return { status: "done", allowed: false, messages: [{ name: "Merchant", message: "No deal" }] }; } return { status: "done", allowed: true }; } });
+  const task = f.service.requestTrade(f.intent); await ready;
+  assert.equal(f.actor.items.size, 0); assert.equal(f.runtime().tradeRequests["gm:request"].status, "validating");
+  release(); const result = await task;
+  assert.equal(result.status, "failed"); assert.match(result.error, /Merchant: No deal/); assert.equal(f.actor.items.size, 0); assert.equal(f.runtime().shopSessions.npc.status, "editing");
+  assert.deepEqual(f.emitted.map((packet) => packet.name), ["beforePurchase"]);
+});
+test("purchase rechecks inventory changed by a subscriber before transferring anything", async () => {
+  const f = fixture({ signal: async (_scene, packet) => {
+    if (packet.name === "beforePurchase") { const state = f.runtime(); state.shops.npc = { items: [{ id: "entry", data: { name: "Sword", type: "gear" }, stock: 0 }] }; f.setRuntime(state); }
+    return { status: "done", allowed: true };
+  } });
+  const result = await f.service.requestTrade(f.intent);
+  assert.equal(result.status, "failed"); assert.equal(f.actor.items.size, 0); assert.equal(f.runtime().shops.npc.items[0].stock, 0);
+});
+test("subscriber may release a shop session without deadlocking; approval then fails", async () => {
+  const f = fixture({ signal: async (_scene, packet) => {
+    if (packet.name === "beforePurchase") await f.service.releaseSession({ ...f.intent });
+    return { status: "done", allowed: true };
+  } });
+  const result = await f.service.requestTrade(f.intent);
+  assert.notEqual(result.status, "done"); assert.equal(f.actor.items.size, 0);
+});
+test("successful purchase and explicit release emit their lifecycle signals once", async () => {
+  const f = fixture();
+  const result = await f.service.requestTrade(f.intent); assert.equal(result.status, "done");
+  assert.deepEqual(f.emitted.map((packet) => packet.name), ["beforePurchase", "purchased", "closed"]);
+  assert.equal(f.emitted[0].emitterKey, "Shop:npc"); assert.equal(f.emitted[0].parameters.actorUuid, "Actor.actor");
+  await f.service.requestTrade(f.intent); assert.equal(f.emitted.length, 3);
+});
+test("an explicit shop identity cannot be omitted or swapped by an offer", () => {
+  const f = fixture();
+  assert.throws(() => normalizeExchange({ ...f.intent, shopId: undefined }));
+  assert.throws(() => requireShopSession(f.context(), { ...f.intent, shopId: "other" }, f.gm));
 });
 
 test("edited message identifiers cannot redirect approval to a different durable proposal", async () => {

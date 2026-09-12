@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { WorkspaceManager } from "../dmicher-master-screen/scripts/workspace.js";
-import { MODULE_ID, emptyRuntime, defaultEpisode } from "../dmicher-master-screen/scripts/model.js";
+import { MODULE_ID, emptyRuntime, defaultState } from "../dmicher-master-screen/scripts/model.js";
 import { requestHalt, finishHalt } from "../dmicher-master-screen/scripts/execution.js";
 
 const copy = (value) => structuredClone(value);
@@ -38,8 +38,8 @@ function fixture() {
     return app;
   };
   const createScene = (id, gm = [], players = []) => {
-    const state = { ...emptyRuntime(), episodeId: "calm", runId: `run-${id}`, episode: { ...defaultEpisode("Calm", "calm"), workspace: { gm, players } } };
-    return { id, state, getFlag: (scope, key) => scope === MODULE_ID && key === "runtimes" ? { main: copy(state) } : undefined };
+    const state = { ...emptyRuntime(), stateId: "calm", runId: `run-${id}`, state: { ...defaultState("Calm", "calm"), workspace: { gm, players } } };
+    return { id, state, getFlag: (scope, key) => scope === MODULE_ID && key === "groupRuntimes" ? { main: copy(state) } : undefined };
   };
   globalThis.canvas = { scene: null };
   const entry = (uuid, x = 10, y = 20) => ({ uuid, x, y, width: 500, height: 450 });
@@ -152,7 +152,7 @@ test("slow stale render is cleaned before the new lifecycle can own the same she
   await manager.close();
 });
 
-test("close suppresses automatic reopening until a new episode entry, including reconnect", async () => {
+test("close suppresses automatic reopening until a new state entry, including reconnect", async () => {
   const f = fixture(), app = f.createSheet("Actor.a"), scene = f.createScene("a", [f.entry(app.document.uuid)]);
   canvas.scene = scene;
   const manager = new WorkspaceManager(); await manager.apply(scene); await manager.close();

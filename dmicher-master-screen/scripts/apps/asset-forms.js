@@ -11,8 +11,8 @@ const tagNames = (tags) => {
   if (!tags?.length) return "—";
   return tags.join(", ");
 };
-export function matchingActorTokens(scene, bindings, trigger = {}) {
-  const allow = trigger.allowTags ?? [], deny = trigger.denyTags ?? [];
+export function matchingActorTokens(scene, bindings, conditions = {}) {
+  const allow = conditions.allowTags ?? [], deny = conditions.denyTags ?? [];
   return [...(scene?.tokens?.values?.() ?? [])].filter((token) => {
     if (!token.actor) return false;
     const tags = bindings.find((entry) => entry.type === "Token" && entry.id === token.id)?.tags ?? getObjectTags(scene, { type: "Token", id: token.id });
@@ -23,19 +23,19 @@ export function matchingActorTokens(scene, bindings, trigger = {}) {
 /** Reverse references are inspected here; eligibility is edited on the object. */
 export function renderAssetBindings(kind, assetId, bindings, objects, definitions, scene) {
   const key = kind === "shop" ? "shop" : "dialogue", assetKey = `${key}Id`;
-  const rows = bindings.filter((entry) => entry[key]?.[assetKey] === assetId);
-  return `<section class="ms-asset-bindings"><h4>Привязанные объекты · ${rows.length}</h4>${rows.length ? `<table class="ms-asset-table"><thead><tr><th>Объект</th><th>Эпизоды и допуск</th></tr></thead><tbody>${rows.map((binding) => {
+  const rows = bindings.flatMap((binding) => (binding[`${key}s`] ?? []).filter((link) => link[assetKey] === assetId).map((config) => ({ ...binding, config })));
+  return `<section class="ms-asset-bindings"><h4>Привязанные объекты · ${rows.length}</h4>${rows.length ? `<table class="ms-asset-table"><thead><tr><th>Объект</th><th>Состояния и допуск</th></tr></thead><tbody>${rows.map((binding) => {
     const object = objects.find((item) => item.type === binding.type && item.id === binding.id);
-    const definition = definitions.find((item) => item.schemeId === binding.schemeId), config = binding[key];
-    const episodes = (config.episodeIds ?? []).map((id) => definition?.episodes.find((episode) => episode.id === id)?.name ?? id).join(", ") || "Все эпизоды схемы";
+    const definition = definitions.find((item) => item.groupId === binding.groupId), config = binding.config;
+    const states = (config.stateIds ?? []).map((id) => definition?.states.find((state) => state.id === id)?.name ?? id).join(", ") || "Все состояния группы";
     const actor = binding.type === "Token" ? scene?.tokens?.get(binding.id)?.actor : null;
-    const eligible = matchingActorTokens(scene, bindings, config.trigger);
-    return `<tr><td>${button("objectInfo", object?.name ?? binding.id, `data-object-type="${esc(binding.type)}" data-object-id="${esc(binding.id)}"`)}${actor ? `<small>Персонаж: ${esc(actor.name ?? actor.id)}</small>` : ""}</td><td>${esc(definition?.schemeName ?? "Без схемы")} · ${esc(episodes)}<small>Белые теги: ${esc(tagNames(config.trigger?.allowTags))}<br>Чёрные теги: ${esc(tagNames(config.trigger?.denyTags))}</small><details><summary>Токены с Actor по тегам · ${eligible.length}</summary>${eligible.map((token) => `<small>${esc(token.name)} · ${esc(token.actorName)}</small>`).join("")}<small>Дальность, видимость и состояние проверяются при взаимодействии.</small></details></td></tr>`;
+    const eligible = matchingActorTokens(scene, bindings, config.conditions);
+    return `<tr><td>${button("objectInfo", object?.name ?? binding.id, `data-object-type="${esc(binding.type)}" data-object-id="${esc(binding.id)}"`)}${actor ? `<small>Персонаж: ${esc(actor.name ?? actor.id)}</small>` : ""}</td><td>${esc(definition?.groupName ?? "Без группы")} · ${esc(states)}<small>Белые теги: ${esc(tagNames(config.conditions?.allowTags))}<br>Чёрные теги: ${esc(tagNames(config.conditions?.denyTags))}</small><details><summary>Токены с Actor по тегам · ${eligible.length}</summary>${eligible.map((token) => `<small>${esc(token.name)} · ${esc(token.actorName)}</small>`).join("")}<small>Дальность, видимость и состояние проверяются при взаимодействии.</small></details></td></tr>`;
   }).join("")}</tbody></table>` : '<p class="ms-note">Магазин или диалог назначается объекту через «Поведение → Особенности». Одним каталогом могут пользоваться несколько объектов.</p>'}</section>`;
 }
 
-export function renderOwnedObjects(schemeId, bindings, objects, readOnly = false) {
-  const owned = bindings.filter((entry) => entry.schemeId === schemeId);
+export function renderOwnedObjects(groupId, bindings, objects, readOnly = false) {
+  const owned = bindings.filter((entry) => entry.groupId === groupId);
   const available = objects.filter((entry) => !owned.some((binding) => binding.type === entry.type && binding.id === entry.id));
   return `<section class="ms-owned-objects"><h4>Управляемые объекты · ${owned.length}</h4><table class="ms-asset-table"><tbody>${owned.map((binding) => {
     const object = objects.find((entry) => entry.type === binding.type && entry.id === binding.id);
@@ -54,7 +54,7 @@ function renderShopItems(draft, readOnly) {
 }
 
 export function renderDialogueGraph(pages, startPageId) {
-  return `<details class="ms-details ms-dialogue-graph"><summary>Переходы между блоками</summary><ul>${pages.map((page) => `<li><strong>${page.id === startPageId ? "▶ " : ""}${esc(page.name)}</strong><ul>${page.responses.map((response) => `<li>${esc(response.label)} → ${esc(response.nextPageId ? pages.find((item) => item.id === response.nextPageId)?.name ?? "Недоступный блок" : "Завершить")}${response.eventName ? ` · ${esc(response.eventName)}` : ""}</li>`).join("")}<li>Уйти → завершить без события</li></ul></li>`).join("")}</ul></details>`;
+  return `<details class="ms-details ms-dialogue-graph"><summary>Переходы между блоками</summary><ul>${pages.map((page) => `<li><strong>${page.id === startPageId ? "▶ " : ""}${esc(page.name)}</strong><ul>${page.responses.map((response) => `<li>${esc(response.label)} → ${esc(response.nextPageId ? pages.find((item) => item.id === response.nextPageId)?.name ?? "Недоступный блок" : "Завершить")}${response.signalId ? ` · ${esc(response.signalId)}` : ""}</li>`).join("")}<li>Уйти → завершить без сигнала</li></ul></li>`).join("")}</ul></details>`;
 }
 
 export function renderAssetForm({ kind, draft, pageId, mode, catalog, bindings, objects, definitions, scene }) {
@@ -71,7 +71,7 @@ export function renderAssetForm({ kind, draft, pageId, mode, catalog, bindings, 
     const page = draft.pages.find((entry) => entry.id === pageId) ?? draft.pages[0];
     html += `<label class="ms-field">Первый блок<select name="dialogueStartPage">${options(draft.pages, draft.startPageId)}</select></label>`;
     html += `<nav class="ms-dialogue-page-tabs">${draft.pages.map((entry) => button("selectAssetPage", entry.name, `data-id="${esc(entry.id)}" aria-pressed="${entry.id === page?.id}"`)).join("")}</nav>`;
-    if (page) html += `<section data-asset-page="${esc(page.id)}">${input("dialoguePageName", "Название блока", page.name, "required")}${textarea("dialoguePageText", "Текст блока", page.text, 4)}${input("dialoguePageArt", "Изображение блока", page.art ?? "")}${button("assetFilePicker", "Выбрать изображение", 'data-field="dialoguePageArt"')}${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<h4>Ответы</h4>${page.responses.map((response, index) => `<fieldset class="ms-response-row" data-asset-response="${index}">${input("responseLabel", "Ответ", response.label, "required")}<div class="ms-grid-two"><label class="ms-field">Продолжение<select name="responseNextPage">${options(draft.pages, response.nextPageId, "Завершить диалог")}</select></label><label class="ms-field">Событие ответа<select name="responseEvent">${options(catalog.events.map((event) => ({ id: event.name, name: event.name })), response.eventName, "Без события")}</select></label></div>${readOnly ? "" : button("removeAssetResponse", "Убрать ответ", `data-index="${index}"`)}</fieldset>`).join("")}<p class="ms-note">«Уйти» доступно игроку всегда и не порождает событие.</p>${readOnly ? "" : button("addAssetResponse", "+ Ответ")}</section>`;
+    if (page) html += `<section data-asset-page="${esc(page.id)}">${input("dialoguePageName", "Название блока", page.name, "required")}${textarea("dialoguePageText", "Текст блока", page.text, 4)}${input("dialoguePageArt", "Изображение блока", page.art ?? "")}${button("assetFilePicker", "Выбрать изображение", 'data-field="dialoguePageArt"')}${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<h4>Ответы</h4>${page.responses.map((response, index) => `<fieldset class="ms-response-row" data-asset-response="${index}">${input("responseLabel", "Ответ", response.label, "required")}<div class="ms-grid-two"><label class="ms-field">Продолжение<select name="responseNextPage">${options(draft.pages, response.nextPageId, "Завершить диалог")}</select></label><label class="ms-field">Сигнал ответа<select name="responseSignal">${options(catalog.signals.filter((signal) => signal.emitterKey === `Dialogue:${draft.id}`).map((signal) => ({id:signal.id,name:signal.name})), response.signalId, "Без сигнала")}</select></label></div>${textarea("responseParameters", "\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u0441\u0438\u0433\u043d\u0430\u043b\u0430 (JSON)", JSON.stringify(response.parameters ?? {}))}${readOnly ? "" : button("removeAssetResponse", "Убрать ответ", `data-index="${index}"`)}</fieldset>`).join("")}<p class="ms-note">«Уйти» доступно игроку всегда и не отправляет сигнал.</p>${readOnly ? "" : button("addAssetResponse", "+ Ответ")}</section>`;
     html += renderDialogueGraph(draft.pages, draft.startPageId);
   }
   const editing = readOnly ? "" : `${isShop ? "" : `<div class="ms-asset-actions">${button("addAssetPage", "+ Блок")}${button("deleteAssetPage", "Удалить блок")}</div>`}${generics.components.renderJSONControls({ id: "asset-selection", importLabel: "Импорт JSON", exportLabel: "Экспорт JSON" })}<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discardParameters", "Отменить ввод")}<button type="submit">Сохранить</button></footer>`;
@@ -94,7 +94,7 @@ export function readAssetForm(root, draft, kind) {
     const page = result.pages.find((entry) => entry.id === root.querySelector("[data-asset-page]")?.dataset.assetPage);
     if (page) {
       page.name = value("dialoguePageName").trim(); page.text = value("dialoguePageText"); page.art = value("dialoguePageArt").trim();
-      page.responses = [...root.querySelectorAll("[data-asset-response]")].map((row) => ({ ...page.responses[Number(row.dataset.assetResponse)], label: row.querySelector('[name="responseLabel"]').value.trim(), nextPageId: row.querySelector('[name="responseNextPage"]').value, eventName: row.querySelector('[name="responseEvent"]').value }));
+      page.responses = [...root.querySelectorAll("[data-asset-response]")].map((row) => ({ ...page.responses[Number(row.dataset.assetResponse)], label: row.querySelector('[name="responseLabel"]').value.trim(), nextPageId: row.querySelector('[name="responseNextPage"]').value, signalId: row.querySelector('[name="responseSignal"]').value, parameters: JSON.parse(row.querySelector('[name="responseParameters"]')?.value || "{}") }));
     }
   }
   return result;

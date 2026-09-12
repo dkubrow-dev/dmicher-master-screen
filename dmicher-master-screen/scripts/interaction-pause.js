@@ -2,8 +2,8 @@ import { getRuntimes } from "./store.js";
 
 const pending = new WeakMap();
 export const INTERACTION_LEASE_MS = 120_000;
-const keyOf = (target) => target?.type === "Token" ? target.id : null;
-export const dialogueSessionIsLive = (session, now = Date.now()) => ["active", "finished"].includes(session?.status)
+const keyOf = (target) => typeof target === "string" ? (target.includes(":") ? target : `Token:${target}`) : target?.id ? `${target.type}:${target.id}` : null;
+export const dialogueSessionIsLive = (session, now = Date.now()) => ["active", "processing", "finished"].includes(session?.status)
   && session.expiresAt > now;
 
 /** An authenticated admission claims this before joining the scene queue. An old
@@ -22,6 +22,7 @@ export function beginInteractionPause(scene, target) {
 }
 
 export function isInteractionPaused(scene, tokenId, now = Date.now()) {
+  tokenId = keyOf(tokenId);
   if (pending.get(scene)?.get(tokenId)) return true;
   return getRuntimes(scene).some((state) => {
     const targetsToken = (session) => keyOf(session.target) === tokenId;

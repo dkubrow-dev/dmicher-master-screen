@@ -1,6 +1,8 @@
 import { MODULE_ID, randomId, normalizeDescription } from "./model.js";
 import { requireGM, withSceneLock } from "./store.js";
-import { builtinCatalog, getEventCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./event-catalog.js";
+import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies, removeSignalOwner, normalizeCatalog } from "./signal-catalog.js";
+import { validateParameters } from "./signal-types.js";
+import { stageScene, remapSignalIds } from "./configuration-transfer.js";
 
 const clone = (value) => structuredClone(value);
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -33,9 +35,9 @@ export function normalizeDialogueAsset(raw) {
     const responses = array(page.responses ?? [], 30, "Ответы").map((response) => {
       if (!object(response)) fail("Ожидается ответ диалога.");
       const nextPageId = response.nextPageId ? id(response.nextPageId, "Следующая страница") : "";
-      const eventName = prose(response.eventName ?? "", 100, "Событие").trim();
-      if (nextPageId && eventName) fail("Ответ продолжает диалог либо завершает его с событием.");
-      return { id: id(response.id || randomId(), "Ответ"), label: prose(response.label ?? "", 200, "Текст ответа"), nextPageId, eventName };
+      const signalId = prose(response.signalId ?? "", 240, "Сигнал");
+      if (!object(response.parameters ?? {})) fail("Параметры сигнала должны быть объектом JSON.");
+      return { id: id(response.id || randomId(), "Ответ"), label: prose(response.label ?? "", 200, "Текст ответа"), nextPageId, signalId, parameters: clone(response.parameters ?? {}) };
     });
     if (new Set(responses.map((entry) => entry.id)).size !== responses.length) fail("ID ответов страницы не должны повторяться.");
     return { id: id(page.id || randomId(), "Страница"), name: name(page.name || "Страница", "Страница"),
@@ -86,11 +88,15 @@ export class SceneAssets {
       if (expectedRevision !== undefined && catalog.revision !== expectedRevision) fail("Каталог изменён другим окном. Обновите его перед сохранением.");
       const result = await operation(catalog);
       const next = normalizeInteractionCatalog({ ...catalog, revision: catalog.revision + 1 });
-      const events = catalog.eventCatalog ? [...builtinCatalog().events, ...catalog.eventCatalog.events] : getEventCatalog(this.scene).events;
+      const signals = getSignalCatalog(stageScene(this.scene, { interactionCatalog: next, ...(catalog.signalCatalog ? { signalCatalog: catalog.signalCatalog } : {}) })).signals;
       for (const dialogue of next.dialogues) for (const page of dialogue.pages) for (const response of page.responses) {
-        if (response.eventName && !events.some((event) => event.name === response.eventName)) fail("Ответ диалога ссылается на отсутствующее событие.");
+        if (response.signalId) {
+          const signal = signals.find((entry) => entry.id === response.signalId && entry.emitterKey === `Dialogue:${dialogue.id}`);
+          if (!signal) fail("Ответ диалога может испустить только собственный объявленный сигнал.");
+          validateParameters(signal, response.parameters);
+        }
       }
-      const fields = { interactionCatalog: next, ...(catalog.eventCatalog ? { eventCatalog: catalog.eventCatalog } : {}) };
+      const fields = { interactionCatalog: next, ...(catalog.signalCatalog ? { signalCatalog: catalog.signalCatalog } : {}) };
       if (this.scene.update) await this.scene.update(Object.fromEntries(Object.entries(fields).map(([key, value]) => [`flags.${MODULE_ID}.${key}`, value])));
       else for (const [key, value] of Object.entries(fields)) await this.scene.setFlag(MODULE_ID, key, value);
       return clone(result);
@@ -106,15 +112,16 @@ export class SceneAssets {
     if (assetReferences(this.scene, kind, id).length) fail("Сначала снимите привязки этого инструмента с объектов сцены.");
     const key = kind === "shop" ? "shops" : "dialogues", index = catalog[key].findIndex((entry) => entry.id === id);
     if (index < 0) fail("Инструмент больше не существует.");
-    catalog[key].splice(index, 1); return true;
+    catalog[key].splice(index, 1);
+    catalog.signalCatalog = removeSignalOwner(normalizeCatalog(this.scene.getFlag(MODULE_ID, "signalCatalog") ?? {}), `${kind === "shop" ? "Shop" : "Dialogue"}:${id}`);
+    return true;
   }, options); }
   exportShop(id) { return this.export("shop", id); }
   exportDialogue(id) { return this.export("dialogue", id); }
   export(kind, id) {
     requireGM(); const data = kind === "shop" ? this.getShop(id) : this.getDialogue(id); if (!data) fail("Инструмент не найден.");
-    const events = kind === "dialogue" ? data.pages.flatMap((page) => page.responses.map((response) => response.eventName).filter(Boolean)) : [];
     return { format: MODULE_ID, kind, version: 1, data,
-      ...(events.length ? { catalog: exportCatalogDependencies(this.scene, [{ events }]) } : {}) };
+      catalog: exportCatalogDependencies(this.scene, [`${kind === "shop" ? "Shop" : "Dialogue"}:${id}`]) };
   }
   importShop(envelope, options) { return this.import("shop", envelope, options); }
   importDialogue(envelope, options) { return this.import("dialogue", envelope, options); }
@@ -122,8 +129,13 @@ export class SceneAssets {
     if (envelope?.format !== MODULE_ID || envelope.version !== 1 || envelope.kind !== kind || !object(envelope.data)) return Promise.reject(new Error("Ожидается JSON выбранного инструмента Ширмы."));
     const data = { ...clone(envelope.data), id: randomId(), ...(name !== undefined ? { name } : {}) };
     return this.change((catalog) => {
-      if (envelope.catalog) catalog.eventCatalog = mergeCatalogDependencies(this.scene, envelope.catalog);
-      return this.save(catalog[kind === "shop" ? "shops" : "dialogues"], kind === "shop" ? normalizeShopAsset(data) : normalizeDialogueAsset(data));
+      const key = kind === "shop" ? "shops" : "dialogues", ownerType = kind === "shop" ? "Shop" : "Dialogue";
+      this.save(catalog[key], kind === "shop" ? normalizeShopAsset(data) : normalizeDialogueAsset(data));
+      const idMapping = new Map();
+      catalog.signalCatalog = mergeCatalogDependencies(stageScene(this.scene, { interactionCatalog: catalog }), envelope.catalog ?? {},
+        { emitterMapping: new Map([[`${ownerType}:${envelope.data.id}`, `${ownerType}:${data.id}`]]), idMapping });
+      const saved = remapSignalIds(data, idMapping);
+      return this.save(catalog[key], kind === "shop" ? normalizeShopAsset(saved) : normalizeDialogueAsset(saved));
     }, options);
   }
 }

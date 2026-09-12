@@ -1,9 +1,11 @@
 import { generics } from "../generics.js";
 import { MAIN_MENU, DETAIL_MENU, leaves, menuRows, menuPath } from "./navigation-tree.js";
 import { localizedDescription } from "../model.js";
+import { renderSignalFields, renderSubscriptions, macroKey, emitterName } from "./signal-fields.js";
+const t = (ru,en) => (globalThis.game?.i18n?.lang ?? "ru").startsWith("ru") ? ru : en;
 
 const esc = generics.utilities.escapeHTML;
-export const TAB_LABELS = Object.freeze({ scene: "Сцена", shops: "Магазины", dialogues: "Диалоги", events: "События", macros: "Макросы", sources: "Источники", other: "Иное", parameters: "Параметры", reference: "Подсказка" });
+export const TAB_LABELS = Object.freeze({ scene: "Сцена", shops: "Магазины", dialogues: "Диалоги", signals: "Сигналы", macros: "Макросы", other: "Иное", parameters: "Параметры", reference: "Подсказка" });
 export const OTHER_BLOCKS = Object.freeze([
   { id: "tokens", name: "НИП и поведение", mode: "constructor" },
   { id: "tags", name: "Теги объектов", mode: "constructor" },
@@ -32,37 +34,34 @@ const colorStyle = (entry) => {
 export function renderSceneTree(definitions, runtimes, selection, mode) {
   const rows = [];
   for (const definition of definitions) {
-    const active = runtimes.find((runtime) => runtime.schemeId === definition.schemeId);
-    const selected = selection.kind === "scheme" && selection.id === definition.schemeId;
-    rows.push(`<tr role="row" aria-level="1" aria-selected="${selected}" class="${selected ? "is-selected" : ""}" data-select-kind="scheme" data-select-id="${esc(definition.schemeId)}" data-ide-kind="scheme" data-ide-id="${esc(definition.schemeId)}" data-scheme-id="${esc(definition.schemeId)}" draggable="${mode === "constructor"}">
-      <td><button type="button" class="ms-tree-toggle" data-screen-action="foldScheme" data-scheme-id="${esc(definition.schemeId)}" aria-label="Свернуть или раскрыть схему" aria-expanded="true">▾</button><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="scheme" data-id="${esc(definition.schemeId)}" data-scheme-id="${esc(definition.schemeId)}"><span class="ms-color-swatch" style="${colorStyle(definition)}">${esc(definition.symbol ?? "🎬")}</span>${esc(definition.schemeName)}</button></td>
-      <td>${mode === "director" ? `<span class="ms-note">${active?.halted ? "Остановлена" : active?.episodeId ? "Работает" : "Не запущена"}</span>` : `${definition.episodes.length}`}</td></tr>`);
-    for (const episode of definition.episodes) {
-      const chosen = selection.kind === "episode" && selection.id === episode.id && selection.schemeId === definition.schemeId;
-      rows.push(`<tr role="row" aria-level="2" aria-selected="${chosen}" class="${chosen ? "is-selected" : ""} ${active?.episodeId === episode.id ? "is-active" : ""}" data-select-kind="episode" data-select-id="${esc(episode.id)}" data-ide-kind="episode" data-ide-id="${esc(episode.id)}" data-scheme-id="${esc(definition.schemeId)}" draggable="${mode === "constructor"}"><td><button type="button" class="ms-tree-name ms-tree-child" data-screen-action="selectNode" data-kind="episode" data-id="${esc(episode.id)}" data-scheme-id="${esc(definition.schemeId)}"><span class="ms-color-swatch" style="${colorStyle(episode)}">${active?.episodeId === episode.id ? "●" : "○"}</span>${esc(episode.name)}</button></td><td>${mode === "director" ? button("enterNode", active?.episodeId === episode.id ? "Заново" : "Войти", `data-scheme-id="${esc(definition.schemeId)}" data-id="${esc(episode.id)}" title="Явный вход в эпизод"`) : `${(episode.events ?? []).length} соб.`}</td></tr>`);
+    const active = runtimes.find((runtime) => runtime.groupId === definition.groupId);
+    const selected = selection.kind === "group" && selection.id === definition.groupId;
+    rows.push(`<tr role="row" aria-level="1" aria-selected="${selected}" class="${selected ? "is-selected" : ""}" data-select-kind="group" data-select-id="${esc(definition.groupId)}" data-ide-kind="group" data-ide-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}">
+      <td><button type="button" class="ms-tree-toggle" data-screen-action="foldGroup" data-group-id="${esc(definition.groupId)}" aria-label="Свернуть или раскрыть группу" aria-expanded="true">▾</button><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="group" data-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}"><span class="ms-color-swatch" style="${colorStyle(definition)}">${esc(definition.symbol ?? "🎬")}</span>${esc(definition.groupName)}</button></td>
+      <td>${mode === "director" ? `<span class="ms-note">${active?.halted ? "Остановлена" : active?.stateId ? "Работает" : "Не запущена"}</span>` : `${definition.states.length}`}</td></tr>`);
+    for (const state of definition.states) {
+      const chosen = selection.kind === "state" && selection.id === state.id && selection.groupId === definition.groupId;
+      rows.push(`<tr role="row" aria-level="2" aria-selected="${chosen}" class="${chosen ? "is-selected" : ""} ${active?.stateId === state.id ? "is-active" : ""}" data-select-kind="state" data-select-id="${esc(state.id)}" data-ide-kind="state" data-ide-id="${esc(state.id)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}"><td><button type="button" class="ms-tree-name ms-tree-child" data-screen-action="selectNode" data-kind="state" data-id="${esc(state.id)}" data-group-id="${esc(definition.groupId)}"><span class="ms-color-swatch" style="${colorStyle(state)}">${active?.stateId === state.id ? "●" : "○"}</span>${esc(state.name)}</button></td><td>${mode === "director" ? button("enterNode", active?.stateId === state.id ? "Заново" : "Войти", `data-group-id="${esc(definition.groupId)}" data-id="${esc(state.id)}" title="Явный вход в состояние"`) : ""}</td></tr>`);
     }
   }
-  return `<table class="ms-ide-tree" role="treegrid" aria-label="Схемы и эпизоды"><tbody>${rows.join("")}</tbody></table>`;
+  return `<table class="ms-ide-tree" role="treegrid" aria-label="Группы и состояния"><tbody>${rows.join("")}</tbody></table>`;
 }
 
-export function renderEventTree(catalog, selection, mode) {
-  const rows = [];
-  for (const event of catalog.events) {
-    const selected = selection.kind === "event" && selection.id === event.id;
-    rows.push(`<tr role="row" aria-level="1" aria-selected="${selected}" class="${selected ? "is-selected" : ""}" data-select-kind="event" data-select-id="${esc(event.id)}"><td><button class="ms-tree-name" type="button" data-screen-action="selectNode" data-kind="event" data-id="${esc(event.id)}">◇ ${esc(event.name)}</button></td><td>${event.builtin ? "Встроенное" : ""}</td></tr>`);
-    for (const trigger of catalog.triggers.filter((item) => item.eventId === event.id)) {
-      const chosen = selection.kind === "trigger" && selection.id === trigger.id;
-      rows.push(`<tr role="row" aria-level="2" aria-selected="${chosen}" class="${chosen ? "is-selected" : ""}" data-select-kind="trigger" data-select-id="${esc(trigger.id)}"><td><button class="ms-tree-name ms-tree-child" type="button" data-screen-action="selectNode" data-kind="trigger" data-id="${esc(trigger.id)}">↳ ${esc(trigger.name)}</button></td><td>${trigger.parameters.length} пол.</td></tr>`);
-    }
-  }
-  return `<table class="ms-ide-tree" role="treegrid" aria-label="События и типы триггеров"><tbody>${rows.join("") || '<tr><td>Пока нет событий</td></tr>'}</tbody></table>${mode === "director" ? '<p class="ms-note">Выберите триггер для ручного вызова события.</p>' : ""}`;
+export function renderSignalTree(catalog, selection, mode, definitions = []) {
+  const groups = [...definitions.map((group) => ({ id: group.groupId, name: group.groupName })), { id: null, name: t("Без группы", "Ungrouped") }];
+  return `<div class="ms-signal-tree" role="tree">${groups.map((group) => {
+    const emitters = catalog.emitters.filter((emitter) => (emitter.groupId ?? null) === group.id);
+    if (!emitters.length) return "";
+    return `<details open><summary>${esc(group.name)}</summary>${emitters.map((emitter) => `<details open data-emitter-node="${esc(emitter.key)}"><summary><span data-select-kind="emitter" data-select-id="${esc(emitter.key)}">${esc(emitter.name)}</span>${mode === "constructor" ? button("addSignal", "+", `data-emitter-key="${esc(emitter.key)}" aria-label="${t("Добавить сигнал", "Add signal")}"`) : ""}</summary><table><tbody>${catalog.signals.filter((signal) => signal.emitterKey === emitter.key).map((signal) => `<tr data-select-kind="signal" data-select-id="${esc(signal.id)}" aria-selected="${selection.id === signal.id}" class="${selection.id === signal.id ? "is-selected" : ""}"><td>${button("selectNode", `${localizedDescription(signal.label) || signal.name}`, `data-kind="signal" data-id="${esc(signal.id)}"`)}<small>${signal.label ? esc(signal.name) : ""}</small></td><td>${signal.builtin ? t("Системный", "System") : mode === "constructor" ? button("removeTreeSignal", "×", `data-id="${esc(signal.id)}" aria-label="${t("Удалить сигнал", "Delete signal")}"`) : ""}</td></tr>`).join("")}</tbody></table></details>`).join("")}</details>`;
+  }).join("")}</div>`;
 }
 
-export function renderMacroList(catalog, selection, resolveMacro = () => null) {
-  return `<div class="ms-macro-list" data-macro-drop>${catalog.macros.map((macro) => {
+export function renderMacroList(catalog, selection, resolveMacro = () => null, ownerKey = "", validation = new Map()) {
+  return `<label>${t("Объект для нового макроса", "Owner for a new macro")}<select name="macroOwner">${options(catalog.emitters.map((emitter) => ({ id: emitter.key, name: emitter.name })), ownerKey)}</select></label><div class="ms-macro-list" data-macro-drop>${catalog.macros.map((macro) => {
     const doc = resolveMacro(macro.uuid);
-    return `<div class="ms-ide-list-row ${selection.kind === "macro" && selection.id === macro.uuid ? "is-selected" : ""}" data-select-kind="macro" data-select-id="${esc(macro.uuid)}" draggable="true" data-macro-uuid="${esc(macro.uuid)}"><button class="ms-tree-name" type="button" data-screen-action="selectNode" data-kind="macro" data-id="${esc(macro.uuid)}">⌘ ${esc(doc?.name ?? macro.uuid)}${doc ? "" : " · недоступен"}</button>${button("editMacro", "Править", `data-uuid="${esc(macro.uuid)}"`)}</div>`;
-  }).join("")}<p class="ms-note">Перетащите сюда макрос из каталога Foundry.</p></div>`;
+    const key = macroKey(macro), subscriptions = catalog.subscriptions.filter((row) => row.ownerKey === macro.ownerKey && row.macroUuid === macro.uuid);
+    return `<div class="ms-ide-list-row ${selection.kind === "macro" && selection.id === key ? "is-selected" : ""}" data-select-kind="macro" data-select-id="${esc(key)}" draggable="true" data-macro-uuid="${esc(macro.uuid)}"><button class="ms-tree-name" type="button" data-screen-action="selectNode" data-kind="macro" data-id="${esc(key)}">⌘ ${esc(emitterName(catalog, macro.ownerKey))} · ${esc(doc?.name ?? macro.uuid)}</button><small>${subscriptions.length ? `${t("Подписок", "Subscriptions")}: ${subscriptions.length}` : t("Без подписок", "No subscriptions")}</small>${button("editMacro", t("Править", "Edit"), `data-uuid="${esc(macro.uuid)}"`)}</div>`;
+  }).join("")}<div class="ms-macro-validation-list">${catalog.macros.map((macro) => `<p class="ms-note">${esc(resolveMacro(macro.uuid)?.name ?? macro.uuid)}: ${esc(validation.get(macroKey(macro))?.text ?? "")}</p>`).join("")}</div><p class="ms-note">Перетащите сюда макрос из каталога Foundry.</p></div>`;
 }
 
 function colorFields(entry) {
@@ -72,73 +71,34 @@ function colorFields(entry) {
 
 export function renderParameters({ selection, draft, catalog, definitions, runtimes = [], mode }) {
   if (!draft) return '<p class="ms-note">Выберите элемент в основной зоне.</p>';
-  const readOnly = draft.builtin || (mode === "director" && !["scheme", "episode", "trigger"].includes(selection.kind));
+  if (selection.kind === "emitter") return `<h3>${esc(draft.name)}</h3><p>${esc(draft.key)}</p>${mode === "constructor" ? button("addSignal", t("Добавить сигнал", "Add signal"), `data-emitter-key="${esc(draft.key)}"`) : ""}`;
+  const readOnly = mode === "director" && !["group", "state"].includes(selection.kind);
   const kind = selection.kind;
   let html = "";
-  if (kind === "scheme" || kind === "episode") {
-    const isScheme = kind === "scheme";
+  if (kind === "group" || kind === "state") {
+    const isGroup = kind === "group";
     if (mode === "director") {
-      const definition = definitions.find((entry) => entry.schemeId === selection.schemeId);
-      html = `<h3 style="${colorStyle(draft)}" class="ms-node-heading">${esc(isScheme ? draft.schemeName : draft.name)}</h3><p class="ms-note">Мастер может выбрать любой эпизод. Автоматические переходы используют список событий.</p>`;
-      if (isScheme) {
-        const runtime = runtimes.find((entry) => entry.schemeId === selection.schemeId), started = Boolean(runtime?.episodeId);
-        html += select("resumeEpisode", started ? "Возобновить с эпизода" : "Эпизод запуска", definition?.episodes ?? [], definition?.entryEpisodeId, "Выберите эпизод") + button("resumeSelectedScheme", started ? "Возобновить" : "Запустить") + button("haltSelectedScheme", "Остановить схему");
+      const definition = definitions.find((entry) => entry.groupId === selection.groupId);
+      html = `<h3 style="${colorStyle(draft)}" class="ms-node-heading">${esc(isGroup ? draft.groupName : draft.name)}</h3><p class="ms-note">Мастер может выбрать любое состояние. Реакции на сигналы задаются подписками.</p>`;
+      if (isGroup) {
+        const runtime = runtimes.find((entry) => entry.groupId === selection.groupId), started = Boolean(runtime?.stateId);
+        html += select("resumeState", started ? "Возобновить с состояния" : "Состояние запуска", definition?.states ?? [], definition?.entryStateId, "Выберите состояние") + button("resumeSelectedGroup", started ? "Возобновить" : "Запустить") + button("haltSelectedGroup", "Остановить группу");
       }
-      else html += button("enterSelectedEpisode", "Перейти в этот эпизод") + button("haltSelectedScheme", "Остановить схему");
+      else html += button("enterSelectedState", "Перейти в это состояние") + button("haltSelectedGroup", "Остановить группу");
       return html + `<p class="ms-note">${esc(localizedDescription(draft.description))}</p>`;
     }
-    html += input(isScheme ? "schemeName" : "name", "Название", isScheme ? draft.schemeName : draft.name, 'required maxlength="120"');
-    if (isScheme) html += `<div class="ms-scheme-symbol">${input("schemeSymbol", "Символ схемы", draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"')}<span id="ms-symbol-hint" class="ms-note">Одна видимая графема, включая составной эмоджи.</span></div>${select("entryEpisodeId", "Эпизод входа", draft.episodes ?? [], draft.entryEpisodeId)}`;
+    html += input(isGroup ? "groupName" : "name", "Название", isGroup ? draft.groupName : draft.name, 'required maxlength="120"');
+    if (isGroup) html += `<div class="ms-group-symbol">${input("groupSymbol", "Символ группы", draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"')}<span id="ms-symbol-hint" class="ms-note">Одна видимая графема, включая составной эмоджи.</span></div>${select("entryStateId", "Состояние входа", draft.states ?? [], draft.entryStateId)}`;
     html += descriptionField(draft.description);
     html += colorFields(draft);
-    if (!isScheme) {
-      html += `<label class="ms-check"><input name="stop" type="checkbox" ${draft.stop ? "checked" : ""}> Остановка автоматизации</label><h4>События перехода</h4><p class="ms-note">Внутри схемы одно событие ведёт только к одному эпизоду.</p><div class="ms-ide-binding-list">${(draft.events ?? []).map((name, index) => `<div class="ms-ide-list-row"><span>${esc(catalog.events.find((event) => event.id === name)?.name ?? name)}</span>${button("removeEpisodeEvent", "Убрать", `data-index="${index}"`)}</div>`).join("")}</div>${select("newEpisodeEvent", "Событие", catalog.events, "", "Выберите событие")}${button("addEpisodeEvent", "Добавить событие")}`;
-    }
+
     html += generics.components.renderJSONControls({ id: "selection", importLabel: "Импорт JSON", exportLabel: "Экспорт JSON" });
-  } else if (kind === "event") {
-    html += input("eventName", "Название события", draft.name, 'required maxlength="100"');
-    html += descriptionField(draft.description);
-    html += `<h4>Подписанты · порядок выполнения</h4><div class="ms-subscriber-list">${(draft.subscribers ?? []).map((subscriber, index) => renderSubscriber(subscriber, index, catalog, definitions)).join("")}</div>${button("addSubscriber", "Добавить подписанта")}`;
-    html += generics.components.renderJSONControls({ id: "selection", importLabel: "Импорт JSON", exportLabel: "Экспорт JSON" });
-  } else if (kind === "trigger") {
-    if (mode === "director") {
-      const parent = catalog.events.find((entry) => entry.id === draft.eventId);
-      return `<h3>${esc(draft.name)}</h3><p class="ms-note">Событие: ${esc(parent?.name ?? draft.eventId)}</p>${draft.parameters.map((parameter) => renderTriggerValue(parameter)).join("")}${button("invokeTrigger", "Вызвать событие")}`;
-    }
-    html += input("triggerName", "Название триггера", draft.name, 'required maxlength="100"');
-    html += descriptionField(draft.description);
-    html += select("triggerEventId", "Принадлежит событию", catalog.events, draft.eventId);
-    html += `<h4>Типизированные параметры</h4>${(draft.parameters ?? []).map((parameter, index) => renderParameterSchema(parameter, index)).join("")}${button("addParameter", "Добавить параметр")}`;
-    html += generics.components.renderJSONControls({ id: "selection", importLabel: "Импорт JSON", exportLabel: "Экспорт JSON" });
+  } else if (kind === "signal") {
+    html += renderSignalFields(draft, catalog);
   } else if (kind === "macro") {
-    html += `<p class="ms-note">${esc(draft.uuid)}</p>${button("editMacro", "Открыть редактор Foundry", `data-uuid="${esc(draft.uuid)}"`)}<h4>Принимаемые триггеры</h4>${catalog.triggers.map((trigger) => `<label class="ms-check"><input type="checkbox" name="macroTrigger" value="${esc(trigger.id)}" ${(draft.triggerIds ?? []).includes(trigger.id) ? "checked" : ""}> ${esc(trigger.name)}</label>`).join("") || '<p class="ms-note">Сначала создайте триггер события.</p>'}`;
+    html += `<p>${esc(emitterName(catalog, draft.ownerKey))}</p><p>${esc(draft.uuid)}</p>${button("editMacro", t("\u041f\u0440\u0430\u0432\u0438\u0442\u044c", "Edit"), `data-uuid="${esc(draft.uuid)}"`)}`;
   }
   return `<form data-screen-form="saveParameters" data-ide-parameters><fieldset ${readOnly ? "disabled" : ""}>${html}</fieldset>${readOnly ? '<p class="ms-note">Встроенные определения доступны только для просмотра и вызова.</p>' : `<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discardParameters", "Отменить ввод")}<button type="submit">Сохранить</button></footer>`}</form>`;
-}
-
-export function renderParameterSchema(parameter, index) {
-  const numeric = ["integer", "number"].includes(parameter.type);
-  return `<fieldset class="ms-parameter-row" data-parameter-index="${index}"><div class="ms-grid-two">${input("parameterName", "Имя поля", parameter.name, 'required pattern="[A-Za-z_][A-Za-z0-9_]*"')}${select("parameterType", "Тип", [{ id: "string", name: "Текст" }, { id: "integer", name: "Целое число" }, { id: "number", name: "Дробное число" }, { id: "boolean", name: "Логическое" }], parameter.type)}</div><div class="ms-grid-two">${parameter.type === "string" ? input("minLength", "Минимальная длина", parameter.minLength, 'type="number" min="0" step="1"') + input("maxLength", "Максимальная длина", parameter.maxLength, 'type="number" min="0" step="1"') : ""}${numeric ? input("min", "Минимум", parameter.min, 'type="number" step="any"') + input("max", "Максимум", parameter.max, 'type="number" step="any"') : ""}${parameter.type === "number" ? input("decimals", "Знаков после запятой", parameter.decimals, 'type="number" min="0" max="12" step="1"') : ""}</div>${parameter.type === "boolean" ? '<p class="ms-note">Значение true или false задаётся при вызове триггера.</p>' : ""}${descriptionField(parameter.description, "parameterDescription")}${button("removeParameter", "Убрать поле", `data-index="${index}"`)}</fieldset>`;
-}
-
-export function renderTriggerValue(parameter) {
-  const name = esc(parameter.name);
-  if (parameter.type === "boolean") return `<label class="ms-check"><input type="checkbox" data-trigger-value="${name}"> ${name}</label>`;
-  if (parameter.type === "string") return `<label class="ms-field">${name}<input data-trigger-value="${name}" minlength="${parameter.minLength ?? 0}" ${parameter.maxLength !== undefined ? `maxlength="${parameter.maxLength}"` : ""}></label>`;
-  return `<label class="ms-field">${name}<input type="number" data-trigger-value="${name}" step="${parameter.type === "integer" ? 1 : "any"}" ${parameter.min !== undefined ? `min="${parameter.min}"` : ""} ${parameter.max !== undefined ? `max="${parameter.max}"` : ""} required></label>`;
-}
-
-function renderSubscriber(subscriber, index, catalog, definitions) {
-  let target = "";
-  if (subscriber.kind === "macro") target = select("subscriberMacro", "Макрос", catalog.macros.map((macro) => ({ id: macro.uuid, name: globalThis.game?.macros?.get(macro.uuid.split(".").pop())?.name ?? macro.uuid })), subscriber.macroUuid, "Выберите макрос");
-  else if (subscriber.kind === "trigger") target = select("subscriberTrigger", "Вызываемый триггер", catalog.triggers, subscriber.triggerId, "Выберите триггер");
-  else {
-    target = select("subscriberAction", "Действие", [{ id: "pause", name: "Поставить игру на паузу" }, { id: "unpause", name: "Снять паузу" }, { id: "halt-scheme", name: "Остановить схему" }, { id: "halt-all", name: "Остановить всю сцену" }, { id: "chat", name: "Сообщение в чат" }], subscriber.action);
-    if (subscriber.action === "halt-scheme") target += select("subscriberScheme", "Схема", definitions.map((item) => ({ id: item.schemeId, name: item.schemeName })), subscriber.schemeId);
-    if (subscriber.action === "chat") target += `<label class="ms-field">Текст сообщения<textarea name="subscriberText" rows="2">${esc(subscriber.text ?? "")}</textarea></label><div class="ms-grid-two"><label class="ms-check"><input type="checkbox" name="subscriberGMs" ${subscriber.audience?.gms !== false ? "checked" : ""}> Мастерам</label><label class="ms-check"><input type="checkbox" name="subscriberInteractor" ${subscriber.audience?.interactor ? "checked" : ""}> Участнику действия</label><label class="ms-check"><input type="checkbox" name="subscriberNearby" ${subscriber.audience?.nearby ? "checked" : ""}> Игрокам рядом</label><label class="ms-check"><input type="checkbox" name="subscriberVisible" ${subscriber.audience?.visibleOnly !== false ? "checked" : ""}> В пределах видимости</label></div>${input("subscriberRange", "Дальность", subscriber.audience?.range ?? 30, 'type="number" min="0" step="any"')}`;
-  }
-  const parameters = subscriber.kind === "trigger" ? `<label class="ms-field">Статические параметры (JSON)<textarea name="subscriberParameters" rows="2" spellcheck="false">${esc(JSON.stringify(subscriber.parameters ?? {}, null, 2))}</textarea></label>` : "";
-  return `<fieldset class="ms-subscriber-row" data-subscriber-index="${index}" data-macro-subscriber-drop><div class="ms-ide-list-row"><strong>${index + 1}.</strong><span class="ms-ide-inline-actions">${button("moveSubscriber", "↑", `data-index="${index}" data-delta="-1" aria-label="Выше"`)}${button("moveSubscriber", "↓", `data-index="${index}" data-delta="1" aria-label="Ниже"`)}${button("removeSubscriber", "×", `data-index="${index}" aria-label="Удалить подписанта"`)}</span></div>${select("subscriberKind", "Тип подписанта", [{ id: "builtin", name: "Встроенный функционал" }, { id: "macro", name: "Макрос" }, { id: "trigger", name: "Вызвать триггер" }], subscriber.kind)}${target}${parameters}</fieldset>`;
 }
 
 export function renderOtherList(mode, selected) {
@@ -148,45 +108,17 @@ export function renderOtherList(mode, selected) {
 export function renderMenu(zone, hidden, active) {
   const tree = zone === "main" ? MAIN_MENU : DETAIL_MENU;
   const visible = (node) => leaves([node]).some((id) => !hidden.includes(id));
-  const entry = (node, popup = false) => `<button type="button" role="menuitem" data-screen-action="${node.children ? "menuCategory" : "ideTab"}" data-zone="${zone}" data-id="${node.id}" ${popup ? 'tabindex="-1"' : ""} ${node.children ? `aria-haspopup="menu" aria-controls="ms-menu-${zone}-${node.id}" aria-expanded="false"` : `aria-pressed="${active === node.id}"`} class="${node.children && leaves([node]).includes(active) ? "has-active-child" : ""}">${esc(node.label)}${node.children ? popup ? " ▸" : " ▾" : ""}</button>`;
-  const popups = (nodes, parent = "") => nodes.filter(visible).filter((node) => node.children).map((node) => `<nav id="ms-menu-${zone}-${node.id}" class="ms-menu-popup" data-menu-popup="${node.id}" data-zone="${zone}" data-parent-menu="${parent}" role="menu" aria-label="${esc(node.label)}" popover="manual">${node.children.filter(visible).map((child) => entry(child, true)).join("")}</nav>${popups(node.children, node.id)}`).join("");
+  const entry = (node, popup = false) => `<button type="button" role="menuitem" data-screen-action="${node.children ? "menuCategory" : "ideTab"}" data-zone="${zone}" data-id="${node.id}" ${popup ? 'tabindex="-1"' : ""} ${node.children ? `aria-haspopup="menu" aria-controls="ms-menu-${zone}-${node.id}" aria-expanded="false"` : `aria-pressed="${active === node.id}"`} class="${node.children && leaves([node]).includes(active) ? "has-active-child" : ""}">${esc(t(node.label, node.labelEn ?? node.label))}${node.children ? popup ? " ▸" : " ▾" : ""}</button>`;
+  const popups = (nodes, parent = "") => nodes.filter(visible).filter((node) => node.children).map((node) => `<nav id="ms-menu-${zone}-${node.id}" class="ms-menu-popup" data-menu-popup="${node.id}" data-zone="${zone}" data-parent-menu="${parent}" role="menu" aria-label="${esc(t(node.label, node.labelEn ?? node.label))}" popover="manual">${node.children.filter(visible).map((child) => entry(child, true)).join("")}</nav>${popups(node.children, node.id)}`).join("");
   const id = `${zone}-0`;
   return `<div class="ms-menu-level"><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="-1" class="ms-menu-arrow" aria-label="Предыдущие вкладки">‹</button><nav class="ms-menu-strip" role="menubar" data-menu-strip="${id}" aria-label="${zone === "main" ? "Основные вкладки" : "Дополнительные вкладки"}">${tree.filter(visible).map((node) => entry(node)).join("")}</nav><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="1" class="ms-menu-arrow" aria-label="Следующие вкладки">›</button></div>${popups(tree)}`;
 }
 
 export function renderMenuSettings(zone, hidden) {
   const nodes = zone === "main" ? MAIN_MENU : DETAIL_MENU;
-  return `<table class="ms-menu-settings-table" role="treegrid" aria-label="Состав меню"><tbody>${menuRows(nodes, hidden).map((node) => `<tr role="row" aria-level="${node.depth + 1}" data-menu-setting-row="${node.id}"><td style="padding-inline-start:${8 + node.depth * 22}px"><label><input type="checkbox" data-menu-visible="${node.id}" ${node.checked ? "checked" : ""} ${node.partial ? 'data-indeterminate="true"' : ""}> <span>${esc(node.label)}</span>${node.category ? '<small>Категория</small>' : ""}</label></td></tr>`).join("")}</tbody></table>`;
-}
-
-/** Existing sources are described, never synthesized or enabled by opening this list. */
-export function eventSources(definitions, scene, { assets = { dialogues: [] }, bindings = [] } = {}) {
-  const rows = [];
-  const names = (...values) => [...new Set(values.flat().filter(Boolean))].join(", ");
-  const add = (definition, episode, type, id, name, detail, tokenId) => rows.push({ id: `${definition.schemeId}:${episode.id}:${type}:${id}`, name, type, detail, tokenId, schemeId: definition.schemeId, episodeId: episode.id, schemeName: definition.schemeName, episodeName: episode.name });
-  for (const definition of definitions) for (const episode of definition.episodes) {
-    add(definition, episode, "episode", episode.id, "Вход в эпизод", "episode.entered");
-    for (const zone of episode.zones ?? []) add(definition, episode, "zone", zone.id, zone.label || "Зона", names("zone.entered", zone.eventName));
-    for (const action of episode.interactions ?? []) add(definition, episode, "interaction", action.id, action.name, action.eventName || "Событие не выбрано");
-  }
-  for (const binding of bindings) {
-    const definition = definitions.find((entry) => entry.schemeId === binding.schemeId); if (!definition) continue;
-    const objectName = (binding.type === "Token" ? scene.tokens : scene.tiles)?.get(binding.id)?.name ?? binding.id;
-    const dialogue = assets.dialogues.find((entry) => entry.id === binding.dialogue?.dialogueId);
-    if (dialogue) for (const episode of definition.episodes.filter((entry) => !binding.dialogue.episodeIds.length || binding.dialogue.episodeIds.includes(entry.id))) {
-      add(definition, episode, "dialogue", `${binding.type}:${binding.id}:${dialogue.id}`, `${objectName} · ${dialogue.name}`, names("dialogue.finished", dialogue.pages.flatMap((page) => page.responses.map((response) => response.eventName))));
-      rows.at(-1).assetId = dialogue.id;
-    }
-    for (const routine of binding.routines ?? []) {
-      const episode = definition.episodes.find((entry) => entry.id === routine.episodeId);
-      if (!episode || !routine.steps.length) continue;
-      add(definition, episode, "routine", binding.id, `${objectName} · рутина`, names(routine.steps.filter((step) => step.kind === "event").map((step) => step.parameters.eventName)));
-      rows.at(-1).objectTarget = { type: binding.type, id: binding.id };
-    }
-  }
-  return rows;
+  return `<table class="ms-menu-settings-table" role="treegrid" aria-label="Состав меню"><tbody>${menuRows(nodes, hidden).map((node) => `<tr role="row" aria-level="${node.depth + 1}" data-menu-setting-row="${node.id}"><td style="padding-inline-start:${8 + node.depth * 22}px"><label><input type="checkbox" data-menu-visible="${node.id}" ${node.checked ? "checked" : ""} ${node.partial ? 'data-indeterminate="true"' : ""}> <span>${esc(t(node.label, node.labelEn ?? node.label))}</span>${node.category ? '<small>Категория</small>' : ""}</label></td></tr>`).join("")}</tbody></table>`;
 }
 
 export function renderObjectList(rows, selected, kind) {
-  return `<table class="ms-ide-tree" role="grid"><tbody>${rows.map((row) => `<tr data-select-kind="${kind}" data-select-id="${esc(row.id)}" data-scheme-id="${esc(row.schemeId ?? "")}" aria-selected="${selected.kind === kind && selected.id === row.id}" class="${selected.kind === kind && selected.id === row.id ? "is-selected" : ""}"><td><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="${kind}" data-id="${esc(row.id)}" data-scheme-id="${esc(row.schemeId ?? "")}">${esc(row.name)}</button></td><td title="${esc(row.schemeName ?? "")}">${esc(row.episodeName ?? row.detail ?? "")}</td></tr>`).join("") || '<tr><td>Нет элементов</td></tr>'}</tbody></table>`;
+  return `<table class="ms-ide-tree" role="grid"><tbody>${rows.map((row) => `<tr data-select-kind="${kind}" data-select-id="${esc(row.id)}" data-group-id="${esc(row.groupId ?? "")}" aria-selected="${selected.kind === kind && selected.id === row.id}" class="${selected.kind === kind && selected.id === row.id ? "is-selected" : ""}"><td><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="${kind}" data-id="${esc(row.id)}" data-group-id="${esc(row.groupId ?? "")}">${esc(row.name)}</button></td><td title="${esc(row.groupName ?? "")}">${esc(row.stateName ?? row.detail ?? "")}</td></tr>`).join("") || '<tr><td>Нет элементов</td></tr>'}</tbody></table>`;
 }

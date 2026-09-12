@@ -4,10 +4,11 @@ import { installControls } from "./controls.js";
 import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
 import { installScreenSettingHelp } from "./setting-help.js";
-import { updateSceneNavigationBadges } from "./apps/scheme-badges.js";
+import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { findCanvasObject, canvasPointerPosition } from "./apps/canvas-object.js";
+import { installSceneSignals } from "./scene-signals.js";
 
-let controller, removeControls, unregister, removeSettingHelp;
+let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals;
 const hooks = [];
 let stage, tap;
 const on = (name, callback) => hooks.push([name, Hooks.on(name, callback)]);
@@ -40,21 +41,21 @@ Hooks.once("init", () => {
     openActor: () => controller.setMode("actor"), openShops: () => controller.openShops(),
     openDialogues: () => controller.openDialogues(),
     openHelp: (pageId, anchor) => { const app = controller.openHelp(); if (pageId) void app.navigate(pageId, anchor); return app; }, close: () => controller.closeScreen(),
-    transition: (episodeId, options) => controller.transition(episodeId, options),
-    InvokeDmicherMasterScreenEvent: (name, trigger) => controller.events.invoke(canvas.scene, name, trigger),
-    emitEvent: (name, details) => controller.emitEvent(name, details),
-    resetTriggers: (triggerKey) => controller.resetTriggers(triggerKey),
-    setTriggerEnabled: (triggerKey, enabled) => controller.setTriggerEnabled(triggerKey, enabled),
-    haltScene: () => controller.haltScene(), haltScheme: (schemeId) => controller.haltScheme(schemeId),
-    resumeScheme: (episodeId, schemeId) => controller.resumeScheme(episodeId, schemeId),
+    transition: (stateId, options) => controller.transition(stateId, options),
+    InvokeDmicherMasterScreenSignal: (emitterKey, name, parameters) => controller.emitSignal(emitterKey, name, parameters),
+    resetConditions: (conditionKey) => controller.resetConditions(conditionKey),
+    setConditionEnabled: (conditionKey, enabled) => controller.setConditionEnabled(conditionKey, enabled),
+    haltScene: () => controller.haltScene(), haltGroup: (groupId) => controller.haltGroup(groupId),
+    resumeGroup: (stateId, groupId) => controller.resumeGroup(stateId, groupId),
     getState: () => controller.getContext(), setAutomation: (tokenId, enabled) => controller.setAutomation(tokenId, enabled) });
   game.modules.get(MODULE_ID).api = api;
-  globalThis.InvokeDmicherMasterScreenEvent = api.InvokeDmicherMasterScreenEvent;
+  globalThis.InvokeDmicherMasterScreenSignal = api.InvokeDmicherMasterScreenSignal;
   unregister = generics.modules.register(MODULE_ID, { apiVersion: 1, api, capabilities: ["openConstructor", "openDirector", "openActor", "openShops", "openHelp"] });
 });
 
 Hooks.once("ready", () => {
   controller.runtime.start();
+  removeSceneSignals = installSceneSignals(controller.signals, { onError: notifyError });
   on("canvasReady", attachCanvas);
   on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
   on("updateScene", () => updateSceneNavigationBadges(controller));
@@ -71,8 +72,8 @@ Hooks.once("ready", () => {
 globalThis.addEventListener?.("pagehide", () => {
   controller?.editor?.layout?.dispose();
   controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
-  controller?.runtime.dispose(); controller?.events.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
+  controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   if (stage && tap) stage.off("pointertap", tap);
   for (const [name, id] of hooks) Hooks.off(name, id);
-  removeControls?.(); removeSettingHelp?.(); unregister?.(); theme.dispose();
+  removeControls?.(); removeSettingHelp?.(); removeSceneSignals?.(); unregister?.(); theme.dispose();
 }, { once: true });

@@ -45,7 +45,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
       dialogue: dialogue ? { ...dialogue, enabled: true } : null,
       node: node ? { ...node, responses: node.responses.map((response) => ({ ...response, nextNodeId: response.nextPageId })) } : null,
       nodes: (dialogue?.pages ?? []).map((entry) => ({ id: entry.id, label: entry.name })),
-      actions: (context.episode?.interactions ?? []).map((entry) => ({ ...entry, targetName: (entry.target.type === "Token" ? context.scene.tokens.get(entry.target.id) : context.scene.tiles?.get(entry.target.id))?.name ?? entry.target.id })),
+      actions: (context.state?.interactions ?? []).map((entry) => ({ ...entry, targetName: (entry.target.type === "Token" ? context.scene.tokens.get(entry.target.id) : context.scene.tiles?.get(entry.target.id))?.name ?? entry.target.id })),
       players: all(game.users).filter((user) => [1, 2].includes(Number(user.role)) && !generics.chat.isManagedIdentityUser(user))
         .map((user) => ({ id: user.id, name: user.name, active: user.active, selected: this.recipients.has(user.id) }))
     };

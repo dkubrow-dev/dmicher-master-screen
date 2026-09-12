@@ -14,7 +14,7 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
   constructor({ dialogue, sourceName, invitationId, gmPreview = false }, options = {}) {
     super({ ...options, id: `dmicher-master-screen-manual-dialogue-${invitationId ?? foundry.utils.randomID()}` });
     this.dialogue = structuredClone(dialogue); this.sourceName = sourceName; this.gmPreview = gmPreview;
-    this.nodeId = dialogue.startNodeId; this.finished = false; this.eventName = "";
+    this.nodeId = dialogue.startNodeId; this.finished = false; this.signalId = "";
   }
   async _prepareContext(options) {
     const base = await super._prepareContext(options);
@@ -22,7 +22,7 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
     return { ...base, targetName: this.sourceName, title: this.dialogue.name, text: node?.text ?? "", art: node?.art ?? "",
       responses: this.finished ? [] : (node?.responses ?? []).map((response) => ({ ...response, nodeId: this.nodeId })),
       finished: this.finished || !node?.responses?.length, gmPreview: this.gmPreview,
-      eventName: this.gmPreview ? this.eventName : "" };
+      signalId: this.gmPreview ? this.signalId : "" };
   }
   static answer(_event, button) {
     if (this.finished || button.dataset.nodeId !== this.nodeId) return;
@@ -32,7 +32,7 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
     if (response.nextNodeId) {
       if (!this.dialogue.nodes.some((entry) => entry.id === response.nextNodeId)) return;
       this.nodeId = response.nextNodeId;
-    } else { this.finished = true; this.eventName = response.eventName; }
+    } else { this.finished = true; this.signalId = response.signalId; }
     return this.render({ force: true });
   }
   static leave() { return this.close(); }

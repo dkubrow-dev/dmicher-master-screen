@@ -1,8 +1,10 @@
+import { sanitizeScriptHTML } from "./script-text.js";
 /** Foundry adapters. Scene rules and effect ownership remain in the runtime. */
 export function tokenCenter(token, scene) {
+  const scale = token.documentName && token.documentName !== "Token" ? 1 : Number(scene.grid?.size ?? 100);
   return token.getCenterPoint?.(token._source ?? token) ?? {
-    x: Number(token.x ?? 0) + Number(token.width ?? 1) * Number(scene.grid?.size ?? 100) / 2,
-    y: Number(token.y ?? 0) + Number(token.height ?? 1) * Number(scene.grid?.size ?? 100) / 2
+    x: Number(token.x ?? 0) + Number(token.width ?? token.shape?.width ?? 1) * scale / 2,
+    y: Number(token.y ?? 0) + Number(token.height ?? token.shape?.height ?? 1) * scale / 2
   };
 }
 
@@ -14,15 +16,17 @@ const values = (collection) => Array.from(collection?.values?.() ?? collection ?
 const escapeHTML = (text) => String(text ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 /** Checks each player's owned token, never the GM's combined canvas visibility. */
-export function speechRecipients(scene, npc, { range = 30, visibleOnly = true } = {}) {
+export function speechRecipients(scene, npc, { range = 0, visibleOnly = true, allowTags = [], denyTags = [] } = {}) {
   const destination = tokenCenter(npc, scene);
   return values(game.users).filter((user) => {
     if (Number(user.role) >= 3) return true;
     if (Number(user.role) < 1 || Number(user.role) > 2 || npc.hidden) return false;
     return values(scene.tokens).some((observer) => {
       if (observer.id === npc.id || !observer.actor?.testUserPermission?.(user, "OWNER")) return false;
+      const tags = scene.getFlag?.("dmicher-master-screen", "objectBindings")?.bindings?.[`Token:${observer.id}`]?.tags ?? [];
+      if (allowTags.length && !allowTags.some((tag) => tags.includes(tag)) || denyTags.some((tag) => tags.includes(tag))) return false;
       const origin = tokenCenter(observer, scene);
-      if (sceneDistance(scene, origin, destination) > Number(range)) return false;
+      if (Number(range) > 0 && sceneDistance(scene, origin, destination) > Number(range)) return false;
       if (!visibleOnly) return true;
       // This is wall line-of-sight, not a simulation of a remote client's lighting/detection modes.
       if (scene.tokenVision && !observer.sight?.enabled) return false;
@@ -50,6 +54,21 @@ export function crossesRectangle(from, to, zone) {
 }
 
 const emojiObjects = new Map();
+const speechObjects = new Map();
+export function setObjectSpeech(document, bubble) {
+  const object = document?.object ?? document;
+  if (!object?.addChild) return;
+  let label = speechObjects.get(object);
+  if (!bubble?.text) { label?.destroy?.(); speechObjects.delete(object); return; }
+  if (!globalThis.PIXI?.Text) return;
+  if (!label || label.destroyed) {
+    label = new PIXI.Text(String(bubble.text), { fontSize: Number(bubble.fontSize || 24), fill: 0xffffff, stroke: 0x111111, strokeThickness: 4, wordWrap: true, wordWrapWidth: 400, align: "center" });
+    label.anchor.set(0.5, 1); label.eventMode = "none"; object.addChild(label); speechObjects.set(object, label);
+  }
+  label.text = String(bubble.text); label.style.fontSize = Number(bubble.fontSize || 24);
+  label.position.set(Number(object.w ?? 100) / 2, -42);
+  label.visible = !document.hidden || globalThis.game?.user?.isGM === true;
+}
 export function setTokenEmoji(token, text) {
   const object = token?.object ?? token;
   if (!object?.addChild) return;
@@ -74,24 +93,39 @@ export function setTokenEmoji(token, text) {
 export function clearTokenEmojis() {
   for (const label of emojiObjects.values()) label.destroy?.();
   emojiObjects.clear();
+  for (const label of speechObjects.values()) label.destroy?.();
+  speechObjects.clear();
 }
 
 export function createFoundryEffects(chat) {
   const messages = chat?.createMessageService({ ownerId: "dmicher-master-screen", channel: "npc-speech" });
+  const speechMetadata = (message) => message.getFlag?.("dmicher-master-screen", "scriptSpeech") ?? message.flags?.["dmicher-master-screen"]?.scriptSpeech;
   return {
     async speak(scene, npc, phrase, options, key, enabled) {
       if (!messages) throw new Error("Общий сервис чата Generics недоступен.");
       const ids = speechRecipients(scene, npc, options);
       return messages.create({
         author: game.user.id,
-        speaker: chat.buildChatSpeaker({ actor: npc.actor?.id, token: npc.id, scene: scene.id, alias: npc.name }),
-        content: `<p>${escapeHTML(phrase)}</p>`
-      }, { audience: { type: "users", userIds: ids }, key, kind: "npc-speech", technical: false, enabled });
+        speaker: chat.buildChatSpeaker({ actor: npc.actor?.id, token: npc.documentName === "Token" ? npc.id : undefined, scene: scene.id, alias: npc.name }),
+        content: options?.rich ? sanitizeScriptHTML(phrase) : `<p>${escapeHTML(phrase)}</p>`,
+        flags: { "dmicher-master-screen": { scriptSpeech: { objectKey: `${scene.id}:${npc.documentName}:${npc.id}`, removeOnNext: options?.deleteAfter === true,
+          expiresAt: Number(options?.expiresAfter) > 0 ? Date.now() + options.expiresAfter * 1000 : null } } }
+      }, { audience: { type: "users", userIds: ids }, delivery: "per-recipient", key, kind: "npc-speech", technical: false, enabled });
     },
-    async sound(src) {
+    async clearPreviousSpeech(scene, object) {
+      const objectKey = `${scene.id}:${object.documentName}:${object.id}`;
+      for (const message of messages?.find() ?? []) { const meta = speechMetadata(message); if (meta?.objectKey === objectKey && meta.removeOnNext) await messages.remove(message.id); }
+    },
+    async cleanupSpeech(now = Date.now()) {
+      for (const message of messages?.find() ?? []) { const meta = speechMetadata(message); if (Number(meta?.expiresAt) > 0 && meta.expiresAt <= now) await messages.remove(message.id); }
+    },
+    async removeSpeech(ids) {
+      for (const id of ids ?? []) if (messages?.get(id)) await messages.remove(id);
+    },
+    async sound(src, volume = 1) {
       const helper = globalThis.foundry?.audio?.AudioHelper ?? globalThis.AudioHelper;
       if (!helper?.play) throw new Error("Проигрывание звука Foundry недоступно.");
-      return helper.play({ src, volume: 0.8, loop: false }, true);
+      return helper.play({ src, volume, channel: "environment", loop: false }, true);
     },
     async bubble(token, phrase, enabled = () => true) {
       if (!enabled()) return;
@@ -115,12 +149,11 @@ export function createFoundryEffects(chat) {
       }
       return created;
     },
-    async macro(uuid, { scene, token, episode, runId, parameters = {}, stepId, InvokeDmicherMasterScreenEvent, isCurrent = () => true }) {
+    async macro(uuid, { isCurrent = () => true } = {}) {
       const macro = await fromUuid(uuid);
       if (!isCurrent()) return;
       if (!macro || macro.documentName !== "Macro" || macro.type !== "script" || !macro.canExecute) throw new Error("Проверка требует доступный скриптовый макрос Foundry.");
-      return macro.execute({ actor: token.actor, token: token.object, scene, episode, runId, InvokeDmicherMasterScreenEvent,
-        parameters: structuredClone(parameters), stepId, objectTarget: { type: "Token", id: token.id }, sceneObject: token });
+      await macro.execute();
     }
   };
 }

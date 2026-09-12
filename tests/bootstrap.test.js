@@ -58,7 +58,7 @@ function fixture(generation, isGM = true) {
   const settings = new Map(), pagehide = [], intervals = new Map(), errors = [], hookBus = createHooks();
   let timerId = 0;
   const makeScene = (id) => {
-    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: { [MODULE_ID]: { definitions: { main: defaultDefinition() } } }, updates: [],
+    const scene = { id, name: id, grid: { size: 100, distance: 5 }, tokens: new Map(), flags: { [MODULE_ID]: { groupDefinitions: { main: defaultDefinition() } } }, updates: [],
       getFlag(scope, key) { return structuredClone(this.flags[scope]?.[key]); },
       async setFlag(scope, key, value) {
         this.flags[scope] ??= {};
@@ -103,7 +103,7 @@ function fixture(generation, isGM = true) {
 }
 
 for (const generation of [13, 14]) {
-  test(`Foundry ${generation} init/ready exposes API, category stays passive, and constructor opens four episodes`, async () => {
+  test(`Foundry ${generation} init/ready exposes API, category stays passive, and constructor opens four states`, async () => {
     const f = fixture(generation);
     try {
       await import(`../dmicher-master-screen/scripts/main.js?bootstrap=${generation}`);
@@ -127,9 +127,9 @@ for (const generation of [13, 14]) {
       await api.openConstructor();
       const editor = instances.get("dmicher-master-screen-editor");
       assert.equal(editor.context.isConstructor, true);
-      assert.equal(editor.context.episodes.length, 4);
-      assert.equal(api.getState().definition.episodes[0].id, "calm");
-      assert.equal(f.scene.updates.length, 0, "opening a mode must not run or save an episode");
+      assert.equal(editor.context.states.length, 4);
+      assert.equal(api.getState().definition.states[0].id, "calm");
+      assert.equal(f.scene.updates.length, 0, "opening a mode must not run or save an state");
       assert.deepEqual(f.errors, []);
     } finally { await f.dispose(); }
     assert.equal(f.intervals.size, 0);
@@ -155,15 +155,15 @@ for (const generation of [13, 14]) {
 }
 
 
-test("controller rejects an old episode draft instead of replacing a newer episode configuration", async () => {
+test("controller rejects an old state draft instead of replacing a newer state configuration", async () => {
   const f = fixture(14);
   try {
     const controller = new ScreenController();
-    const oldEpisode = structuredClone(controller.getContext().episode);
-    const changed = structuredClone(oldEpisode); changed.sound = "alarm.ogg";
-    await controller.saveEpisode(changed, { expectedRevision: 0, sceneId: f.scene.id });
-    await assert.rejects(controller.saveEpisode(oldEpisode, { expectedRevision: 0, sceneId: f.scene.id }));
-    assert.equal(getDefinition(f.scene).episodes[0].sound, "alarm.ogg");
+    const oldState = structuredClone(controller.getContext().state);
+    const changed = structuredClone(oldState); changed.sound = "alarm.ogg";
+    await controller.saveState(changed, { expectedRevision: 0, sceneId: f.scene.id });
+    await assert.rejects(controller.saveState(oldState, { expectedRevision: 0, sceneId: f.scene.id }));
+    assert.equal(getDefinition(f.scene).states[0].sound, "alarm.ogg");
   } finally { await f.dispose(); }
 });
 
@@ -207,47 +207,54 @@ test("an empty scene stays empty through constructor, director and tool windows"
     const controller = new ScreenController();
     assert.equal(controller.getContext().definition, null);
     await controller.setMode("constructor");
-    assert.equal(controller.editor.context.missingScheme, true);
-    assert.match(controller.editor.context.nodeActions, /addScheme/);
+    assert.equal(controller.editor.context.missingGroup, true);
+    assert.match(controller.editor.context.nodeActions, /addGroup/);
     assert.equal(controller.editor.context.badgesHTML, "");
     await controller.openObjectBehavior({ type: "Token", id: "guard" }).render();
     await controller.setMode("director");
     await controller.openDialogues().render();
-    assert.deepEqual(controller.dialogueCatalog.context.dialogues, [], "the independent catalog can open before any scheme exists");
+    assert.deepEqual(controller.dialogueCatalog.context.dialogues, [], "the independent catalog can open before any group exists");
     assert.deepEqual(f.scene.flags, {});
     canvas.scene = f.other; await controller.editor.refresh();
-    assert.equal(controller.getContext().definition.episodes.length, 4);
-    assert.equal(controller.getContext({ schemeId: "deleted-scheme" }).definition, null, "a stale tool must not silently edit the first remaining scheme");
+    assert.equal(controller.getContext().definition.states.length, 4);
+    assert.equal(controller.getContext({ groupId: "deleted-group" }).definition, null, "a stale tool must not silently edit the first remaining group");
     canvas.scene = f.scene; await controller.editor.refresh();
     assert.equal(controller.getContext().definition, null);
     assert.deepEqual(f.errors, []);
   } finally { await f.dispose(); }
 });
 
-test("controller wires a validated Tile interaction through the event bus to an episode transition", { timeout: 3000 }, async () => {
+test("controller wires a Tile's declared signal through an owned macro to a state transition", { timeout: 3000 }, async () => {
   const f = fixture(14);
   let controller;
   try {
+    const macros = new Map(); globalThis.fromUuid = async (uuid) => macros.get(uuid);
     controller = new ScreenController();
     f.scene.tiles = new Map([["lever", { id: "lever", name: "Lever", x: 0, y: 0, width: 100, height: 100, hidden: false }]]);
     f.scene.tokens.get("guard").object.checkCollision = () => false;
     const definition = defaultDefinition();
-    definition.episodes[0].interactions = [{ id: "lever-use", name: "Pull lever", enabled: true,
-      target: { type: "Tile", id: "lever" }, range: 5, eventName: "lever.used" }];
-    definition.episodes[2].events = ["lever.used"];
-    f.scene.flags[MODULE_ID].objectBindings = { schemaVersion: 1, revision: 0, bindings: { "Tile:lever": { type: "Tile", id: "lever", schemeId: "main", tags: [] } } };
-    const { EventCatalog } = await import("../dmicher-master-screen/scripts/event-catalog.js");
-    await new EventCatalog(f.scene).saveEvent({ name: "lever.used", subscribers: [] });
+    definition.states[0].interactions = [{ id: "lever-use", name: "Pull lever", enabled: true,
+      target: { type: "Tile", id: "lever" }, range: 5, signalId: "lever-used", parameters: {} }];
+    f.scene.flags[MODULE_ID].objectBindings = { schemaVersion: 1, revision: 0, bindings: { "Tile:lever": { type: "Tile", id: "lever", groupId: "main", tags: [] } } };
+    const { SignalCatalog } = await import("../dmicher-master-screen/scripts/signal-catalog.js");
+    const { signalMacroSnippet } = await import("../dmicher-master-screen/scripts/signal-macros.js");
+    const catalog = new SignalCatalog(f.scene), signal = await catalog.saveSignal({ id: "lever-used", emitterKey: "Tile:lever", name: "used", parameters: [], returns: [] });
+    const command = signalMacroSnippet(signal);
+    const factory = new (Object.getPrototypeOf(async function () {}).constructor)(command);
+    macros.set("Macro.transition", { documentName: "Macro", type: "script", name: "Transition", command, canExecute: true,
+      async execute() { const object = await factory(); object.execute = (scope) => scope.transition("main", "alarm"); return object; } });
+    await catalog.attachMacro("Tile:lever", "Macro.transition");
+    await catalog.saveSubscription({ ownerKey: "Tile:lever", emitterKey: "Tile:lever", signalId: signal.id, macroUuid: "Macro.transition" });
     await controller.saveDefinition(definition);
     await controller.transition("calm");
-    await controller.events.whenIdle();
-    assert.equal(controller.getContext().runtime.episode.interactions.length, 1);
+    await controller.signals.whenIdle();
+    assert.equal(controller.getContext().runtime.state.interactions.length, 1);
     await controller.requestNamedInteraction("lever-use", "guard");
-    await controller.events.whenIdle();
-    assert.equal(controller.getContext().runtime.episodeId, "alarm");
-    assert.ok(controller.getContext().runtime.eventLog.some((entry) => entry.name === "lever.used"));
+    await controller.signals.whenIdle();
+    assert.equal(controller.getContext().runtime.stateId, "alarm");
+    assert.ok(controller.signals.history(f.scene).some((entry) => entry.name === "used"));
     assert.deepEqual(f.errors, []);
-  } finally { controller?.events.dispose(); controller?.runtime.dispose(); await f.dispose(); }
+  } finally { controller?.signals.dispose(); controller?.runtime.dispose(); await f.dispose(); }
 });
 
 test("constructor context menu opens only the chosen object action and writes no scene data", async () => {
@@ -267,12 +274,12 @@ test("constructor context menu opens only the chosen object action and writes no
   } finally { await f.dispose(); }
 });
 
-test("entry episode is selected without executing and an ambiguous player selection stays unresolved", async () => {
+test("entry state is selected without executing and an ambiguous player selection stays unresolved", async () => {
   const f = fixture(14);
   try {
-    f.scene.flags[MODULE_ID].definitions.main.entryEpisodeId = "alarm";
+    f.scene.flags[MODULE_ID].groupDefinitions.main.entryStateId = "alarm";
     const controller = new ScreenController();
-    assert.equal(controller.getContext().selectedEpisodeId, "alarm");
+    assert.equal(controller.getContext().selectedStateId, "alarm");
     assert.deepEqual(f.scene.updates, []);
     const pc = (id) => ({ id, actor: { testUserPermission: () => true }, hidden: false });
     f.scene.tokens.set("pc1", pc("pc1")); f.scene.tokens.set("pc2", pc("pc2"));
@@ -284,7 +291,7 @@ test("entry episode is selected without executing and an ambiguous player select
   } finally { await f.dispose(); }
 });
 
-test("a single owned self-target selects the acting character without requiring a scheme", async () => {
+test("a single owned self-target selects the acting character without requiring a group", async () => {
   const f = fixture(14);
   try {
     const controller = new ScreenController(); game.user = game.users.get("player");

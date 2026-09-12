@@ -13,7 +13,7 @@
       <button type="button" data-screen-action="close" title="Закрыть ширму" aria-label="Закрыть ширму"><i class="fa-solid fa-xmark"></i></button>
     </span>
   </header>
-  <div class="ms-ide-scene-line"><strong title="{{sceneName}}">🎬 {{sceneName}}</strong><span class="ms-scheme-badges">{{{badgesHTML}}}</span>{{#if isDirector}}<button type="button" class="ms-ide-emergency" data-screen-action="haltScene" title="Остановить всю автоматизацию всех схем">■ Остановить всё</button>{{/if}}</div>
+  <div class="ms-ide-scene-line"><strong title="{{sceneName}}">🎬 {{sceneName}}</strong><span class="ms-group-badges">{{{badgesHTML}}}</span>{{#if isDirector}}<button type="button" class="ms-ide-emergency" data-screen-action="haltScene" title="Остановить всю автоматизацию всех групп">■ Остановить всё</button>{{/if}}</div>
   {{#if missing}}<p class="ms-note">Откройте сцену на столе Foundry.</p>{{else}}
   <div class="ms-ide-zones" data-editor-context="{{contextKey}}">
     <section class="ms-ide-zone ms-ide-main" aria-label="Основная зона">

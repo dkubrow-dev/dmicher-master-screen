@@ -1,267 +1,103 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { sceneFixture, clone, descriptor, shopData, dialogueData } from "./fixtures/scene.js";
 import { MODULE_ID, defaultDefinition } from "../dmicher-master-screen/scripts/model.js";
-import { SchemeEditor } from "../dmicher-master-screen/scripts/scheme-editor.js";
+import { GroupEditor } from "../dmicher-master-screen/scripts/group-editor.js";
 import { SceneAssets, getInteractionCatalog } from "../dmicher-master-screen/scripts/scene-assets.js";
-import { SceneObjects, getObjectBindings, materializeEpisode, resolveObjectShop, resolveObjectDialogue } from "../dmicher-master-screen/scripts/scene-objects.js";
-import { EventCatalog, getEventCatalog } from "../dmicher-master-screen/scripts/event-catalog.js";
-import { getDefinitions, getObjectTags, saveObjectTags } from "../dmicher-master-screen/scripts/store.js";
+import { SceneObjects, materializeState, resolveObjectTools } from "../dmicher-master-screen/scripts/scene-objects.js";
+import { getSignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
+import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";
+import { getDefinitions, getObjectTags } from "../dmicher-master-screen/scripts/store.js";
 import { exportBundle, validateBundle, importBundle } from "../dmicher-master-screen/scripts/transfer.js";
+const wait = (stateId) => ({ stateId, steps: [{ id: 1, kind: "wait", parameters: { seconds: 7 }, next: [18] }, { id: 18, kind: "wait", parameters: { seconds: 10 }, next: [] }] });
 
-const copy = (value) => structuredClone(value);
-function merge(target, value) {
-  for (const [key, next] of Object.entries(value)) {
-    if (key.startsWith("-=")) { delete target[key.slice(2)]; continue; }
-    if (next && typeof next === "object" && !Array.isArray(next)) { target[key] ??= {}; merge(target[key], next); }
-    else target[key] = copy(next);
-  }
-}
-function fixture() {
-  let serial = 0, writes = 0;
-  const gm = { id: "gm", isGM: true, role: 4, active: true };
-  globalThis.game = { user: gm, users: new Map([[gm.id, gm]]), system: { id: "test" }, scenes: new Map(), modules: new Map() };
-  globalThis.foundry = { utils: { randomID: () => `id${++serial}` } };
-  const create = (id) => {
-    const scene = { id, name: id, tokens: new Map(), tiles: new Map(), notes: new Map(), flags: { [MODULE_ID]: {} },
-      getFlag(scope, key) { return copy(this.flags[scope]?.[key]); },
-      async setFlag(scope, key, value) {
-        writes++; let target = this.flags[scope] ??= {}; const parts = key.split(".");
-        for (const part of parts.slice(0, -1)) target = target[part] ??= {};
-        merge(target, { [parts.at(-1)]: value });
-      },
-      async update(changes) { for (const [path, value] of Object.entries(changes)) { const [, scope, ...parts] = path.split("."); await this.setFlag(scope, parts.join("."), value); } },
-      toObject() { return { _id: id, name: id, flags: copy(this.flags), tokens: [...this.tokens.values()].map(({ id, x, y }) => ({ _id: id, x, y })), tiles: [], notes: [] }; }
-    };
-    for (const tokenId of ["npc", "pc"]) scene.tokens.set(tokenId, { id: tokenId, name: tokenId, x: 0, y: 0, hidden: false });
-    scene.tiles.set("counter", { id: "counter", name: "Counter", x: 0, y: 0, hidden: false });
-    game.scenes.set(id, scene); return scene;
-  };
-  const scene = create("map");
-  globalThis.canvas = { scene };
-  globalThis.fromUuid = async () => null;
-  return { scene, create, assets: new SceneAssets(scene), objects: new SceneObjects(scene), editor: new SchemeEditor(scene), events: new EventCatalog(scene), writes: () => writes };
-}
-const descriptor = { type: "Token", id: "npc" };
-const shopData = (name = "Market") => ({ name, description: { ru: "Товары", en: "Goods" }, items: [{ id: "lot", data: { name: "Sword", type: "gear", system: { quantity: 7 } }, stock: 4 }] });
-const dialogueData = (eventName = "") => ({ name: "Conversation", description: "A short greeting", pages: [{ id: "first", name: "Hello", text: "Welcome", responses: [{ id: "finish", label: "Bye", eventName }] }] });
-
-test("catalog and ownership readers do not infer records from removed episode fields", () => {
-  const f = fixture(), definition = defaultDefinition();
-  definition.episodes[0].tokens = { npc: { shop: { enabled: true, items: shopData().items }, patrol: { enabled: true, points: [{ x: 10, y: 20 }] } } };
-  definition.episodes[0].dialogues = [{ id: "removed", nodes: [{ id: "page", text: "Old data" }] }];
-  f.scene.flags[MODULE_ID].definitions = { main: definition };
-  const before = copy(f.scene.flags);
-  assert.deepEqual(f.assets.list().shops, []); assert.deepEqual(f.assets.list().dialogues, []); assert.deepEqual(f.objects.list().bindings, {});
-  assert.deepEqual(f.scene.flags, before); assert.equal(f.writes(), 0);
+test("removed models are never inferred; current catalogs may be authored without any group", async () => {
+  const f = sceneFixture(), old = defaultDefinition(); old.states[0].tokens = { npc: { shop: { items: shopData().items } } }; f.scene.flags[MODULE_ID].definitions = { main: old };
+  const before = clone(f.scene.flags); assert.deepEqual(f.assets.list().shops, []); assert.deepEqual(f.objects.list().bindings, {}); assert.deepEqual(getDefinitions(f.scene), []); assert.deepEqual(f.scene.flags, before);
+  await f.assets.saveShop(shopData()); await f.assets.saveDialogue(dialogueData()); assert.deepEqual(getDefinitions(f.scene), []); assert.equal(f.scene.getFlag(MODULE_ID, "groupRuntimes"), undefined);
 });
-
-test("removing an absent native object deletes its explicit binding while preserving catalog assets", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, tags: ["merchant"], shop: { shopId: shop.id } });
-  f.scene.tokens.delete(descriptor.id);
-  await f.objects.remove(descriptor, { expectedRevision: f.objects.list().revision });
-  assert.equal(f.objects.get(descriptor), null); assert.deepEqual(getObjectTags(f.scene, descriptor), []);
-  assert.equal(f.assets.getShop(shop.id).id, shop.id);
-  await f.objects.remove(descriptor); assert.equal(f.objects.get(descriptor), null);
+test("catalog revisions, names and quantities reject invalid edits before writing", async () => {
+  const f = sceneFixture(), shop = await f.assets.saveShop(shopData()), revision = f.assets.list().revision;
+  assert.equal(shop.items[0].data.system.quantity, 7); await f.assets.saveShop({ ...shop, name: "Renamed" }, { expectedRevision: revision });
+  await assert.rejects(f.assets.saveShop(shop, { expectedRevision: revision })); await assert.rejects(f.assets.saveShop(shopData("RENAMED")));
+  await assert.rejects(f.assets.saveShop({ ...shopData("Another"), items: [{ ...shopData().items[0], stock: "2" }] }));
 });
-
-test("unsupported feature definitions cannot hide a current routine or create another executor", async () => {
-  const f = fixture(), definition = await f.editor.createScheme({ name: "Market" }), episodeId = definition.entryEpisodeId;
-  const steps = [{ id: 1, kind: "wait", parameters: { seconds: 7 }, next: [18] },
-    { id: 18, kind: "wait", parameters: { seconds: 10 }, next: [] }];
-  await f.objects.save(descriptor, { schemeId: definition.schemeId, routines: [{ episodeId, repeat: true, steps }] });
-  f.scene.flags[MODULE_ID].objectBindings.bindings["Token:npc"].features.push({ id: "old-route", kind: "patrol", enabled: true, patrol: { speed: 5 } });
-  const before = copy(f.scene.flags), writes = f.writes();
-  const binding = f.objects.get(descriptor);
-  assert.deepEqual(binding.features, []); assert.deepEqual(binding.routines[0].steps, steps);
-  const snapshot = materializeEpisode(f.scene, definition, definition.episodes[0]);
-  assert.equal(snapshot.routines.length, 1); assert.deepEqual(snapshot.subscriptions, []);
-  assert.deepEqual(snapshot.tokens.npc, { enabled: true });
-  assert.equal(f.writes(), writes); assert.deepEqual(f.scene.flags, before);
+test("object ownership is exclusive; reassignment clears group controls but preserves notes and tags", async () => {
+  const f = sceneFixture(), a = await f.editor.createGroup({ name: "North" }), b = await f.editor.createGroup({ name: "South" }), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { groupId: a.groupId, tags: ["merchant"], notes: "Note", scripts: [wait(a.entryStateId)], shops: [{ shopId: shop.id, stateIds: [a.entryStateId] }] });
+  await assert.rejects(f.objects.save(descriptor, { groupId: b.groupId })); const revision = f.objects.list().revision;
+  await f.objects.save(descriptor, { groupId: b.groupId }, { allowReassign: true, expectedRevision: revision });
+  assert.deepEqual(f.objects.get(descriptor).scripts, []); assert.deepEqual(f.objects.get(descriptor).shops, []); assert.equal(f.objects.get(descriptor).notes, "Note"); assert.deepEqual(getObjectTags(f.scene, descriptor), ["merchant"]);
+  await assert.rejects(f.objects.save(descriptor, { notes: "Stale" }, { expectedRevision: revision })); await f.objects.remove(descriptor); assert.equal(f.objects.get(descriptor).groupId, null);
 });
-
-test("a single episode is its scheme's only entry choice without writing during reads", async () => {
-  const f = fixture(), definition = await f.editor.createScheme({ name: "Market" });
-  delete f.scene.flags[MODULE_ID].definitions[definition.schemeId].entryEpisodeId;
-  const before = copy(f.scene.flags), writes = f.writes();
-  assert.equal(getDefinitions(f.scene)[0].entryEpisodeId, definition.episodes[0].id);
-  assert.equal(f.writes(), writes); assert.deepEqual(f.scene.flags, before);
+test("an absent native object can be unbound without deleting its shared catalog", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { groupId: group.groupId, shops: [{ shopId: shop.id }] }); f.scene.tokens.delete("npc");
+  await f.objects.remove(descriptor); await f.objects.remove(descriptor); assert.equal(f.objects.get(descriptor), null); assert.equal(f.assets.getShop(shop.id).id, shop.id);
 });
-
-test("independent catalogs can be authored on a truly empty scene without creating a scheme", async () => {
-  const f = fixture(), initial = f.writes();
-  assert.deepEqual(f.assets.list().shops, []); assert.deepEqual(f.objects.list().bindings, {}); assert.deepEqual(getDefinitions(f.scene), []);
-  assert.equal(f.writes(), initial);
-  const shop = await f.assets.saveShop(shopData()), dialogue = await f.assets.saveDialogue(dialogueData());
-  assert.equal(f.assets.getShop(shop.id).items[0].data.system.quantity, 7);
-  assert.equal(f.assets.getDialogue(dialogue.id).startPageId, "first");
-  assert.deepEqual(getDefinitions(f.scene), []); assert.equal(f.scene.getFlag(MODULE_ID, "runtimes"), undefined);
-  const revision = f.assets.list().revision;
-  await f.assets.saveShop({ ...shop, name: "New market" }, { expectedRevision: revision });
-  await assert.rejects(f.assets.saveDialogue(dialogue, { expectedRevision: revision }));
-  await assert.rejects(f.assets.saveShop(shopData("new MARKET")));
-  await assert.rejects(f.assets.saveShop({ ...shopData(), items: [{ ...shopData().items[0], stock: "2" }] }));
+test("multiple shops and dialogues are selected by state and may be shared by several objects", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), state = await f.editor.createState(group.groupId, { name: "Second" }), shops = [await f.assets.saveShop(shopData("A")), await f.assets.saveShop(shopData("B"))], talk = await f.assets.saveDialogue(dialogueData());
+  const assignment = { groupId: group.groupId, shops: [{ shopId: shops[0].id, stateIds: [group.entryStateId] }, { shopId: shops[1].id, stateIds: [state.id] }], dialogues: [{ dialogueId: talk.id }] };
+  await f.objects.save(descriptor, assignment); await f.objects.save({ type: "Tile", id: "counter" }, assignment);
+  assert.equal(resolveObjectTools(f.scene, descriptor, { groupId: group.groupId, stateId: state.id }, "shop")[0].asset.id, shops[1].id);
+  assert.equal(materializeState(f.scene, f.editor.get(group.groupId), f.editor.get(group.groupId).states[0]).shops.length, 2);
+  await assert.rejects(f.assets.deleteShop(shops[0].id)); await assert.rejects(f.assets.deleteDialogue(talk.id));
+  for (const target of [descriptor, { type: "Tile", id: "counter" }]) await f.objects.save(target, { shops: [], dialogues: [] });
+  await f.assets.deleteShop(shops[0].id); await f.assets.deleteDialogue(talk.id);
 });
-
-test("entry episode is valid, explicit, and protected from delete or move", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "North" }), other = await f.editor.createScheme({ name: "South" });
-  assert.equal(scheme.episodes.length, 1); assert.equal(scheme.entryEpisodeId, scheme.episodes[0].id);
-  const next = await f.editor.createEpisode(scheme.schemeId, { name: "Another" });
-  await assert.rejects(f.editor.updateScheme(scheme.schemeId, { entryEpisodeId: "missing" }));
-  await assert.rejects(f.editor.deleteEpisode(scheme.schemeId, scheme.entryEpisodeId));
-  await assert.rejects(f.editor.transferEpisode(scheme.schemeId, other.schemeId, scheme.entryEpisodeId, { copy: false }));
-  await f.editor.updateScheme(scheme.schemeId, { entryEpisodeId: next.id });
-  await f.editor.deleteEpisode(scheme.schemeId, scheme.entryEpisodeId);
-  assert.equal(f.editor.get(scheme.schemeId).entryEpisodeId, next.id);
-  assert.equal(f.scene.getFlag(MODULE_ID, "runtimes"), undefined);
+test("deleting a restricted state removes its scripts and tool associations without widening availability", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), state = await f.editor.createState(group.groupId, { name: "Open" }), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { groupId: group.groupId, transitionScripts: { [state.id]: wait() }, scripts: [wait(state.id)], shops: [{ shopId: shop.id, stateIds: [state.id] }] });
+  await f.editor.deleteState(group.groupId, state.id); const binding = f.objects.get(descriptor);
+  assert.deepEqual(binding.scripts, []); assert.deepEqual(binding.transitionScripts, {}); assert.deepEqual(binding.shops, []);
+  await f.editor.deleteGroup(group.groupId); assert.equal(f.objects.get(descriptor).groupId, null); assert.equal(f.assets.getShop(shop.id).id, shop.id);
 });
-
-test("one object has one owner; reassign and release clear old controls while preserving descriptions", async () => {
-  const f = fixture(), a = await f.editor.createScheme({ name: "North" }), b = await f.editor.createScheme({ name: "South" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: a.schemeId, tags: ["merchant"], notes: "Note", episodes: { [a.entryEpisodeId]: { position: { x: 5, y: 6 } } }, shop: { shopId: shop.id, episodeIds: [a.entryEpisodeId], trigger: { schemeIds: [a.schemeId], episodeIds: [a.entryEpisodeId] } } });
-  await assert.rejects(f.objects.save(descriptor, { schemeId: b.schemeId }));
-  const revision = f.objects.list().revision;
-  await f.objects.save(descriptor, { schemeId: b.schemeId }, { expectedRevision: revision, allowReassign: true });
-  assert.deepEqual(f.objects.get(descriptor).episodes, {}); assert.equal(f.objects.get(descriptor).shop, null);
-  assert.deepEqual(getObjectTags(f.scene, descriptor), ["merchant"]); assert.equal(f.objects.get(descriptor).notes, "Note");
-  await assert.rejects(f.objects.save(descriptor, { notes: "Stale" }, { expectedRevision: revision }));
-  await f.objects.remove(descriptor);
-  assert.equal(f.objects.get(descriptor).schemeId, null); assert.equal(f.objects.get(descriptor).notes, "Note");
-  assert.equal(f.scene.getFlag(MODULE_ID, "runtimes"), undefined);
+test("script signals are owned by the object, typed, and protected against removing used definitions", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup();
+  const signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Check!", parameters: [{ name: "count", type: "integer" }], returns: [] });
+  const script = { stateId: group.entryStateId, steps: [{ id: 1, kind: "signal", parameters: { signalId: signal.id, parameters: { count: 2 } }, next: [] }] };
+  await f.objects.save(descriptor, { groupId: group.groupId, scripts: [script] }); await assert.rejects(f.catalog.removeSignal(signal.id));
+  script.steps[0].parameters.parameters.count = "2"; await assert.rejects(f.objects.save(descriptor, { scripts: [script] }));
+  script.steps[0].parameters.parameters.count = 2; await assert.rejects(f.objects.save({ type: "Token", id: "pc" }, { groupId: group.groupId, scripts: [script] }));
+  await f.catalog.saveSignal({ ...signal, name: "Renamed" }); assert.equal(f.objects.get(descriptor).scripts[0].steps[0].parameters.signalId, signal.id);
 });
-
-test("catalog references are reusable and block deletion until explicitly unbound", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData()), dialogue = await f.assets.saveDialogue(dialogueData());
-  for (const target of [descriptor, { type: "Tile", id: "counter" }]) await f.objects.save(target, { schemeId: scheme.schemeId, shop: { shopId: shop.id }, dialogue: { dialogueId: dialogue.id } });
-  await assert.rejects(f.assets.deleteShop(shop.id)); await assert.rejects(f.assets.deleteDialogue(dialogue.id));
-  const episode = materializeEpisode(f.scene, f.editor.get(scheme.schemeId), f.editor.get(scheme.schemeId).episodes[0]);
-  assert.equal(episode.shops.length, 2); assert.equal(episode.dialogues.length, 2); assert.equal(new Set(episode.shops.map((entry) => entry.shopId)).size, 1);
-  const another = await f.editor.createScheme({ name: "Another" });
-  await assert.rejects(f.editor.transferEpisode(scheme.schemeId, another.schemeId, scheme.entryEpisodeId));
-  for (const target of [descriptor, { type: "Tile", id: "counter" }]) await f.objects.save(target, { shop: null, dialogue: null });
-  await f.assets.deleteShop(shop.id); await f.assets.deleteDialogue(dialogue.id);
+test("group JSON carries custom signals, object macro ownership and state-scoped tools atomically", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup({ name: "Market" }), shop = await f.assets.saveShop(shopData());
+  const signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Own signal", parameters: [], returns: [] });
+  f.macros.set("Macro.action", { documentName: "Macro", type: "script", command: "return true;" }); await f.catalog.attachMacro("Token:npc", "Macro.action");
+  await f.objects.save(descriptor, { groupId: group.groupId, shops: [{ shopId: shop.id, stateIds: [group.entryStateId] }], scripts: [{ stateId: group.entryStateId, steps: [{ id: 1, kind: "signal", parameters: { signalId: signal.id }, next: [9] }, { id: 9, kind: "macro", parameters: { macroUuid: "Macro.action" }, next: [] }] }] });
+  const envelope = f.editor.exportGroup(group.groupId), receiver = f.create("receiver"), editor = new GroupEditor(receiver), imported = await editor.importGroup(envelope);
+  const binding = new SceneObjects(receiver).get(descriptor), catalog = getSignalCatalog(receiver), incomingSignal = catalog.signals.find((entry) => entry.name === signal.name);
+  assert.equal(binding.groupId, imported.groupId); assert.equal(binding.scripts[0].steps[0].parameters.signalId, incomingSignal.id); assert.equal(incomingSignal.emitterKey, "Token:npc"); assert.ok(catalog.macros.some((entry) => entry.ownerKey === "Token:npc" && entry.uuid === "Macro.action"));
+  const before = clone(receiver.flags); await assert.rejects(editor.importGroup(envelope, { name: "Conflict" })); assert.deepEqual(receiver.flags, before);
 });
-
-test("deleting a scoped episode cannot turn its restricted shop or feature into all-episode automation", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), next = await f.editor.createEpisode(scheme.schemeId, { name: "Open" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, episodes: { [next.id]: { hidden: true } }, shop: { shopId: shop.id, episodeIds: [next.id] }, routines: [{ episodeId: next.id, steps: [] }] });
-  await f.editor.deleteEpisode(scheme.schemeId, next.id);
-  assert.deepEqual(f.objects.get(descriptor).episodes, {}); assert.equal(f.objects.get(descriptor).shop, null); assert.deepEqual(f.objects.get(descriptor).routines, []);
-  await f.editor.deleteScheme(scheme.schemeId);
-  assert.equal(f.objects.get(descriptor).schemeId, null); assert.equal(f.assets.getShop(shop.id).id, shop.id);
+test("state JSON maps state restrictions and preserves established step identities", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { groupId: group.groupId, scripts: [wait(group.entryStateId)], shops: [{ shopId: shop.id, stateIds: [group.entryStateId], conditions: { stateIds: [group.entryStateId], groupIds: [group.groupId] } }] });
+  const envelope = f.editor.exportState(group.groupId, group.entryStateId), copied = await f.editor.importState(group.groupId, envelope, { name: "Copy" });
+  assert.deepEqual(f.objects.get(descriptor).scripts.map((script) => script.steps.map((step) => step.id)), [[1, 18], [1, 18]]);
+  assert.ok(f.objects.get(descriptor).shops.some((ref) => ref.stateIds.includes(copied.id)));
+  const receiver = f.create("receiver"), editor = new GroupEditor(receiver), target = await editor.createGroup({ name: "Receiving" }), imported = await editor.importState(target.groupId, envelope, { name: "Imported" });
+  const binding = new SceneObjects(receiver).get(descriptor); assert.equal(binding.groupId, target.groupId); assert.deepEqual(binding.shops[0].stateIds, [imported.id]); assert.deepEqual(binding.shops[0].conditions.groupIds, [target.groupId]); assert.deepEqual(binding.shops[0].conditions.stateIds, [imported.id]);
 });
-
-
-test("object event features validate types and protect referenced catalog records", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Guard" });
-  const event = await f.events.saveEvent({ name: "guard.check" }), trigger = await f.events.saveTrigger({ name: "guard.result", eventId: event.id, parameters: [{ name: "value", type: "integer", min: 1, max: 5 }] });
-  const feature = { id: "check", kind: "trigger", eventName: event.name, triggerId: trigger.id, parameters: { value: 2 } };
-  await assert.rejects(f.objects.save(descriptor, { schemeId: scheme.schemeId, features: [{ ...feature, parameters: { value: "2" } }] }));
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, features: [feature] });
-  await assert.rejects(f.events.deleteEvent(event.id)); await assert.rejects(f.events.deleteTrigger(trigger.id));
-  await assert.rejects(f.events.saveTrigger({ ...trigger, parameters: [{ name: "value", type: "boolean" }] }));
-  await f.events.saveEvent({ ...event, name: "guard.new" });
-  assert.equal(f.objects.get(descriptor).features[0].eventName, "guard.new");
-  const episode = materializeEpisode(f.scene, f.editor.get(scheme.schemeId), f.editor.get(scheme.schemeId).episodes[0]);
-  assert.equal(episode.subscriptions[0].target.id, "npc"); assert.equal(episode.subscriptions[0].parameters.value, 2);
-  await assert.rejects(f.objects.save(descriptor, { features: [feature, feature] }));
+test("scoped import binds a native scene signal subscription to the receiving scene", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup({ name: "Bound" }); await f.objects.save(descriptor, { groupId: group.groupId });
+  const signal = f.catalog.list().signals.find((entry) => entry.emitterKey === "Scene:map" && entry.name === "activated");
+  f.macros.set("Macro.observe", { documentName: "Macro", type: "script", command: signalMacroSnippet(signal) }); await f.catalog.attachMacro("Token:npc", "Macro.observe");
+  await f.catalog.saveSubscription({ ownerKey: "Token:npc", emitterKey: signal.emitterKey, signalId: signal.id, macroUuid: "Macro.observe" });
+  const receiver = f.create("receiver"); await new GroupEditor(receiver).importGroup(f.editor.exportGroup(group.groupId));
+  const subscription = getSignalCatalog(receiver).subscriptions[0]; assert.equal(subscription.ownerKey, "Token:npc"); assert.equal(subscription.emitterKey, "Scene:receiver"); assert.equal(subscription.signalId, "builtin:Scene:receiver:activated");
 });
-
-test("dialogue event rename updates independent pages and JSON imports the typed dependency", async () => {
-  const f = fixture(), event = await f.events.saveEvent({ name: "greeting.done" });
-  await f.events.saveTrigger({ name: "greeting.reply", eventId: event.id, parameters: [] });
-  const dialogue = await f.assets.saveDialogue(dialogueData(event.name));
-  await assert.rejects(f.events.deleteEvent(event.id));
-  await f.events.saveEvent({ ...event, name: "greeting.finished" });
-  assert.equal(f.assets.getDialogue(dialogue.id).pages[0].responses[0].eventName, "greeting.finished");
-  const receiver = f.create("receiver"), imported = await new SceneAssets(receiver).importDialogue(f.assets.exportDialogue(dialogue.id));
-  assert.equal(imported.pages[0].responses[0].eventName, "greeting.finished");
-  assert.ok(getEventCatalog(receiver).triggers.some((entry) => entry.name === "greeting.reply"));
-  assert.deepEqual(getDefinitions(receiver), []);
+test("player-character flags retain saved preparation but exclude automated state snapshots", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData());
+  await f.objects.save(descriptor, { groupId: group.groupId, playerCharacter: true, scripts: [wait(group.entryStateId)], shops: [{ shopId: shop.id }] });
+  const materialized = materializeState(f.scene, group, group.states[0]); assert.deepEqual(materialized.scripts, []); assert.deepEqual(materialized.objects, []); assert.deepEqual(materialized.shops, []); assert.equal(f.objects.get(descriptor).shops.length, 1);
+  await f.objects.save({ type: "Token", id: "pc" }, { playerCharacter: true }); assert.equal(f.objects.get({ type: "Token", id: "pc" }).groupId, null); await assert.rejects(f.objects.save({ type: "Tile", id: "counter" }, { playerCharacter: true }));
 });
-
-test("scheme JSON includes assets, ownership, typed features and rejects a receiving owner collision atomically", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData());
-  const event = await f.events.saveEvent({ name: "market.check" }), trigger = await f.events.saveTrigger({ name: "market.result", eventId: event.id, parameters: [{ name: "ok", type: "boolean" }] });
-  const dialogue = await f.assets.saveDialogue(dialogueData(event.name));
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, shop: { shopId: shop.id, episodeIds: [scheme.entryEpisodeId] }, dialogue: { dialogueId: dialogue.id }, features: [{ id: "check", kind: "trigger", eventName: event.name, triggerId: trigger.id, parameters: { ok: true } }] });
-  const receiver = f.create("receiver"), editor = new SchemeEditor(receiver), imported = await editor.importScheme(f.editor.exportScheme(scheme.schemeId));
-  const binding = new SceneObjects(receiver).get(descriptor), catalog = getInteractionCatalog(receiver);
-  assert.equal(binding.schemeId, imported.schemeId); assert.equal(binding.shop.shopId, catalog.shops[0].id);
-  assert.equal(resolveObjectDialogue(receiver, descriptor, { schemeId: imported.schemeId, episodeId: imported.entryEpisodeId }).config.nodes[0].responses[0].eventName, event.name);
-  const before = copy(receiver.flags);
-  await assert.rejects(editor.importScheme(f.editor.exportScheme(scheme.schemeId), { name: "Another" }));
-  assert.deepEqual(receiver.flags, before);
-});
-
-test("scene bundles carry catalogs and explicit bindings without runtime or hidden defaults", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, shop: { shopId: shop.id }, notes: "Note" });
-  const bundle = await exportBundle(f.scene); validateBundle(bundle);
-  assert.equal(bundle.interactionCatalog.shops.length, 1); assert.equal(bundle.objectBindings.bindings["Token:npc"].shop.shopId, shop.id);
-  assert.equal(bundle.scene.flags?.[MODULE_ID]?.runtimes, undefined);
-  let imported;
-  globalThis.CONFIG = { Scene: { documentClass: { async create(data) { imported = data; return { id: "imported" }; } } } };
-  await importBundle(bundle);
-  assert.equal(imported.flags[MODULE_ID].objectBindings.bindings["Token:npc"].notes, "Note");
-  assert.equal(imported.flags[MODULE_ID].definitions[scheme.schemeId].entryEpisodeId, scheme.entryEpisodeId);
-  const empty = await exportBundle(f.create("empty")); validateBundle(empty);
-  assert.deepEqual(empty.definitions, []); assert.deepEqual(empty.interactionCatalog.shops, []);
-});
-
-test("episode JSON remaps object scopes and preserves stable routine step identities", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Guard" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, shop: { shopId: shop.id, episodeIds: [scheme.entryEpisodeId], trigger: { episodeIds: [scheme.entryEpisodeId] } },
-    routines: [{ episodeId: scheme.entryEpisodeId, steps: [{ id: 1, kind: "wait", parameters: { seconds: 1 }, next: [] }] }] });
-  const envelope = f.editor.exportEpisode(scheme.schemeId, scheme.entryEpisodeId);
-  const imported = await f.editor.importEpisode(scheme.schemeId, envelope, { name: "Copy" });
-  const binding = f.objects.get(descriptor);
-  assert.equal(binding.routines.length, 2);
-  assert.ok(binding.shop.episodeIds.includes(imported.id));
-  assert.ok(binding.shop.trigger.episodeIds.includes(scheme.entryEpisodeId));
-  assert.ok(binding.shop.trigger.episodeIds.includes(imported.id));
-  const receiver = f.create("receiver"), target = await new SchemeEditor(receiver).createScheme({ name: "Receiving" });
-  const episode = await new SchemeEditor(receiver).importEpisode(target.schemeId, envelope, { name: "Imported" });
-  const next = new SceneObjects(receiver).get(descriptor);
-  assert.deepEqual(next.shop.episodeIds, [episode.id]); assert.deepEqual(next.shop.trigger.episodeIds, [episode.id]);
-  assert.equal(next.schemeId, target.schemeId);
-});
-
-
-test("player character flags retain preparation but exclude all object automation from new snapshots", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), shop = await f.assets.saveShop(shopData());
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, shop: { shopId: shop.id }, playerCharacter: true,
-    entry: { position: { x: 25, y: 30 } }, routines: [{ episodeId: scheme.entryEpisodeId, steps: [{ id: 1, kind: "wait", parameters: { seconds: 1 }, next: [] }] }] });
-  const snapshot = materializeEpisode(f.scene, f.editor.get(scheme.schemeId), f.editor.get(scheme.schemeId).episodes[0]);
-  assert.equal(snapshot.tokens.npc, undefined); assert.deepEqual(snapshot.shops, []); assert.deepEqual(snapshot.objects, []); assert.deepEqual(snapshot.routines, []);
-  assert.equal(f.objects.get(descriptor).shop.shopId, shop.id);
-  await f.objects.save({ type: "Token", id: "pc" }, { playerCharacter: true, tags: ["hero"] });
-  assert.equal(f.objects.get({ type: "Token", id: "pc" }).schemeId, null);
-  await assert.rejects(f.objects.save(descriptor, { playerCharacter: "true" }));
-  await assert.rejects(f.objects.save({ type: "Tile", id: "counter" }, { playerCharacter: true }));
-});
-
-
-
-test("routine events and macros participate in catalog reference checks, rename, and scoped JSON", async () => {
-  const f = fixture(), scheme = await f.editor.createScheme({ name: "Market" }), event = await f.events.saveEvent({ name: "routine.done" });
-  const trigger = await f.events.saveTrigger({ name: "routine.result", eventId: event.id, parameters: [{ name: "count", type: "integer" }] });
-  await f.events.saveMacro({ uuid: "Macro.action", triggerIds: [trigger.id] });
-  const steps = [{ id: 1, kind: "event", parameters: { eventName: event.name, triggerId: trigger.id, parameters: { count: 2 } }, next: [9] },
-    { id: 9, kind: "macro", parameters: { macroUuid: "Macro.action", parameters: { note: "data" } }, next: [] }];
-  await f.objects.save(descriptor, { schemeId: scheme.schemeId, routines: [{ episodeId: scheme.entryEpisodeId, steps }] });
-  await assert.rejects(f.events.deleteTrigger(trigger.id)); await assert.rejects(f.events.removeMacro("Macro.action"));
-  await assert.rejects(f.events.saveTrigger({ ...trigger, parameters: [{ name: "count", type: "boolean" }] }));
-  const other = await f.events.saveEvent({ name: "other.event" });
-  await assert.rejects(f.events.saveTrigger({ ...trigger, eventId: other.id }));
-  await f.events.saveEvent({ ...event, name: "routine.complete" });
-  assert.equal(f.objects.get(descriptor).routines[0].steps[0].parameters.eventName, "routine.complete");
-  const receiver = f.create("receiver"), imported = await new SchemeEditor(receiver).importScheme(f.editor.exportScheme(scheme.schemeId));
-  const binding = new SceneObjects(receiver).get(descriptor), catalog = getEventCatalog(receiver);
-  assert.equal(binding.routines[0].episodeId, imported.entryEpisodeId);
-  assert.equal(binding.routines[0].steps[0].parameters.triggerId, catalog.triggers.find((entry) => entry.name === trigger.name).id);
-  assert.ok(catalog.macros.some((entry) => entry.uuid === "Macro.action"));
-  const replacement = await f.editor.createEpisode(scheme.schemeId, { name: "New entry" });
-  await f.editor.updateScheme(scheme.schemeId, { entryEpisodeId: replacement.id }); await f.editor.deleteEpisode(scheme.schemeId, scheme.entryEpisodeId);
-  assert.deepEqual(f.objects.get(descriptor).routines, []);
+test("whole scene bundles contain catalogs and explicit bindings but no active execution", async () => {
+  const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData()); await f.objects.save(descriptor, { groupId: group.groupId, shops: [{ shopId: shop.id }], notes: "Note" });
+  const bundle = await exportBundle(f.scene); validateBundle(bundle); assert.equal(bundle.objectBindings.bindings["Token:npc"].shops[0].shopId, shop.id);
+  let imported; globalThis.CONFIG = { Scene: { documentClass: { create: async () => { imported = f.create("imported"); return imported; } } } };
+  await importBundle(bundle); assert.equal(imported.flags[MODULE_ID].objectBindings.bindings["Token:npc"].notes, "Note"); assert.equal(imported.flags[MODULE_ID].groupRuntimes, undefined);
+  const empty = await exportBundle(f.create("empty")); validateBundle(empty); assert.deepEqual(empty.definitions, []);
 });

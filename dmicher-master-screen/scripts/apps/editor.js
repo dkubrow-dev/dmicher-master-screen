@@ -1,9 +1,10 @@
 import { themedClasses } from "../ui.js";
 import { randomId } from "../model.js";
-import { requireNumber, buildTriggerRows } from "./editor-view.js";
-import { buildTriggerFields, readTriggerFields, splitTags } from "./trigger-fields.js";
+import { requireNumber, buildConditionRows } from "./editor-view.js";
+import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
 import { ConstructorDock } from "./constructor-dock.js";
 import { getObjectBindings } from "../scene-objects.js";
+import { getSignalCatalog } from "../signal-catalog.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin, DialogV2 } = foundry.applications.api;
 const MODULE_ID = "dmicher-master-screen";
@@ -12,7 +13,7 @@ const field = (root, name) => root?.querySelector(`[name="${name}"]`);
 const value = (root, name, fallback = "") => field(root, name)?.value ?? fallback;
 const checked = (root, name) => field(root, name)?.checked === true;
 const number = (root, name, label, options) => requireNumber(value(root, name), label, options);
-const editorContextKey = (context, id) => `${context.scene?.id}:${context.definition?.schemeId && context.definition.schemeId !== "main" ? `${context.definition.schemeId}:` : ""}${id}`;
+const editorContextKey = (context, id) => `${context.scene?.id}:${context.definition?.groupId && context.definition.groupId !== "main" ? `${context.definition.groupId}:` : ""}${id}`;
 const errorMessage = (error) => {
   console.error(`${MODULE_ID} |`, error);
   ui.notifications.error(error?.message ?? "Не удалось выполнить действие ширмы.");
@@ -88,7 +89,7 @@ export class EditorApplication extends ScreenFormApplication {
     position: { width: 920, height: 760 },
     window: { title: "Ширма мастера", icon: "fa-solid fa-chalkboard", resizable: true }
   };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/episode-tools.hbs`, scrollable: [".ms-body"] } };
+  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/state-tools.hbs`, scrollable: [".ms-body"] } };
 
   constructor(controller, { mode = "constructor", ...options } = {}) {
     super(mode === "constructor" ? { ...options,
@@ -98,7 +99,7 @@ export class EditorApplication extends ScreenFormApplication {
     this.dock = mode === "constructor" ? new ConstructorDock() : null;
     this.draft = null;
     this.contextKey = "";
-    this.episodeDirty = false;
+    this.stateDirty = false;
     this.drafts = new Map();
     this.pendingInputs = null;
     this.draftRevision = null;
@@ -134,13 +135,13 @@ export class EditorApplication extends ScreenFormApplication {
       }
       return false;
     }
-    if (event.target.closest("[data-episode-fields]")) { this.episodeDirty = true; return true; }
+    if (event.target.closest("[data-state-fields]")) { this.stateDirty = true; return true; }
     return false;
   }
 
   resetDraft() {
     super.resetDraft();
-    this.episodeDirty = false;
+    this.stateDirty = false;
     this.pendingInputs = null;
     this.draftRevision = null;
     this.drafts?.delete(this.contextKey);
@@ -148,8 +149,8 @@ export class EditorApplication extends ScreenFormApplication {
 
   refresh() {
     const context = this.controller.getContext();
-    const episodeId = context.episode?.id ?? context.definition?.episodes?.[0]?.id;
-    if (this.rendered && this.contextKey !== editorContextKey(context, episodeId)) return this.render({ force: true });
+    const stateId = context.state?.id ?? context.definition?.states?.[0]?.id;
+    if (this.rendered && this.contextKey !== editorContextKey(context, stateId)) return this.render({ force: true });
     return super.refresh();
   }
 
@@ -158,13 +159,13 @@ export class EditorApplication extends ScreenFormApplication {
     if (this.contextKey && this.dirty) {
       const inputs = [...(this.element?.querySelectorAll?.("input[name], select[name], textarea[name]") ?? [])]
         .map((input) => ({ name: input.name, type: input.type, value: input.value, checked: input.checked }));
-      this.drafts.set(this.contextKey, { draft: clone(this.draft), revision: this.draftRevision, dirty: true, episodeDirty: this.episodeDirty, inputs });
+      this.drafts.set(this.contextKey, { draft: clone(this.draft), revision: this.draftRevision, dirty: true, stateDirty: this.stateDirty, inputs });
     }
     const saved = this.drafts.get(key);
     this.contextKey = key;
     this.draft = saved ? clone(saved.draft) : null;
     this.dirty = Boolean(saved?.dirty);
-    this.episodeDirty = Boolean(saved?.episodeDirty);
+    this.stateDirty = Boolean(saved?.stateDirty);
     this.pendingInputs = saved?.inputs ?? null;
     this.draftRevision = saved?.revision ?? null;
   }
@@ -176,38 +177,39 @@ export class EditorApplication extends ScreenFormApplication {
       this.selectDraftContext("unavailable");
       return { ...parent, missing: true, isGM: context.isGM, isConstructor: this.mode === "constructor" };
     }
-    if (!context.definition) return { ...parent, missingScheme: true, sceneName: context.scene.name, isGM: true, isConstructor: this.mode === "constructor", isDirector: this.mode === "director" };
-    const episode = context.episode ?? context.definition.episodes[0];
-    const key = editorContextKey(context, episode?.id);
+    if (!context.definition) return { ...parent, missingGroup: true, sceneName: context.scene.name, isGM: true, isConstructor: this.mode === "constructor", isDirector: this.mode === "director" };
+    const state = context.state ?? context.definition.states[0];
+    const key = editorContextKey(context, state?.id);
     this.selectDraftContext(key);
-    if ((!this.draft || !this.dirty) && episode) {
-      this.draft = clone(episode);
+    if ((!this.draft || !this.dirty) && state) {
+      this.draft = clone(state);
       this.draftRevision = context.definition.revision;
     }
     const draft = this.draft;
     const bindings = getObjectBindings(context.scene).bindings;
-    const active = context.definition.episodes.find((entry) => entry.id === context.runtime.episodeId);
+    const signalOptions = (ownerKey) => getSignalCatalog(context.scene).signals.filter((signal) => signal.emitterKey === ownerKey).map((signal) => ({ value: signal.id, name: signal.name }));
+    const active = context.definition.states.find((entry) => entry.id === context.runtime.stateId);
     return {
       ...parent,
       missing: false,
       isConstructor: this.mode === "constructor",
       isDirector: this.mode === "director",
       sceneName: context.scene.name,
-      schemeName: context.definition.schemeName,
+      groupName: context.definition.groupName,
       contextKey: this.contextKey,
-      episode: draft ? { ...draft, zones: (draft.zones ?? []).map((zone) => ({ ...zone,
-        triggerFields: buildTriggerFields(zone.trigger, context.definition.episodes, { prefix: "zone-trigger", schemeId: context.definition.schemeId, schemeName: context.definition.schemeName }) })) } : draft,
-      hasEpisode: Boolean(draft),
-      episodes: context.definition.episodes.map((entry) => ({ ...entry,
+      state: draft ? { ...draft, zones: (draft.zones ?? []).map((zone) => ({ ...zone,
+        signalOptions: signalOptions(`Group:${context.definition.groupId}`), parametersJSON: JSON.stringify(zone.parameters ?? {}), conditionFields: buildConditionFields(zone.conditions, context.definition.states, { prefix: "zone-conditions", groupId: context.definition.groupId, groupName: context.definition.groupName }) })) } : draft,
+      hasState: Boolean(draft),
+      states: context.definition.states.map((entry) => ({ ...entry,
         selected: entry.id === draft?.id,
         allowed: true
       })),
-      activeName: active?.name ?? "Эпизод не запущен",
-      activeStop: Boolean(active?.stop),
+      activeName: active?.name ?? "Состояние не запущено",
+      activeStop: Boolean(context.runtime.halted),
       runtime: context.runtime,
       tokens: context.tokens.map((token) => ({ id: token.id, name: token.name, img: token.texture?.src,
-        configured: bindings[`Token:${token.id}`]?.schemeId === context.definition.schemeId,
-        disabled: (context.runtime.disabledTokens ?? []).includes(token.id)
+        configured: bindings[`Token:${token.id}`]?.groupId === context.definition.groupId,
+        disabled: (context.runtime.disabledObjects ?? []).includes(`Token:${token.id}`)
       })),
       saveStatus: this.dirty ? "Есть несохранённые изменения" : "Изменения применяются после сохранения",
       workspaceGM: draft?.workspace?.gm ?? [],
@@ -217,12 +219,12 @@ export class EditorApplication extends ScreenFormApplication {
         ...Array.from(context.scene.tiles?.values?.() ?? []).map((tile) => ({ value: `Tile:${tile.id}`, name: `Тайл · ${tile.name || tile.texture?.src?.split("/").pop() || tile.id}` }))
       ],
       interactions: (draft?.interactions ?? []).map((entry) => ({ ...entry, targetValue: `${entry.target.type}:${entry.target.id}`,
-        triggerFields: buildTriggerFields(entry.trigger, context.definition.episodes, { prefix: "action-trigger", schemeId: context.definition.schemeId, schemeName: context.definition.schemeName }) })),
+        signalOptions: signalOptions(`${entry.target.type}:${entry.target.id}`), parametersJSON: JSON.stringify(entry.parameters ?? {}), conditionFields: buildConditionFields(entry.conditions, context.definition.states, { prefix: "action-conditions", groupId: context.definition.groupId, groupName: context.definition.groupName }) })),
       taggedObjects: (context.objects ?? []).map((object) => {
         const key = `${context.scene.id}:${object.type}:${object.id}`;
         return { ...object, sceneId: context.scene.id, tagsText: this.tagDrafts.get(key) ?? object.tags.join(", "), unsaved: this.tagDrafts.has(key) };
       }),
-      triggerCounts: buildTriggerRows(context),
+      conditionCounts: buildConditionRows(context),
       eventLog: [...(context.runtime.eventLog ?? [])].reverse().map((entry) => ({ ...entry,
         time: new Date(entry.at).toLocaleTimeString("ru-RU"),
         statusLabel: ({ queued: "Ожидает", running: "Выполняется", done: "Выполнено", failed: "Ошибка", stale: "Устарело", observed: "Зафиксировано" })[entry.status] ?? entry.status,
@@ -265,11 +267,11 @@ export class EditorApplication extends ScreenFormApplication {
     }, listeners);
   }
 
-  readEpisode() {
-    const root = this.element.querySelector("[data-episode-fields]");
+  readState() {
+    const root = this.element.querySelector("[data-state-fields]");
     if (!root || !this.draft) return this.draft;
     const draft = clone(this.draft);
-    const block = root.dataset?.episodeTool;
+    const block = root.dataset?.stateTool;
     const includes = (name) => !block || block === name;
     if (includes("entry")) {
     draft.pause = checked(root, "pause");
@@ -290,15 +292,15 @@ export class EditorApplication extends ScreenFormApplication {
       x: number(row, "zoneX", "Зона X"), y: number(row, "zoneY", "Зона Y"),
       width: number(row, "zoneWidth", "Ширина зоны", { min: 1 }),
       height: number(row, "zoneHeight", "Высота зоны", { min: 1 }),
-      eventName: value(row, "zoneEvent").trim(), trigger: readTriggerFields(row, "zone-trigger")
+      signalId: value(row, "zoneSignal"), parameters: JSON.parse(value(row, "zoneParameters", "{}")), conditions: readConditionFields(row, "zone-conditions")
     }));
     }
     if (includes("dialogues")) {
     draft.interactions = [...root.querySelectorAll("[data-interaction-row]")].map((row) => {
       const [type, id] = value(row, "actionTarget").split(":");
       return { id: row.dataset.interactionRow, name: value(row, "actionName").trim(), enabled: checked(row, "actionEnabled"),
-        target: { type, id }, range: number(row, "actionRange", "Дальность взаимодействия"), eventName: value(row, "actionEvent").trim(),
-        trigger: readTriggerFields(row, "action-trigger") };
+        target: { type, id }, range: number(row, "actionRange", "Дальность взаимодействия"), signalId: value(row, "actionSignal"), parameters: JSON.parse(value(row, "actionParameters", "{}")),
+        conditions: readConditionFields(row, "action-conditions") };
     });
     }
     for (const audience of ["gm", "players"]) {
@@ -314,10 +316,10 @@ export class EditorApplication extends ScreenFormApplication {
   }
 
   async changeDraft(callback) {
-    this.draft = this.readEpisode();
+    this.draft = this.readState();
     await callback(this.draft);
     this.dirty = true;
-    this.episodeDirty = true;
+    this.stateDirty = true;
     return this.render({ force: true });
   }
 
@@ -340,15 +342,15 @@ export class EditorApplication extends ScreenFormApplication {
   async handleAction(action, button) {
     if (action === "token") return this.controller.openObjectBehavior({ type: "Token", id: button.dataset.tokenId });
     const context = this.controller.getContext();
-    const currentKey = editorContextKey(context, context.episode?.id ?? context.definition?.episodes?.[0]?.id);
+    const currentKey = editorContextKey(context, context.state?.id ?? context.definition?.states?.[0]?.id);
     const shownKey = this.element?.querySelector?.("[data-editor-context]")?.dataset?.editorContext ?? this.contextKey;
     if (shownKey && shownKey !== currentKey) {
       void this.refresh();
-      throw new Error("Сцена или выбранный эпизод изменились. Дождитесь обновления окна; черновик сохранён отдельно.");
+      throw new Error("Сцена или выбранное состояние изменились. Дождитесь обновления окна; черновик сохранён отдельно.");
     }
-    if (action === "saveEpisode") {
-      const draft = this.readEpisode();
-      await this.controller.saveEpisode(draft, { sceneId: context.scene.id, expectedRevision: this.draftRevision });
+    if (action === "saveState") {
+      const draft = this.readState();
+      await this.controller.saveState(draft, { sceneId: context.scene.id, expectedRevision: this.draftRevision });
       this.resetDraft();
       return this.render({ force: true });
     }
@@ -360,7 +362,7 @@ export class EditorApplication extends ScreenFormApplication {
       if (point) return this.changeDraft((draft) => Object.assign(draft.spawns[Number(button.dataset.index)], point));
       return;
     }
-    if (action === "addZone") return this.changeDraft((draft) => draft.zones.push({ id: randomId(), label: "Новая зона", x: 0, y: 0, width: 200, height: 200, eventName: "" }));
+    if (action === "addZone") return this.changeDraft((draft) => draft.zones.push({ id: randomId(), label: "Новая зона", x: 0, y: 0, width: 200, height: 200, signalId: "", parameters: {} }));
     if (action === "deleteZone") return this.changeDraft((draft) => { draft.zones.splice(Number(button.dataset.index), 1); });
     if (action === "pickZone") {
       const point = await this.controller.pickPoint();
@@ -378,19 +380,15 @@ export class EditorApplication extends ScreenFormApplication {
       if (await this.mayDiscard()) this.element.querySelector("[data-import-file]").click();
       return;
     }
-    if (action === "transition") return this.controller.transition(value(this.element, "targetEpisode"));
-    if (action === "stop") {
-      const stop = this.controller.getContext().definition.episodes.find((episode) => episode.stop);
-      if (!stop) throw new Error("Пометьте эпизод «Остановка автоматизации» в конструкторе.");
-      return this.controller.transition(stop.id);
-    }
+    if (action === "transition") return this.controller.transition(value(this.element, "targetState"));
+    if (action === "stop") return this.controller.haltGroup(this.controller.getContext().groupId);
     if (action === "automation") return this.controller.setAutomation(button.dataset.tokenId, button.dataset.enable === "true");
     if (action === "combat") return this.controller.startCombat();
     if (action === "shops") return this.controller.openShops();
     if (action === "dialogues") return this.controller.openDialogues();
     if (action === "haltScene") return this.controller.haltScene();
-    if (action === "haltScheme") return this.controller.haltScheme();
-    if (action === "resumeScheme") return this.controller.resumeScheme(value(this.element, "resumeEpisode"));
+    if (action === "haltGroup") return this.controller.haltGroup();
+    if (action === "resumeGroup") return this.controller.resumeGroup(value(this.element, "resumeState"));
     if (action === "saveObjectTags") {
       const row = button.closest("[data-object-tags]");
       const key = `${row.dataset.sceneId}:${row.dataset.objectType}:${row.dataset.objectId}`;
@@ -400,16 +398,15 @@ export class EditorApplication extends ScreenFormApplication {
       if (status) status.textContent = "Сохранено";
       return;
     }
-    if (action === "resetTrigger") return this.controller.resetTriggers(button.dataset.triggerKey);
-    if (action === "resetTriggers") return this.controller.resetTriggers();
-    if (action === "toggleTrigger") return this.controller.setTriggerEnabled(button.dataset.triggerKey, button.dataset.enable === "true");
+    if (action === "resetCondition") return this.controller.resetConditions(button.dataset.conditionKey);
+    if (action === "resetConditions") return this.controller.resetConditions();
+    if (action === "toggleCondition") return this.controller.setConditionEnabled(button.dataset.conditionKey, button.dataset.enable === "true");
     if (action === "addInteraction") return this.changeDraft((draft) => {
       draft.interactions ??= [];
       const target = this.controller.getContext().tokens[0];
-      draft.interactions.push({ id: randomId(), name: "Взаимодействовать", enabled: true, target: { type: "Token", id: target?.id ?? "" }, range: 5, eventName: "object.used" });
+      draft.interactions.push({ id: randomId(), name: "Взаимодействовать", enabled: true, target: { type: "Token", id: target?.id ?? "" }, range: 5, signalId: "", parameters: {} });
     });
     if (action === "deleteInteraction") return this.changeDraft((draft) => { draft.interactions.splice(Number(button.dataset.index), 1); });
-    if (action === "emitEvent") return this.controller.emitEvent(value(this.element, "eventName").trim());
     if (["constructor", "director", "actor"].includes(action)) return this.controller.setMode(action);
     if (action === "close") return this.controller.closeScreen();
   }

@@ -1,347 +1,233 @@
-import { MODULE_ID, normalizeTrigger, normalizeTags, randomId } from "./model.js";
+import { MODULE_ID, normalizeConditions, normalizeTags } from "./model.js";
 import { getDefinitions, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { getInteractionCatalog, mergeInteractionAssets } from "./scene-assets.js";
-import { getEventCatalog, validateTypedTrigger, exportCatalogDependencies } from "./event-catalog.js";
-import { normalizeRoutines } from "./routine-model.js";
+import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./signal-catalog.js";
+import { validateParameters } from "./signal-types.js";
+import { stageScene, remapSignalIds } from "./configuration-transfer.js";
+import { normalizeScript, normalizeScripts } from "./script-model.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
 const collections = Object.freeze({ Token: "tokens", Tile: "tiles", Drawing: "drawings", AmbientLight: "lights", AmbientSound: "sounds", Note: "notes", MeasuredTemplate: "templates", Wall: "walls", Region: "regions" });
 const validId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+const ids = (value = []) => {
+  if (!Array.isArray(value) || value.length > 100 || value.some((id) => !validId(id))) fail("Ожидается список ID состояний.");
+  return [...new Set(value)];
+};
 export function objectKey({ type, id }) { if (!collections[type] || !validId(id)) fail("Неверный тип или ID объекта сцены."); return `${type}:${id}`; }
-export const getSceneObject = (scene, descriptor) => scene?.[collections[descriptor?.type]]?.get?.(descriptor?.id) ?? null;
+export const getSceneObject = (scene, target) => scene?.[collections[target?.type]]?.get?.(target?.id) ?? null;
 export function listNativeSceneObjects(scene) {
   return Object.entries(collections).flatMap(([type, collection]) => Array.from(scene?.[collection]?.values?.() ?? []).map((document) => ({
     type, id: document.id, key: `${type}:${document.id}`, name: String(document.name || document.text || document.label || document.id),
-    uuid: document.uuid ?? `Scene.${scene.id}.${type}.${document.id}`, position: Number.isFinite(document.x) && Number.isFinite(document.y) ? { x: document.x, y: document.y } : null,
+    uuid: document.uuid ?? `Scene.${scene.id}.${type}.${document.id}`,
+    position: Number.isFinite(document.x) && Number.isFinite(document.y) ? { x: document.x, y: document.y } : null,
     hidden: typeof document.hidden === "boolean" ? document.hidden : null
   })));
 }
-const ids = (value) => { if (!Array.isArray(value) || value.length > 100 || value.some((entry) => !validId(entry))) fail("Ожидается список ID эпизодов."); return [...new Set(value)]; };
-const transition = (value = {}) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) fail("Ожидаются настройки перехода объекта.");
-  if (value.position != null && (!Number.isFinite(value.position.x) || !Number.isFinite(value.position.y))) fail("Положение объекта задаётся конечными координатами x и y.");
-  if (value.hidden != null && typeof value.hidden !== "boolean") fail("Видимость должна быть логическим значением.");
-  return { position: value.position ? { x: value.position.x, y: value.position.y } : null, hidden: value.hidden ?? null };
-};
-function featureBinding(value, kind) {
-  if (value == null) return null;
-  const key = `${kind}Id`;
-  if (!validId(value[key])) fail("Выберите инструмент из каталога.");
-  const range = value.range ?? 5;
-  if (typeof range !== "number" || !Number.isFinite(range) || range < 0 || range > 100000) fail("Дальность должна быть числом от 0 до 100000.");
-  return { [key]: value[key], episodeIds: ids(value.episodeIds ?? []), range, trigger: normalizeTrigger(value.trigger) };
-}
-const featureKinds = new Set(["macro", "trigger"]);
-function normalizeFeature(raw) {
-  if (!raw || !featureKinds.has(raw.kind)) fail("Неизвестная особенность объекта.");
-  const id = raw.id || randomId(); if (!validId(id)) fail("Неверный ID особенности.");
-  if (raw.parameters != null && (typeof raw.parameters !== "object" || Array.isArray(raw.parameters) || JSON.stringify(raw.parameters).length > 8000)) fail("Параметры вызова должны быть JSON объектом до 8000 символов.");
-  return { id, kind: raw.kind, enabled: raw.enabled !== false, episodeIds: ids(raw.episodeIds ?? []), eventName: String(raw.eventName ?? "").trim(),
-    macroUuid: String(raw.macroUuid ?? ""), triggerId: String(raw.triggerId ?? ""), parameters: clone(raw.parameters ?? {}) };
+function references(raw, kind) {
+  if (!Array.isArray(raw ?? []) || (raw?.length ?? 0) > 100) fail("Слишком много инструментов объекта.");
+  return (raw ?? []).map((entry) => {
+    const range = entry.range ?? 5;
+    if (!validId(entry[`${kind}Id`])) fail("Выберите инструмент из каталога.");
+    if (!Number.isFinite(range) || range < 0 || range > 100000) fail("Дальность должна быть неотрицательным числом.");
+    return { [`${kind}Id`]: entry[`${kind}Id`], stateIds: ids(entry.stateIds), range, conditions: normalizeConditions(entry.conditions) };
+  });
 }
 export function normalizeObjectBinding(raw) {
   objectKey(raw);
-  if (raw.schemeId != null && !validId(raw.schemeId)) fail("Неверный ID схемы объекта.");
-  if (raw.playerCharacter !== undefined && typeof raw.playerCharacter !== "boolean") fail("Флаг персонажа игрока должен быть логическим значением.");
-  if (typeof (raw.notes ?? "") !== "string" || [...(raw.notes ?? "")].length > 12000) fail("Заметки мастера должны быть текстом до 12000 символов.");
-  const episodes = Object.fromEntries(Object.entries(raw.episodes ?? {}).filter(([key, value]) => !(key.startsWith("-=") && value === null)));
-  if (!episodes || typeof episodes !== "object" || Array.isArray(episodes) || Object.keys(episodes).some((key) => !validId(key))) fail("Неверные настройки эпизодов объекта.");
-  if (!Array.isArray(raw.features ?? []) || (raw.features?.length ?? 0) > 100) fail("Допустимо до 100 особенностей объекта.");
-  // Read only supported features. Unrecognized definitions are not converted or
-  // executed and must not hide an object's current routine or block its editor.
-  const features = (raw.features ?? []).filter((feature) => featureKinds.has(feature?.kind)).map(normalizeFeature);
-  if (new Set(features.map((entry) => entry.id)).size !== features.length) fail("ID особенностей не должны повторяться.");
-  if (raw.routines !== undefined && !Array.isArray(raw.routines)) fail("Распорядки должны быть списком.");
-  return { type: raw.type, id: raw.id, schemeId: raw.schemeId ?? null, playerCharacter: raw.playerCharacter ?? false, tags: normalizeTags(raw.tags), notes: raw.notes ?? "",
-    entry: transition(raw.entry), episodes: Object.fromEntries(Object.entries(episodes).map(([key, value]) => [key, transition(value)])),
-    shop: featureBinding(raw.shop, "shop"), dialogue: featureBinding(raw.dialogue, "dialogue"), features,
-    routines: normalizeRoutines(raw.routines ?? []) };
+  if (raw.groupId != null && !validId(raw.groupId)) fail("Неверный ID группы объекта.");
+  if (raw.playerCharacter !== undefined && typeof raw.playerCharacter !== "boolean") fail("Флаг персонажа игрока должен быть логическим.");
+  if (typeof (raw.notes ?? "") !== "string" || [...(raw.notes ?? "")].length > 12000) fail("Заметки должны быть текстом до 12000 символов.");
+  const transitions = raw.transitionScripts ?? {};
+  if (!transitions || typeof transitions !== "object" || Array.isArray(transitions)) fail("Ожидаются скрипты состояний.");
+  const entries = Object.entries(transitions).filter(([key, value]) => !(key.startsWith("-=") && value === null));
+  if (entries.some(([key]) => !validId(key))) fail("Неверный ID состояния скрипта.");
+  return { type: raw.type, id: raw.id, groupId: raw.groupId ?? null, playerCharacter: raw.playerCharacter ?? false,
+    tags: normalizeTags(raw.tags), notes: raw.notes ?? "",
+    initialScript: raw.initialScript ? normalizeScript(raw.initialScript) : null,
+    transitionScripts: Object.fromEntries(entries.map(([id, script]) => [id, normalizeScript(script)])),
+    scripts: normalizeScripts(raw.scripts ?? []), shops: references(raw.shops, "shop"), dialogues: references(raw.dialogues, "dialogue") };
 }
 export function normalizeObjectBindings(raw = {}) {
-  if (!raw || (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) || !raw.bindings && raw.bindings !== undefined) fail("Неверные привязки объектов сцены.");
+  if (!raw || raw.schemaVersion !== undefined && raw.schemaVersion !== 1 || raw.bindings != null && (typeof raw.bindings !== "object" || Array.isArray(raw.bindings))) fail("Неверные привязки объектов.");
   const entries = Object.entries(raw.bindings ?? {}).filter(([key, value]) => !(key.startsWith("-=") && value === null));
-  if (entries.length > 5000) fail("Допустимо до 5000 привязок объектов.");
-  return { schemaVersion: 1, revision: Number.isSafeInteger(raw.revision) ? raw.revision : 0, bindings: Object.fromEntries(entries.map(([key, value]) => {
-    if (key !== objectKey(value)) fail("Ключ привязки не соответствует объекту."); return [key, normalizeObjectBinding(value)];
-  })) };
+  if (entries.length > 5000) fail("Допустимо до 5000 объектов.");
+  return { schemaVersion: 1, revision: Number.isSafeInteger(raw.revision) ? raw.revision : 0,
+    bindings: Object.fromEntries(entries.map(([key, value]) => { if (key !== objectKey(value)) fail("Ключ привязки не соответствует объекту."); return [key, normalizeObjectBinding(value)]; })) };
 }
-/** Definitions, tags and ownership have one explicit source; reads perform no migration. */
-export function getObjectBindings(scene) {
-  return normalizeObjectBindings(scene?.getFlag(MODULE_ID, "objectBindings") ?? {});
+export const getObjectBindings = (scene) => normalizeObjectBindings(scene?.getFlag(MODULE_ID, "objectBindings") ?? {});
+export function getGroupObjects(scene, groupId) {
+  const native = listNativeSceneObjects(scene);
+  return Object.entries(getObjectBindings(scene).bindings).filter(([, b]) => b.groupId === groupId).map(([key, binding]) => ({
+    ...(native.find((entry) => entry.key === key) ?? { type: binding.type, id: binding.id, key, name: binding.id, missing: true }), binding }));
 }
-export function getSchemeObjects(scene, schemeId) {
-  const entries = getObjectBindings(scene).bindings, native = listNativeSceneObjects(scene);
-  return Object.entries(entries).filter(([, value]) => value.schemeId === schemeId).map(([key, binding]) => ({ ...(native.find((entry) => entry.key === key) ?? { type: binding.type, id: binding.id, key, name: binding.id, missing: true }), binding }));
-}
-export function assetReferences(scene, kind, assetId) {
-  return Object.values(getObjectBindings(scene).bindings).filter((binding) => binding[kind]?.[`${kind}Id`] === assetId);
-}
+export const assetReferences = (scene, kind, id) => Object.values(getObjectBindings(scene).bindings).filter((binding) => binding[`${kind}s`].some((ref) => ref[`${kind}Id`] === id));
 export function validateObjectBinding(scene, binding, definitions = getDefinitions(scene)) {
-  const definition = definitions.find((entry) => entry.schemeId === binding.schemeId);
-  if (binding.schemeId && !definition) fail("Назначенная схема больше не существует.");
-  if (!binding.schemeId && (binding.shop || binding.dialogue || binding.features.length || binding.routines.length || Object.keys(binding.episodes).length)) fail("Сначала назначьте объект схеме.");
+  const group = definitions.find((entry) => entry.groupId === binding.groupId), stateIds = new Set(group?.states.map((state) => state.id) ?? []);
+  if (binding.groupId && !group) fail("Назначенная группа больше не существует.");
+  if (!group && (binding.scripts.length || Object.keys(binding.transitionScripts).length || binding.shops.length || binding.dialogues.length)) fail("Сначала назначьте объект группе.");
   if (binding.playerCharacter && binding.type !== "Token") fail("Персонажем игрока может быть только токен.");
-  const episodeIds = new Set(definition?.episodes.map((entry) => entry.id) ?? []), catalog = getInteractionCatalog(scene), events = getEventCatalog(scene);
-  const checkEpisodes = (values) => { if (values.some((id) => !episodeIds.has(id))) fail("Настройка объекта ссылается на отсутствующий эпизод его схемы."); };
-  checkEpisodes(Object.keys(binding.episodes));
-  if (binding.routines.length && binding.type !== "Token") fail("Распорядок доступен только токену.");
-  for (const routine of binding.routines) {
-    checkEpisodes([routine.episodeId]);
-    for (const step of routine.steps) {
-      const p = step.parameters;
-      if (step.kind === "event") {
-        const event = events.events.find((entry) => entry.name === p.eventName), trigger = events.triggers.find((entry) => entry.id === p.triggerId);
-        if (!event || !trigger || trigger.eventId !== event.id) fail("Шаг распорядка должен ссылаться на событие и его тип триггера.");
-        validateTypedTrigger(events, event, { ...p.parameters, type: trigger.name });
-      }
-      if (step.kind === "macro" && !events.macros.some((entry) => entry.uuid === p.macroUuid)) fail("Макрос распорядка должен быть добавлен в каталог Ширмы.");
+  const checkStates = (values) => { if (values.some((id) => !stateIds.has(id))) fail("Настройка ссылается на отсутствующее состояние группы."); };
+  checkStates(Object.keys(binding.transitionScripts)); checkStates(binding.scripts.map((script) => script.stateId));
+  const catalog = getSignalCatalog(scene), ownerKey = objectKey(binding);
+  const scripts = [binding.initialScript, ...Object.values(binding.transitionScripts), ...binding.scripts].filter(Boolean);
+  for (const script of scripts) for (const step of script.steps) {
+    if (step.kind === "signal") {
+      const signal = catalog.signals.find((entry) => entry.id === step.parameters.signalId && entry.emitterKey === ownerKey);
+      if (!signal) fail("Объект может испустить только собственный объявленный сигнал.");
+      validateParameters(signal, step.parameters.parameters);
     }
+    if (step.kind === "macro" && !catalog.macros.some((macro) => macro.ownerKey === ownerKey && macro.uuid === step.parameters.macroUuid)) fail("Скрипт может вызвать только макрос своего объекта.");
   }
-  for (const kind of ["shop", "dialogue"]) if (binding[kind]) {
-    const reference = binding[kind];
-    if (!["Token", "Tile"].includes(binding.type)) fail("Магазины и диалоги доступны для токенов и тайлов.");
-    if (!catalog[kind === "shop" ? "shops" : "dialogues"].some((entry) => entry.id === reference[`${kind}Id`])) fail("Выбранный инструмент больше не существует.");
-    checkEpisodes(reference.episodeIds);
-    if (reference.trigger.schemeIds.some((id) => id !== binding.schemeId)) fail("Допуск объекта не может ссылаться на чужую схему.");
-    checkEpisodes(reference.trigger.episodeIds);
+  const assets = getInteractionCatalog(scene);
+  for (const kind of ["shop", "dialogue"]) for (const reference of binding[`${kind}s`]) {
+    if (!["Token", "Tile"].includes(binding.type)) fail("Магазины и диалоги доступны токенам и тайлам.");
+    if (!assets[`${kind}s`].some((asset) => asset.id === reference[`${kind}Id`])) fail("Инструмент больше не существует.");
+    checkStates(reference.stateIds); checkStates(reference.conditions.stateIds);
+    if (reference.conditions.groupIds.some((id) => id !== binding.groupId)) fail("Условия объекта не могут ссылаться на чужую группу.");
   }
-  for (const feature of binding.features) {
-    checkEpisodes(feature.episodeIds);
-    if (!events.events.some((event) => event.name === feature.eventName)) fail("Выберите существующее событие для особенности.");
-    if (feature.kind === "macro" && !events.macros.some((macro) => macro.uuid === feature.macroUuid)) fail("Макрос должен быть добавлен в каталог Ширмы.");
-    if (feature.kind === "trigger") {
-      const trigger = events.triggers.find((entry) => entry.id === feature.triggerId), event = events.events.find((entry) => entry.id === trigger?.eventId);
-      if (!event) fail("Выберите существующий тип триггера.");
-      validateTypedTrigger(events, event, { ...feature.parameters, type: trigger.name });
-    }
-  }
-  const document = getSceneObject(scene, binding);
-  if (document && [...Object.values(binding.episodes), binding.entry].some((value) => value.position) && (!Number.isFinite(document.x) || !Number.isFinite(document.y))) fail("Этот тип объекта не поддерживает положение x/y.");
 }
-/** Foundry recursively merges flag objects; explicit deletion markers remove map keys. */
+/** Replace maps explicitly: omitted keys must not return through Foundry's recursive merge. */
 export function objectBindingsWriteData(previous, next) {
   const data = clone(next);
   for (const [key, old] of Object.entries(previous.bindings)) {
     if (!data.bindings[key]) { data.bindings[`-=${key}`] = null; continue; }
-    for (const episodeId of Object.keys(old.episodes)) if (!Object.hasOwn(data.bindings[key].episodes, episodeId)) data.bindings[key].episodes[`-=${episodeId}`] = null;
+    for (const id of Object.keys(old.transitionScripts)) if (!Object.hasOwn(data.bindings[key].transitionScripts, id)) data.bindings[key].transitionScripts[`-=${id}`] = null;
   }
   return data;
 }
+const clearGroupContent = (binding) => Object.assign(binding, { transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
 export function reconcileDefinitionBindings(scene, previous, definitions) {
-  const raw = normalizeObjectBindings(scene?.getFlag(MODULE_ID, "objectBindings") ?? {}), next = clone(raw);
-  let changed = false;
+  const raw = getObjectBindings(scene), next = clone(raw); let changed = false;
   for (const binding of Object.values(next.bindings)) {
-    if (!binding.schemeId) continue;
-    const definition = definitions.find((entry) => entry.schemeId === binding.schemeId);
-    if (!definition) { binding.schemeId = null; binding.shop = null; binding.dialogue = null; binding.features = []; binding.routines = []; binding.episodes = {}; binding.entry = transition(); changed = true; continue; }
-    const removed = previous.find((entry) => entry.schemeId === binding.schemeId)?.episodes.filter((entry) => !definition.episodes.some((value) => value.id === entry.id)).map((entry) => entry.id) ?? [];
+    if (!binding.groupId) continue;
+    const group = definitions.find((entry) => entry.groupId === binding.groupId);
+    if (!group) { binding.groupId = null; clearGroupContent(binding); changed = true; continue; }
+    const removed = previous.find((entry) => entry.groupId === binding.groupId)?.states.filter((state) => !group.states.some((entry) => entry.id === state.id)).map((state) => state.id) ?? [];
     if (!removed.length) continue;
     changed = true;
-    for (const id of removed) delete binding.episodes[id];
-    binding.routines = binding.routines.filter((entry) => !removed.includes(entry.episodeId));
-    for (const kind of ["shop", "dialogue"]) if (binding[kind]) {
-      const reference = binding[kind];
-      if (reference.episodeIds.length && reference.episodeIds.every((id) => removed.includes(id))) { binding[kind] = null; continue; }
-      reference.episodeIds = reference.episodeIds.filter((id) => !removed.includes(id));
-      if (reference.trigger.episodeIds.length && reference.trigger.episodeIds.every((id) => removed.includes(id))) reference.trigger.enabled = false;
-      reference.trigger.episodeIds = reference.trigger.episodeIds.filter((id) => !removed.includes(id));
-    }
-    for (const feature of binding.features) {
-      if (feature.episodeIds.length && feature.episodeIds.every((id) => removed.includes(id))) feature.enabled = false;
-      feature.episodeIds = feature.episodeIds.filter((id) => !removed.includes(id));
-    }
+    for (const id of removed) delete binding.transitionScripts[id];
+    binding.scripts = binding.scripts.filter((script) => !removed.includes(script.stateId));
+    for (const kind of ["shops", "dialogues"]) binding[kind] = binding[kind].filter((ref) => !ref.stateIds.length || !ref.stateIds.every((id) => removed.includes(id))).map((ref) => ({ ...ref,
+      stateIds: ref.stateIds.filter((id) => !removed.includes(id)), conditions: { ...ref.conditions,
+        enabled: ref.conditions.enabled && !(ref.conditions.stateIds.length && ref.conditions.stateIds.every((id) => removed.includes(id))),
+        stateIds: ref.conditions.stateIds.filter((id) => !removed.includes(id)) } }));
   }
-  if (changed) { next.revision++; return objectBindingsWriteData(raw, next); }
-  return null;
-}
-
-export function exportObjectConfiguration(scene, schemeId, { episodeId } = {}) {
-  const bindings = Object.values(getObjectBindings(scene).bindings).filter((binding) => binding.schemeId === schemeId).map((value) => normalizeObjectBinding(value));
-  if (episodeId) for (const binding of bindings) {
-    binding.episodes = binding.episodes[episodeId] ? { [episodeId]: binding.episodes[episodeId] } : {};
-    for (const kind of ["shop", "dialogue"]) if (binding[kind]) {
-      if (binding[kind].episodeIds.length && !binding[kind].episodeIds.includes(episodeId)
-        || binding[kind].trigger.episodeIds.length && !binding[kind].trigger.episodeIds.includes(episodeId)) binding[kind] = null;
-      else { binding[kind].episodeIds = [episodeId]; if (binding[kind].trigger.episodeIds.length) binding[kind].trigger.episodeIds = [episodeId]; }
-    }
-    binding.features = binding.features.filter((entry) => !entry.episodeIds.length || entry.episodeIds.includes(episodeId)).map((entry) => ({ ...entry, episodeIds: [episodeId] }));
-    binding.routines = binding.routines.filter((entry) => entry.episodeId === episodeId);
-  }
-  const assets = getInteractionCatalog(scene), eventCatalog = getEventCatalog(scene), names = [];
-  const related = (kind, assetId) => bindings.some((binding) => binding[kind]?.[`${kind}Id`] === assetId);
-  const interactionCatalog = { schemaVersion: 1, revision: 0, shops: assets.shops.filter((entry) => related("shop", entry.id)), dialogues: assets.dialogues.filter((entry) => related("dialogue", entry.id)) };
-  for (const dialogue of interactionCatalog.dialogues) for (const page of dialogue.pages) for (const response of page.responses) if (response.eventName) names.push(response.eventName);
-  const macroIds = new Set();
-  for (const binding of bindings) for (const routine of binding.routines) for (const step of routine.steps) {
-    if (step.kind === "event") names.push(step.parameters.eventName);
-    if (step.kind === "macro") macroIds.add(step.parameters.macroUuid);
-  }
-  for (const binding of bindings) for (const feature of binding.features) {
-    if (feature.eventName) names.push(feature.eventName);
-    if (feature.kind === "macro") {
-      macroIds.add(feature.macroUuid);
-      for (const id of eventCatalog.macros.find((entry) => entry.uuid === feature.macroUuid)?.triggerIds ?? []) {
-        const trigger = eventCatalog.triggers.find((entry) => entry.id === id), event = eventCatalog.events.find((entry) => entry.id === trigger?.eventId);
-        if (event) names.push(event.name);
-      }
-    }
-    if (feature.kind === "trigger") {
-      const trigger = eventCatalog.triggers.find((entry) => entry.id === feature.triggerId), event = eventCatalog.events.find((entry) => entry.id === trigger?.eventId);
-      if (event) names.push(event.name);
-    }
-  }
-  for (const macro of eventCatalog.macros) if (macroIds.has(macro.uuid)) for (const id of macro.triggerIds) {
-    const trigger = eventCatalog.triggers.find((entry) => entry.id === id), event = eventCatalog.events.find((entry) => entry.id === trigger?.eventId);
-    if (event) names.push(event.name);
-  }
-  const catalog = exportCatalogDependencies(scene, [{ events: names }]);
-  for (const macro of eventCatalog.macros) if (macroIds.has(macro.uuid) && !catalog.macros.some((entry) => entry.uuid === macro.uuid)) catalog.macros.push(clone(macro));
-  return { interactionCatalog, objectBindings: { schemaVersion: 1, revision: 0, bindings: Object.fromEntries(bindings.map((entry) => [objectKey(entry), entry])) }, catalog };
-}
-
-export function importObjectConfiguration(scene, source, { schemeId, episodeMapping = new Map(), definitions, eventCatalog, sourceEventCatalog } = {}) {
-  if (!source?.objectBindings && !source?.interactionCatalog) return {};
-  const current = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {}), projected = getObjectBindings(scene).bindings;
-  const incoming = normalizeObjectBindings(source.objectBindings ?? {}), { catalog, mapping } = mergeInteractionAssets(scene, source.interactionCatalog ?? {});
-  const next = clone(current);
-  const remap = (values) => values.map((id) => episodeMapping.get(id) ?? id);
-  for (const [key, raw] of Object.entries(incoming.bindings)) {
-    if (projected[key]?.schemeId && projected[key].schemeId !== schemeId) fail(`Объект ${key} уже принадлежит другой схеме. Импорт не меняет владельца автоматически.`);
-    const binding = clone(raw), previousScheme = binding.schemeId;
-    binding.schemeId = schemeId;
-    binding.episodes = Object.fromEntries(Object.entries(binding.episodes).map(([id, value]) => [episodeMapping.get(id) ?? id, value]));
-    for (const kind of ["shop", "dialogue"]) if (binding[kind]) {
-      const entry = binding[kind]; entry[`${kind}Id`] = mapping.get(entry[`${kind}Id`]) ?? entry[`${kind}Id`]; entry.episodeIds = remap(entry.episodeIds);
-      entry.trigger.episodeIds = remap(entry.trigger.episodeIds); entry.trigger.schemeIds = entry.trigger.schemeIds.map((id) => id === previousScheme ? schemeId : id);
-    }
-    for (const feature of binding.features) {
-      feature.episodeIds = remap(feature.episodeIds);
-      const sourceTrigger = sourceEventCatalog?.triggers?.find((entry) => entry.id === feature.triggerId);
-      if (sourceTrigger) feature.triggerId = eventCatalog.triggers.find((entry) => entry.name === sourceTrigger.name)?.id ?? feature.triggerId;
-    }
-    for (const routine of binding.routines) {
-      routine.episodeId = episodeMapping.get(routine.episodeId) ?? routine.episodeId;
-      for (const step of routine.steps) if (step.kind === "event") {
-        const trigger = sourceEventCatalog?.triggers?.find((entry) => entry.id === step.parameters.triggerId);
-        if (trigger) step.parameters.triggerId = eventCatalog.triggers.find((entry) => entry.name === trigger.name)?.id ?? step.parameters.triggerId;
-      }
-    }
-    const existing = current.bindings[key];
-    if (existing?.schemeId === schemeId) {
-      for (const kind of ["shop", "dialogue"]) {
-        if (existing[kind] && binding[kind] && existing[kind][`${kind}Id`] !== binding[kind][`${kind}Id`]) fail(`Объект ${key} уже использует другой ${kind}. Выберите привязку вручную.`);
-        if (!binding[kind]) binding[kind] = clone(existing[kind]);
-        else if (existing[kind]) {
-          const content = ({ episodeIds, trigger: { episodeIds: scoped, ...trigger }, ...value }) => ({ ...value, trigger });
-          if (JSON.stringify(content(existing[kind])) !== JSON.stringify(content(binding[kind]))) fail(`У объекта ${key} отличаются условия ${kind}. Согласуйте их перед импортом.`);
-          const union = (a, b) => !a.length || !b.length ? [] : [...new Set([...a, ...b])];
-          binding[kind].episodeIds = union(existing[kind].episodeIds, binding[kind].episodeIds);
-          binding[kind].trigger.episodeIds = union(existing[kind].trigger.episodeIds, binding[kind].trigger.episodeIds);
-        }
-      }
-      binding.entry = clone(existing.entry); binding.tags = clone(existing.tags); binding.notes = existing.notes; binding.playerCharacter = existing.playerCharacter;
-      binding.episodes = { ...existing.episodes, ...binding.episodes };
-      const features = clone(existing.features);
-      for (const feature of binding.features) {
-        const match = features.find((entry) => entry.id === feature.id);
-        const content = ({ episodeIds, ...value }) => value;
-        if (match && JSON.stringify(content(match)) === JSON.stringify(content(feature))) {
-          match.episodeIds = !match.episodeIds.length || !feature.episodeIds.length ? [] : [...new Set([...match.episodeIds, ...feature.episodeIds])];
-        } else features.push({ ...feature, id: match ? randomId() : feature.id });
-      }
-      binding.features = features;
-      const routines = clone(existing.routines);
-      for (const routine of binding.routines) {
-        const previous = routines.find((entry) => entry.episodeId === routine.episodeId);
-        if (previous && JSON.stringify(previous) !== JSON.stringify(routine)) fail(`У объекта ${key} уже есть другой распорядок этого эпизода.`);
-        if (!previous) routines.push(routine);
-      }
-      binding.routines = routines;
-    }
-    next.bindings[key] = binding;
-  }
-  next.revision++;
-  const staged = Object.create(scene);
-  staged.getFlag = (scope, key) => scope !== MODULE_ID ? scene.getFlag(scope, key) : key === "objectBindings" ? next : key === "interactionCatalog" ? catalog
-    : key === "definitions" ? Object.fromEntries(definitions.map((entry) => [entry.schemeId, entry])) : key === "eventCatalog" ? eventCatalog : scene.getFlag(scope, key);
-  for (const binding of Object.values(incoming.bindings)) validateObjectBinding(staged, next.bindings[objectKey(binding)], definitions);
-  return { interactionCatalog: catalog, objectBindings: objectBindingsWriteData(current, next) };
+  if (!changed) return null;
+  next.revision++; return objectBindingsWriteData(raw, next);
 }
 export class SceneObjects {
   constructor(scene) { this.scene = scene; }
   list() { return getObjectBindings(this.scene); }
-  get(descriptor) { return this.list().bindings[objectKey(descriptor)] ?? null; }
-  save(descriptor, patch, { expectedRevision, allowReassign = false } = {}) {
-    if (patch.schemeId === null && !getSceneObject(this.scene, descriptor)) return this.remove(descriptor, { expectedRevision });
+  get(target) { return this.list().bindings[objectKey(target)] ?? null; }
+  save(target, patch, { expectedRevision, allowReassign = false } = {}) {
+    if (patch.groupId === null && !getSceneObject(this.scene, target)) return this.remove(target, { expectedRevision });
     return withSceneLock(this.scene, async () => {
-      requireGM(); const raw = normalizeObjectBindings(this.scene.getFlag(MODULE_ID, "objectBindings") ?? {}), key = objectKey(descriptor), previous = this.get(descriptor);
-      if (!getSceneObject(this.scene, descriptor)) fail("Объект сцены больше не существует.");
-      if (expectedRevision !== undefined && raw.revision !== expectedRevision) fail("Привязки объектов изменены другим окном. Обновите форму.");
-      const authored = clone(patch);
-      const next = normalizeObjectBinding({ ...previous, ...authored, ...descriptor });
-      const changingOwner = previous?.schemeId !== next.schemeId;
-      if (changingOwner && previous?.schemeId && !allowReassign) fail("Подтвердите изменение владельца объекта.");
-      if (changingOwner && getRuntimes(this.scene).some((runtime) => [previous?.schemeId, next.schemeId].includes(runtime.schemeId) && runtime.runId && !runtime.halted && !runtime.episode?.stop)) fail("Перед сменой владельца остановите автоматизацию затронутых схем.");
-      // A scope change cannot interpret old episode IDs in a different scheme.
-      // Preserve descriptive data; only explicitly supplied new preparation survives.
-      if (changingOwner && previous?.schemeId) {
-        for (const [field, fallback] of Object.entries({ shop: null, dialogue: null, features: [], routines: [], episodes: {}, entry: transition() })) if (!Object.hasOwn(patch, field)) next[field] = fallback;
+      requireGM(); const raw = this.list(), key = objectKey(target), previous = raw.bindings[key];
+      if (!getSceneObject(this.scene, target)) fail("Объект сцены больше не существует.");
+      if (expectedRevision !== undefined && raw.revision !== expectedRevision) fail("Привязки изменены другим окном. Обновите форму.");
+      const next = normalizeObjectBinding({ ...previous, ...clone(patch), ...target });
+      if (previous?.groupId !== next.groupId) {
+        if (previous?.groupId && !allowReassign) fail("Подтвердите изменение владельца объекта.");
+        if (getRuntimes(this.scene).some((run) => [previous?.groupId, next.groupId].includes(run.groupId) && run.runId && !run.halted)) fail("Перед сменой владельца остановите затронутые группы.");
+        if (previous?.groupId) for (const [field, value] of Object.entries({ scripts: [], shops: [], dialogues: [], transitionScripts: {} })) if (!Object.hasOwn(patch, field)) next[field] = value;
       }
-      if (!next.schemeId) { next.shop = null; next.dialogue = null; next.features = []; next.routines = []; next.episodes = {}; next.entry = transition(); }
+      if (!next.groupId) clearGroupContent(next);
       validateObjectBinding(this.scene, next);
       await this.scene.setFlag(MODULE_ID, "objectBindings", objectBindingsWriteData(raw, { ...raw, revision: raw.revision + 1, bindings: { ...raw.bindings, [key]: next } }));
       return clone(next);
     });
   }
-  remove(descriptor, options = {}) {
-    if (getSceneObject(this.scene, descriptor)) return this.save(descriptor, { schemeId: null }, { ...options, allowReassign: true });
+  remove(target, { expectedRevision } = {}) {
+    if (getSceneObject(this.scene, target)) return this.save(target, { groupId: null }, { expectedRevision, allowReassign: true });
     return withSceneLock(this.scene, async () => {
-      requireGM(); const raw = normalizeObjectBindings(this.scene.getFlag(MODULE_ID, "objectBindings") ?? {}), key = objectKey(descriptor);
-      if (options.expectedRevision !== undefined && raw.revision !== options.expectedRevision) fail("Привязки объектов изменены другим окном. Обновите форму.");
-      const next = clone(raw);
-      delete next.bindings[key]; next.revision++;
-      const fields = { objectBindings: objectBindingsWriteData(raw, next) };
-      if (this.scene.update) await this.scene.update(Object.fromEntries(Object.entries(fields).map(([field, value]) => [`flags.${MODULE_ID}.${field}`, value])));
-      else for (const [field, value] of Object.entries(fields)) await this.scene.setFlag(MODULE_ID, field, value);
-      return null;
+      requireGM(); const raw = this.list(), key = objectKey(target);
+      if (expectedRevision !== undefined && raw.revision !== expectedRevision) fail("Привязки изменены другим окном. Обновите форму.");
+      const next = clone(raw); delete next.bindings[key]; next.revision++;
+      await this.scene.setFlag(MODULE_ID, "objectBindings", objectBindingsWriteData(raw, next)); return null;
     });
   }
 }
-
-function resolved(scene, descriptor, context, kind) {
-  const binding = getObjectBindings(scene).bindings[objectKey(descriptor)];
-  if (!binding || binding.playerCharacter || !binding.schemeId || binding.schemeId !== context.schemeId) return null;
-  const reference = binding[kind];
-  if (!reference || reference.episodeIds.length && !reference.episodeIds.includes(context.episodeId)) return null;
-  const asset = getInteractionCatalog(scene)[kind === "shop" ? "shops" : "dialogues"].find((entry) => entry.id === reference[`${kind}Id`]);
-  if (!asset) return null;
-  const config = { ...clone(asset), enabled: true, [`${kind}Id`]: asset.id, target: { type: descriptor.type, id: descriptor.id }, range: reference.range, trigger: clone(reference.trigger) };
-  if (kind === "dialogue") { config.startNodeId = asset.startPageId; config.nodes = asset.pages.map((page) => ({ ...page, responses: page.responses.map((response) => ({ ...response, nextNodeId: response.nextPageId })) })); }
-  return { asset, binding, config };
+export function resolveObjectTools(scene, target, context, kind) {
+  const binding = getObjectBindings(scene).bindings[objectKey(target)];
+  if (!binding?.groupId || binding.playerCharacter || binding.groupId !== context.groupId) return [];
+  const assets = getInteractionCatalog(scene)[`${kind}s`];
+  const seen = new Set();
+  return binding[`${kind}s`].filter((ref) => !ref.stateIds.length || ref.stateIds.includes(context.stateId)).flatMap((reference) => {
+    const asset = assets.find((entry) => entry.id === reference[`${kind}Id`]);
+    if (!asset || seen.has(asset.id)) return [];
+    seen.add(asset.id);
+    const config = { ...clone(asset), enabled: true, [`${kind}Id`]: asset.id, target: { type: target.type, id: target.id }, range: reference.range, conditions: clone(reference.conditions) };
+    if (kind === "dialogue") { config.startNodeId = asset.startPageId; config.nodes = asset.pages.map((page) => ({ ...page, responses: page.responses.map((response) => ({ ...response, nextNodeId: response.nextPageId })) })); }
+    return [{ asset, binding, config }];
+  });
 }
-export const resolveObjectShop = (scene, descriptor, context) => resolved(scene, descriptor, context, "shop");
-export const resolveObjectDialogue = (scene, descriptor, context) => resolved(scene, descriptor, context, "dialogue");
-/** A new execution snapshot combines preparation with the current catalog once. */
-export function materializeEpisode(scene, definition, source) {
-  const episode = clone(source), bindings = getObjectBindings(scene).bindings, context = { schemeId: definition.schemeId, episodeId: source.id };
-  episode.tokens = {}; episode.shops = []; episode.dialogues = []; episode.objects = []; episode.routines = []; episode.subscriptions = [];
-  episode.interactions = episode.interactions.filter((entry) => validId(entry.target?.id) && bindings[objectKey(entry.target)]?.schemeId === definition.schemeId && !bindings[objectKey(entry.target)]?.playerCharacter);
-  for (const binding of Object.values(bindings)) {
-    if (binding.playerCharacter || binding.schemeId !== definition.schemeId) continue;
+export const resolveObjectShop = (scene, target, context, id) => resolveObjectTools(scene, target, context, "shop").find((entry) => id ? entry.asset.id === id : true) ?? null;
+export const resolveObjectDialogue = (scene, target, context, id) => resolveObjectTools(scene, target, context, "dialogue").find((entry) => id ? entry.asset.id === id : true) ?? null;
+export function materializeState(scene, definition, source) {
+  const state = { ...clone(source), objects: [], scripts: [], transitions: [], shops: [], dialogues: [] };
+  for (const binding of Object.values(getObjectBindings(scene).bindings)) {
+    if (binding.groupId !== definition.groupId || binding.playerCharacter) continue;
     const target = { type: binding.type, id: binding.id };
-    if (target.type === "Token") episode.tokens[target.id] = { enabled: true };
-    const routine = binding.routines.find((entry) => entry.episodeId === source.id);
-    if (routine) episode.routines.push({ ...clone(routine), target });
-    episode.objects.push({ target, entry: clone(binding.entry), transition: clone(binding.episodes[source.id] ?? transition()) });
-    const shop = resolveObjectShop(scene, target, context), dialogue = resolveObjectDialogue(scene, target, context);
-    if (shop) episode.shops.push(shop.config);
-    if (dialogue) episode.dialogues.push(dialogue.config);
-    for (const feature of binding.features) {
-      if (!feature.enabled || feature.episodeIds.length && !feature.episodeIds.includes(source.id)) continue;
-      episode.subscriptions.push({ id: 'object-' + binding.type + '-' + binding.id + '-' + feature.id, featureId: feature.id, target,
-        enabled: true, event: feature.eventName, kind: feature.kind, macroUuid: feature.macroUuid, triggerId: feature.triggerId, parameters: clone(feature.parameters) });
-    }
+    state.objects.push({ target });
+    const script = binding.scripts.find((entry) => entry.stateId === source.id);
+    if (script?.enabled) state.scripts.push({ ...clone(script), target });
+    const transition = binding.transitionScripts[source.id];
+    if (transition?.enabled) state.transitions.push({ ...clone(transition), target });
+    for (const kind of ["shop", "dialogue"]) state[`${kind}s`].push(...resolveObjectTools(scene, target, { groupId: definition.groupId, stateId: source.id }, kind).map((entry) => entry.config));
   }
-  return episode;
+  return state;
+}
+
+/** Scoped exports carry current definitions; no conversion of previous formats. */
+export function exportObjectConfiguration(scene, groupId, { stateId } = {}) {
+  const bindings = Object.values(getObjectBindings(scene).bindings).filter((binding) => binding.groupId === groupId).map(clone);
+  if (stateId) for (const binding of bindings) {
+    binding.transitionScripts = binding.transitionScripts[stateId] ? { [stateId]: binding.transitionScripts[stateId] } : {};
+    binding.scripts = binding.scripts.filter((script) => script.stateId === stateId);
+    for (const kind of ["shops", "dialogues"]) binding[kind] = binding[kind].filter((ref) => !ref.stateIds.length || ref.stateIds.includes(stateId)).map((ref) => ({ ...ref, stateIds: [stateId] }));
+  }
+  const assets = getInteractionCatalog(scene), keys = new Set(bindings.map(objectKey));
+  const interactionCatalog = { schemaVersion: 1, revision: 0, shops: assets.shops.filter((asset) => bindings.some((b) => b.shops.some((ref) => ref.shopId === asset.id))),
+    dialogues: assets.dialogues.filter((asset) => bindings.some((b) => b.dialogues.some((ref) => ref.dialogueId === asset.id))) };
+  keys.add(`Group:${groupId}`);
+  for (const kind of ["shop", "dialogue"]) for (const asset of interactionCatalog[`${kind}s`]) keys.add(`${kind === "shop" ? "Shop" : "Dialogue"}:${asset.id}`);
+  return { sourceSceneId: scene.id, sourceSceneUuid: scene.uuid ?? `Scene.${scene.id}`, interactionCatalog, objectBindings: { schemaVersion: 1, revision: 0, bindings: Object.fromEntries(bindings.map((b) => [objectKey(b), b])) },
+    catalog: exportCatalogDependencies(scene, [...keys]) };
+}
+export function importObjectConfiguration(scene, source, { groupId, sourceGroupId, stateMapping = new Map(), definitions } = {}) {
+  const current = getObjectBindings(scene), incoming = normalizeObjectBindings(source.objectBindings ?? {});
+  const { catalog, mapping } = mergeInteractionAssets(scene, source.interactionCatalog ?? {}), next = clone(current);
+  const emitterMapping = new Map([[`Group:${sourceGroupId}`, `Group:${groupId}`]]), idMapping = new Map();
+  if (!validId(source.sourceSceneId)) fail("В JSON отсутствует ID исходной сцены.");
+  for (const type of ["Scene", "Combat"]) emitterMapping.set(`${type}:${source.sourceSceneId}`, `${type}:${scene.id}`);
+  for (const [from, to] of mapping) for (const kind of ["Shop", "Dialogue"]) emitterMapping.set(`${kind}:${from}`, `${kind}:${to}`);
+  const flags = { groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, entry])), interactionCatalog: catalog, objectBindings: next };
+  const staged = stageScene(scene, flags);
+  const signalCatalog = mergeCatalogDependencies(staged, source.catalog ?? {}, { emitterMapping, idMapping });
+  flags.signalCatalog = signalCatalog;
+  for (const definition of definitions) if (definition.groupId === groupId) definition.states = remapSignalIds(definition.states, idMapping);
+  for (const asset of catalog.dialogues) if ([...mapping.values()].includes(asset.id)) asset.pages = remapSignalIds(asset.pages, idMapping);
+  const remap = (values) => values.map((id) => stateMapping.get(id) ?? id);
+  for (const [key, original] of Object.entries(incoming.bindings)) {
+    if (current.bindings[key]?.groupId && current.bindings[key].groupId !== groupId) fail(`Объект ${key} уже принадлежит другой группе.`);
+    const binding = remapSignalIds(original, idMapping), previousGroup = binding.groupId; binding.groupId = groupId;
+    binding.transitionScripts = Object.fromEntries(Object.entries(binding.transitionScripts).map(([id, script]) => [stateMapping.get(id) ?? id, script]));
+    binding.scripts.forEach((script) => { script.stateId = stateMapping.get(script.stateId) ?? script.stateId; });
+    for (const kind of ["shop", "dialogue"]) for (const ref of binding[`${kind}s`]) {
+      ref[`${kind}Id`] = mapping.get(ref[`${kind}Id`]) ?? ref[`${kind}Id`]; ref.stateIds = remap(ref.stateIds);
+      ref.conditions.stateIds = remap(ref.conditions.stateIds); ref.conditions.groupIds = ref.conditions.groupIds.map((id) => id === previousGroup ? groupId : id);
+    }
+    const existing = current.bindings[key];
+    if (existing?.groupId === groupId) {
+      const stateKeys = new Set(binding.scripts.map((script) => script.stateId));
+      if (existing.scripts.some((script) => stateKeys.has(script.stateId))) fail(`Объект ${key} уже содержит скрипт импортируемого состояния.`);
+      binding.scripts = [...existing.scripts, ...binding.scripts]; binding.transitionScripts = { ...existing.transitionScripts, ...binding.transitionScripts };
+      binding.shops = [...existing.shops, ...binding.shops]; binding.dialogues = [...existing.dialogues, ...binding.dialogues];
+      binding.initialScript = existing.initialScript; binding.tags = existing.tags; binding.notes = existing.notes; binding.playerCharacter = existing.playerCharacter;
+    }
+    next.bindings[key] = binding;
+  }
+  for (const binding of Object.values(incoming.bindings)) validateObjectBinding(staged, next.bindings[objectKey(binding)], definitions);
+  next.revision++; return { signalCatalog, interactionCatalog: catalog, objectBindings: objectBindingsWriteData(current, next) };
 }

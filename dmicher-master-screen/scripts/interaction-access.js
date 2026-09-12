@@ -1,7 +1,7 @@
 import { getRuntimes } from "./store.js";
-import { resolveObjectShop, resolveObjectDialogue, getObjectBindings } from "./scene-objects.js";
+import { resolveObjectTools, getObjectBindings } from "./scene-objects.js";
 import { sceneDistance, tokenCenter } from "./effects.js";
-import { getTriggerGate, getTriggerKey } from "./triggers.js";
+import { getConditionGate, getConditionKey } from "./interaction-conditions.js";
 import { isExecutionHalted } from "./execution.js";
 
 export const objectDescriptor = (value) => typeof value === "string" ? { type: "Token", id: value } : value;
@@ -10,15 +10,15 @@ export const sceneObject = (scene, value) => {
   const target = objectDescriptor(value);
   return target?.type === "Token" ? scene?.tokens?.get(target.id) : target?.type === "Tile" ? scene?.tiles?.get(target.id) : null;
 };
-export const interactionTriggerId = (config) => config?.triggerId ?? (config?.shopId || config?.dialogueId ? objectKey(config.target) : config?.id);
+export const interactionConditionId = (config) => config?.shopId || config?.dialogueId ? `${objectKey(config.target)}:${config.shopId ?? config.dialogueId}` : config?.id;
 
 /** All callers, including GM previews of player actions, obey the same physical access rules. */
-export function validateObjectAccess({ scene, runtime, descriptor, target, triggerType }, actorTokenId, user, runId, { ignoreQuota = true } = {}) {
+export function validateObjectAccess({ scene, runtime, descriptor, target, conditionType }, actorTokenId, user, runId, { ignoreQuota = true } = {}) {
   const fail = (text) => { throw new Error(text); };
-  if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail("Сцена или эпизод изменились. Откройте взаимодействие заново.");
-  if (isExecutionHalted(scene, runtime) || runtime.episode?.stop || !descriptor?.enabled || !target || target.hidden
+  if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail("Сцена или состояние изменились. Откройте взаимодействие заново.");
+  if (isExecutionHalted(scene, runtime) || !descriptor?.enabled || !target || target.hidden
     || getObjectBindings(scene).bindings[objectKey(descriptor?.target)]?.playerCharacter
-    || (descriptor.target.type === "Token" && (runtime.disabledTokens?.includes(target.id) || runtime.episode?.tokens?.[target.id]?.enabled === false))) fail("Взаимодействие сейчас недоступно.");
+    || runtime.disabledObjects?.includes(objectKey(descriptor.target))) fail("Взаимодействие сейчас недоступно.");
   const actorToken = scene.tokens?.get(actorTokenId);
   if (!user || !actorToken?.actor || actorToken.hidden || (descriptor.target.type === "Token" && actorToken.id === target.id)
     || (!user.isGM && !actorToken.actor.testUserPermission?.(user, "OWNER"))) fail("Нужен принадлежащий вам персонаж на карте.");
@@ -27,8 +27,8 @@ export function validateObjectAccess({ scene, runtime, descriptor, target, trigg
   if (actorToken.level != null && target.level != null && actorToken.level !== target.level) fail("Объект находится на другом уровне сцены.");
   if (sceneDistance(scene, origin, destination) > Number(descriptor.range ?? 5)) fail("Персонаж слишком далеко от объекта.");
   if (!actorToken.object?.checkCollision || actorToken.object.checkCollision(destination, { origin, type: "sight", mode: "any" })) fail("Объект должен находиться в прямой видимости персонажа.");
-  const gate = getTriggerGate(scene, runtime, descriptor.trigger, actorToken,
-    { triggerKey: getTriggerKey(runtime, triggerType, interactionTriggerId(descriptor)), ignoreQuota });
+  const gate = getConditionGate(scene, runtime, descriptor.conditions, actorToken,
+    { conditionKey: getConditionKey(runtime, conditionType, interactionConditionId(descriptor)), ignoreQuota });
   if (!gate.allowed) fail(gate.reason);
   return actorToken;
 }
@@ -38,30 +38,30 @@ export function listAvailableInteractions(scene, rawTarget, actorToken, user = g
   const target = objectDescriptor(rawTarget), document = sceneObject(scene, target), result = [];
   for (const runtime of getRuntimes(scene)) {
     if (!runtime.runId) continue;
-    for (const [kind, resolve] of [["shop", resolveObjectShop], ["dialogue", resolveObjectDialogue]]) {
-      const resolved = resolve(scene, target, { schemeId: runtime.schemeId, episodeId: runtime.episodeId });
-      if (!resolved) continue;
+    for (const kind of ["shop", "dialogue"]) for (const resolved of resolveObjectTools(scene, target, { groupId: runtime.groupId, stateId: runtime.stateId }, kind)) {
       const config = resolved.config;
       const sessions = kind === "shop" ? Object.values(runtime.shopSessions ?? {}) : Object.values(runtime.dialogueSessions ?? {});
       const resuming = sessions.some((session) => session && session.userId === user?.id && session.actorTokenId === (actorToken?.document?.id ?? actorToken?.id)
-        && session.runId === runtime.runId && objectKey(session.target) === objectKey(target)
-        && (kind === "shop" ? session.status === "pending" || session.expiresAt > Date.now() : ["active", "finished"].includes(session.status)));
-      try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: kind }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: resuming }); }
+        && session.runId === runtime.runId && (session.shopId ?? session.dialogueId) === resolved.asset.id && objectKey(session.target) === objectKey(target)
+        && (kind === "shop" ? session.status === "pending" || session.expiresAt > Date.now() : ["active", "processing", "interrupted"].includes(session.status)));
+      try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, conditionType: kind }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: resuming }); }
       catch { continue; }
-      result.push({ kind, id: resolved.asset.id, name: resolved.asset.name, target: { ...target }, schemeId: runtime.schemeId, runId: runtime.runId });
+      const paused = kind === "dialogue" && sessions.some((session) => session?.dialogueId === resolved.asset.id && session.userId === user?.id && session.actorTokenId === (actorToken?.document?.id ?? actorToken?.id)
+        && session.runId === runtime.runId && objectKey(session.target) === objectKey(target) && session.status === "interrupted");
+      result.push({ kind, id: resolved.asset.id, name: resolved.asset.name, target: { ...target }, groupId: runtime.groupId, runId: runtime.runId, paused });
     }
-    for (const config of runtime.episode?.interactions ?? []) {
+    for (const config of runtime.state?.interactions ?? []) {
       if (objectKey(config.target) !== objectKey(target)) continue;
-      try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, triggerType: "interaction" }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: false }); }
+      try { validateObjectAccess({ scene, runtime, descriptor: config, target: document, conditionType: "interaction" }, actorToken?.document?.id ?? actorToken?.id, user, runtime.runId, { ignoreQuota: false }); }
       catch { continue; }
-      result.push({ kind: "interaction", id: config.id, name: config.name, target: { ...target }, schemeId: runtime.schemeId, runId: runtime.runId });
+      result.push({ kind: "interaction", id: config.id, name: config.name, target: { ...target }, groupId: runtime.groupId, runId: runtime.runId });
     }
   }
   return result;
 }
 
 /** Preparation-only simulation: no game documents, current runs, messages or events. */
-export function evaluateInteractionPreview({ config, kind, schemeId, episodeId, tags = [], distance = 0, visible = true,
+export function evaluateInteractionPreview({ config, kind, groupId, stateId, tags = [], distance = 0, visible = true,
   enabled = true, used = 0, halted = false } = {}) {
   const deny = (reason) => ({ allowed: false, reason });
   if (!config || !enabled || config.enabled === false) return deny("Взаимодействие выключено.");
@@ -70,8 +70,8 @@ export function evaluateInteractionPreview({ config, kind, schemeId, episodeId, 
   const actor = { id: "preview-character" };
   const scene = { id: "preview-scene", tokens: new Map([[actor.id, actor]]),
     getFlag: (_module, name) => name === "objectBindings" ? { bindings: { [`Token:${actor.id}`]: { type: "Token", id: actor.id, tags } } } : undefined };
-  const state = { runId: "preview", schemeId, episodeId, episode: { stop: false }, halted, triggerCounts: {} };
-  const triggerKey = getTriggerKey(state, kind, interactionTriggerId(config));
-  state.triggerCounts[triggerKey] = used;
-  return getTriggerGate(scene, state, config.trigger, actor, { triggerKey });
+  const state = { runId: "preview", groupId, stateId, state: { stop: false }, halted, conditionCounts: {} };
+  const conditionKey = getConditionKey(state, kind, interactionConditionId(config));
+  state.conditionCounts[conditionKey] = used;
+  return getConditionGate(scene, state, config.conditions, actor, { conditionKey });
 }

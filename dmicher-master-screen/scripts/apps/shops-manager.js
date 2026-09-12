@@ -34,7 +34,7 @@ export class ShopsManagerApplication extends HandlebarsApplicationMixin(Applicat
       return { ...shop,
         expired,
         occupied: Boolean(shop.session && !expired),
-        status: !shop.enabled ? "Недоступен в текущем эпизоде" : !shop.session ? "Свободен" : expired ? "Сессия истекла" : shop.session.status === "pending" ? "Ожидает решения мастера" : "Игрок составляет обмен",
+        status: !shop.enabled ? "Недоступен в текущем состоянии" : !shop.session ? "Свободен" : expired ? "Сессия истекла" : shop.session.status === "pending" ? "Ожидает решения мастера" : "Игрок составляет обмен",
         expiresText: Number.isFinite(expiresAt) ? new Date(expiresAt).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "",
         pending: (shop.pending ?? []).map((request) => ({ ...request, actionable: request.status === "pending" && Boolean(request.messageId) })),
         issues: (shop.issues ?? []).map((request) => ({ ...request,
@@ -66,16 +66,16 @@ export class ShopsManagerApplication extends HandlebarsApplicationMixin(Applicat
     if (action === "refresh") return this.refresh();
     if (!context.scene || context.scene.id !== this.sceneId) throw new Error("Сцена изменилась. Обновите список магазинов.");
     // Re-read the session instead of trusting the rendered owner or actor fields.
-    const shop = this.controller.shop.listSceneShops(context.scene).find((entry) => data.shopId ? entry.shopId === data.shopId : entry.tokenId === data.tokenId && (entry.schemeId ?? "main") === (data.schemeId ?? "main"));
+    const shop = this.controller.shop.listSceneShops(context.scene).find((entry) => data.shopId ? entry.shopId === data.shopId : entry.tokenId === data.tokenId && (entry.groupId ?? "main") === (data.groupId ?? "main"));
     if (!shop) throw new Error("Магазин больше недоступен.");
     if (action === "join" || action === "release") {
       const session = shop.session;
       if (!session || (session.id ?? session.sessionId) !== data.sessionId) throw new Error("Сессия магазина изменилась. Обновите список.");
       if (action === "join") {
         if (shop.expired || expiredSession(session)) throw new Error("Сессия магазина уже истекла.");
-        return this.controller.openShop(shop.target ?? shop.tokenId, { schemeId: shop.schemeId ?? "main", actorTokenId: session.actorTokenId, sessionId: session.id ?? session.sessionId, join: true });
+        return this.controller.openShop(shop.target ?? shop.tokenId, { groupId: shop.groupId ?? "main", shopId: shop.shopId, actorTokenId: session.actorTokenId, sessionId: session.id ?? session.sessionId, join: true });
       }
-      await this.controller.shop.releaseSession({ sceneId: context.scene.id, schemeId: shop.schemeId ?? "main", tokenId: shop.tokenId, target: shop.target, shopId: shop.shopId, sessionId: session.id ?? session.sessionId });
+      await this.controller.shop.releaseSession({ sceneId: context.scene.id, groupId: shop.groupId ?? "main", tokenId: shop.tokenId, target: shop.target, shopId: shop.shopId, sessionId: session.id ?? session.sessionId });
     } else if (action === "approve" || action === "reject") {
       const request = (shop.pending ?? []).find((entry) => entry.messageId === data.messageId && entry.status === "pending");
       if (!request) throw new Error("Предложение уже обработано или больше недоступно.");

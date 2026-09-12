@@ -17,23 +17,23 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
       newOffer: ShopApplication.newOffer, sheet: ShopApplication.sheet }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/shop.hbs` } };
-  constructor(controller, { sceneId, tokenId, target, actorTokenId, schemeId = "main", sessionId = null, join = false }, options = {}) {
+  constructor(controller, { sceneId, tokenId, target, actorTokenId, groupId = "main", shopId, sessionId = null, join = false }, options = {}) {
     const source = target ?? { type: "Token", id: tokenId };
-    const current = controller.shop.getContext(sceneId, source, schemeId), runId = current.runtime?.runId ?? "inactive";
-    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${schemeId}-${runId}-${source.type}-${source.id}-${actorTokenId}-${sessionId ?? "own"}` });
-    Object.assign(this, { controller, sceneId, tokenId: source.id, target: source, shopId: shopKey(current) ?? source.id, actorTokenId, schemeId, sessionId, join });
+    const current = controller.shop.getContext(sceneId, source, groupId, shopId), runId = current.runtime?.runId ?? "inactive";
+    super({ ...options, id: `dmicher-master-screen-shop-${sceneId}-${groupId}-${runId}-${shopId}-${source.type}-${source.id}-${actorTokenId}-${sessionId ?? "own"}` });
+    Object.assign(this, { controller, sceneId, tokenId: source.id, target: source, shopId: shopKey(current) ?? source.id, actorTokenId, groupId, sessionId, join });
     this.runId = runId;
     this.requestId = newId(); this.draft = { giveItemIds: [], take: [] };
     this.feedback = ""; this.busy = false; this.pending = false; this.finished = false;
   }
   intent(extra = {}) {
-    return { sceneId: this.sceneId, tokenId: this.tokenId, target: this.target, shopId: this.shopId, actorTokenId: this.actorTokenId, schemeId: this.schemeId,
+    return { sceneId: this.sceneId, tokenId: this.tokenId, target: this.target, shopId: this.shopId, actorTokenId: this.actorTokenId, groupId: this.groupId,
       sessionId: this.sessionId, runId: this.runId, requestId: this.requestId, ...extra };
   }
   async ensureSession() {
     if (this.session || this.sessionError || this.finished || this.closing) return;
     if (this.join) {
-      const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).runtime?.shopSessions?.[this.shopId];
+      const current = this.controller.shop.getContext(this.sceneId, this.target, this.groupId, this.shopId).runtime?.shopSessions?.[this.shopId];
       if (!current || current.sessionId !== this.sessionId) throw new Error("Сессия участника уже завершилась.");
       this.session = current; this.readOnly = current.userId !== game.user.id;
     } else {
@@ -50,7 +50,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     const base = await super._prepareContext(options);
     let unavailable = "", actor;
     try { await this.ensureSession(); } catch (error) { this.sessionError = error.message; }
-    const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId);
+    const current = this.controller.shop.getContext(this.sceneId, this.target, this.groupId, this.shopId);
     const receipt = Object.values(current.runtime?.tradeRequests ?? {}).find((record) => record.intent?.sessionId === this.sessionId
       && (record.intent.requestId === this.requestId || record.status === "pending"));
     if (receipt) {
@@ -106,7 +106,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.listeners?.abort();
     this.listeners = new this.element.ownerDocument.defaultView.AbortController();
     for (const node of this.element.querySelectorAll("[data-stock-drag]")) node.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData("text/plain", JSON.stringify({ type: "MasterScreenStock", entryId: node.dataset.stockDrag, tokenId: this.tokenId, sceneId: this.sceneId, schemeId: this.schemeId }));
+      event.dataTransfer.setData("text/plain", JSON.stringify({ type: "MasterScreenStock", entryId: node.dataset.stockDrag, tokenId: this.tokenId, sceneId: this.sceneId, groupId: this.groupId }));
     }, { signal: this.listeners.signal });
     for (const area of this.element.querySelectorAll("[data-offer-drop]")) {
       area.addEventListener("dragover", (event) => event.preventDefault(), { signal: this.listeners.signal });
@@ -125,13 +125,13 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
   async drop(event, side) {
     try {
       const data = JSON.parse(event.dataTransfer?.getData("text/plain") || "{}");
-      if (side === "npc" && data.type === "MasterScreenStock" && data.tokenId === this.tokenId && data.sceneId === this.sceneId && data.schemeId === this.schemeId) {
+      if (side === "npc" && data.type === "MasterScreenStock" && data.tokenId === this.tokenId && data.sceneId === this.sceneId && data.groupId === this.groupId) {
         return this.edit((draft) => { const item = draft.take.find((item) => item.entryId === data.entryId);
           if (item) item.count++; else draft.take.push({ entryId: data.entryId, count: 1 }); });
       }
       if (side !== "player" || data.type !== "Item" || typeof data.uuid !== "string") throw new Error("Перенесите предмет в соответствующую колонку предложения.");
       const item = await fromUuid(data.uuid);
-      const current = this.controller.shop.getContext(this.sceneId, this.target, this.schemeId);
+      const current = this.controller.shop.getContext(this.sceneId, this.target, this.groupId);
       const actor = validateTradeContext(current, this.intent(), game.user);
       if (item?.documentName !== "Item" || item.parent?.uuid !== actor.uuid) throw new Error("Предмет не принадлежит выбранному персонажу.");
       return this.edit((draft) => { if (!draft.giveItemIds.includes(item.id)) draft.giveItemIds.push(item.id); });
@@ -174,7 +174,7 @@ export class ShopApplication extends HandlebarsApplicationMixin(ApplicationV2) {
     this.requestId = newId(); this.sessionError = null; this.feedback = "";
     return this.render({ force: true });
   }
-  static sheet() { return this.controller.shop.getContext(this.sceneId, this.target, this.schemeId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
+  static sheet() { return this.controller.shop.getContext(this.sceneId, this.target, this.groupId).scene?.tokens.get(this.actorTokenId)?.actor?.sheet?.render(true); }
   async close(options = {}) {
     this.closing = true;
     this.listeners?.abort(); clearInterval(this.heartbeat); clearInterval(this.statusTimer);

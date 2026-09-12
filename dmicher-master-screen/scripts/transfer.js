@@ -1,6 +1,7 @@
 import { MODULE_ID, normalizeDefinition } from "./model.js";
 import { asArray, getDefinitions, requireGM } from "./store.js";
-import { getEventCatalog, normalizeCatalog } from "./event-catalog.js";
+import { getSignalCatalog, normalizeCatalog, exportCatalogDependencies } from "./signal-catalog.js";
+import { validateParameters } from "./signal-types.js";
 import { getInteractionCatalog, normalizeInteractionCatalog } from "./scene-assets.js";
 import { normalizeObjectBindings, validateObjectBinding } from "./scene-objects.js";
 
@@ -27,9 +28,8 @@ export async function exportBundle(scene) {
   requireGM();
   if (!scene) throw new Error("Сначала откройте сцену");
   const definitions = getDefinitions(scene), actors = [], macros = [], journals = [];
-  const allEvents = getEventCatalog(scene);
   const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
-  const eventCatalog = normalizeCatalog({ ...allEvents, events: allEvents.events.filter((entry) => !entry.builtin), triggers: allEvents.triggers.filter((entry) => !entry.builtin) });
+  const signalCatalog = exportCatalogDependencies(scene);
   const seen = new Set();
   async function include(uuid) {
     if (!uuid || seen.has(uuid)) return;
@@ -43,21 +43,17 @@ export async function exportBundle(scene) {
   }
   for (const token of asArray(scene.tokens)) if (token.actorId) await include(`Actor.${token.actorId}`);
   for (const note of asArray(scene.notes)) if (note.entryId) await include(`JournalEntry.${note.entryId}`);
-  for (const episode of definitions.flatMap((entry) => entry.episodes)) {
-    for (const spawn of episode.spawns) await include(spawn.actorUuid);
-    for (const entry of [...episode.workspace.gm, ...episode.workspace.players]) await include(entry.uuid);
+  for (const state of definitions.flatMap((entry) => entry.states)) {
+    for (const spawn of state.spawns) await include(spawn.actorUuid);
+    for (const entry of [...state.workspace.gm, ...state.workspace.players]) await include(entry.uuid);
   }
-  for (const event of eventCatalog.events) for (const subscriber of event.subscribers) if (subscriber.kind === "macro") await include(subscriber.macroUuid);
-  for (const macro of eventCatalog.macros) await include(macro.uuid);
-  for (const binding of Object.values(objectBindings.bindings)) for (const feature of binding.features) {
-    if (feature.kind === "macro") await include(feature.macroUuid);
-  }
-  for (const binding of Object.values(objectBindings.bindings)) for (const routine of binding.routines) for (const step of routine.steps) if (step.kind === "macro") await include(step.parameters.macroUuid);
+  for (const macro of signalCatalog.macros) await include(macro.uuid);
   const data = portable(scene);
   if (data.flags) delete data.flags[MODULE_ID];
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,
-    definitions, eventCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
+    sourceSceneId: scene.id, sourceSceneUuid: scene.uuid ?? `Scene.${scene.id}`,
+    definitions, signalCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
 }
 export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
@@ -66,11 +62,12 @@ export function validateBundle(value) {
     || !Array.isArray(value.definitions)) throw new Error("Это не JSON сцены Ширмы версии 1");
   if (value.systemId !== game.system.id) throw new Error("Предметы и персонажи требуют той же игровой системы");
   if (value.definitions) {
-    if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error("Некорректный список схем.");
-    const schemes = value.definitions.map(normalizeDefinition);
-    if (new Set(schemes.map((entry) => entry.schemeId)).size !== schemes.length || new Set(schemes.map((entry) => entry.schemeName.toLocaleLowerCase())).size !== schemes.length) throw new Error("Схемы должны иметь уникальные названия и идентификаторы.");
+    if (!Array.isArray(value.definitions) || value.definitions.length > 100) throw new Error("Некорректный список групп.");
+    const groups = value.definitions.map(normalizeDefinition);
+    if (new Set(groups.map((entry) => entry.groupId)).size !== groups.length || new Set(groups.map((entry) => entry.groupName.toLocaleLowerCase())).size !== groups.length) throw new Error("Группы должны иметь уникальные названия и идентификаторы.");
   }
-  if (value.eventCatalog) normalizeCatalog(value.eventCatalog);
+  if (typeof value.sourceSceneId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.sourceSceneId)) throw new Error("В JSON отсутствует ID исходной сцены.");
+  normalizeCatalog(value.signalCatalog ?? {});
   const uuids = new Set();
   for (const [field, type] of [["actors", "Actor"], ["macros", "Macro"], ["journals", "JournalEntry"]]) {
     if (!Array.isArray(value[field]) || value[field].length > 500) throw new Error(`Некорректный список ${field}`);
@@ -93,16 +90,20 @@ export function validateBundle(value) {
   }
   const definitions = value.definitions.map((entry) => normalizeDefinition(entry));
   const objectBindings = normalizeObjectBindings(value.objectBindings ?? {});
-  const flags = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, entry])), eventCatalog: value.eventCatalog,
+  const flags = { groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, entry])), signalCatalog: value.signalCatalog,
     ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings };
-  const scene = { id: "import-validation", getFlag: (_scope, key) => flags[key] };
+  const scene = { id: value.sourceSceneId, uuid: value.sourceSceneUuid, getFlag: (_scope, key) => flags[key] };
   for (const key of ["tokens", "tiles", "drawings", "lights", "sounds", "notes", "templates", "walls", "regions"]) {
     if (value.scene[key] !== undefined && !Array.isArray(value.scene[key])) throw new Error("Объекты сцены должны быть списками.");
-    scene[key] = new Map((value.scene[key] ?? []).map((entry) => [entry._id, entry]));
+    scene[key] = new Map((value.scene[key] ?? []).map((entry) => [entry._id, { ...entry, id: entry._id }]));
   }
-  const events = getEventCatalog(scene).events;
+  const signals = getSignalCatalog(scene).signals;
   for (const dialogue of getInteractionCatalog(scene).dialogues) for (const page of dialogue.pages) for (const response of page.responses) {
-    if (response.eventName && !events.some((event) => event.name === response.eventName)) throw new Error("Диалог ссылается на отсутствующее событие.");
+    if (response.signalId) {
+      const signal = signals.find((entry) => entry.id === response.signalId && entry.emitterKey === `Dialogue:${dialogue.id}`);
+      if (!signal) throw new Error("Диалог ссылается на чужой или отсутствующий сигнал.");
+      validateParameters(signal, response.parameters);
+    }
   }
   for (const binding of Object.values(objectBindings.bindings)) validateObjectBinding(scene, binding, definitions);
   return value;
@@ -128,16 +129,30 @@ export async function importBundle(value) {
       const mapped = mapping.get(`JournalEntry.${note.entryId}`);
       if (mapped) note.entryId = mapped.slice("JournalEntry.".length);
     }
-    const definitions = value.definitions.map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
     data.active = false; data.navigation = false;
     data.flags ??= {};
-    data.flags[MODULE_ID] = { definitions: Object.fromEntries(definitions.map((entry) => [entry.schemeId, { ...entry, revision: 1 }])),
-      eventCatalog: normalizeCatalog(remapReferences(value.eventCatalog ?? {}, mapping)),
-      ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog, mapping)) } : {}),
-      ...(value.objectBindings ? { objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings, mapping)) } : {}) };
+    delete data.flags[MODULE_ID];
     const Scene = CONFIG.Scene?.documentClass ?? getDocumentClass("Scene");
     const scene = await Scene.create(data, { keepEmbeddedIds: true });
     if (!scene) throw new Error("Не удалось создать сцену");
+    created.push(scene);
+    mapping.set(value.sourceSceneUuid ?? `Scene.${value.sourceSceneId}`, scene.uuid ?? `Scene.${scene.id}`);
+    for (const type of ["Scene", "Combat"]) mapping.set(`${type}:${value.sourceSceneId}`, `${type}:${scene.id}`);
+    const catalog = value.signalCatalog ?? {};
+    for (const entry of [...(catalog.signals ?? []), ...(catalog.subscriptions ?? [])]) {
+      const emitterKey = mapping.get(entry.emitterKey);
+      if (emitterKey) {
+        const id = entry.signalId ?? entry.id;
+        if (id?.startsWith(`builtin:${entry.emitterKey}:`)) mapping.set(id, `builtin:${emitterKey}:${id.slice(`builtin:${entry.emitterKey}:`.length)}`);
+      }
+    }
+    const definitions = value.definitions.map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
+    await scene.update({ [`flags.${MODULE_ID}`]: {
+      groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, { ...entry, revision: 1 }])),
+      signalCatalog: normalizeCatalog(remapReferences(catalog, mapping)),
+      interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog ?? {}, mapping)),
+      objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings ?? {}, mapping))
+    } });
     return { scene, created, warnings: ["Медиафайлы должны находиться по сохранённым путям.",
       "Проверьте права новых персонажей, ссылки и скриптовые макросы перед запуском."] };
   } catch (error) {

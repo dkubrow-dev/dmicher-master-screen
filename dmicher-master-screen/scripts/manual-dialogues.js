@@ -4,7 +4,7 @@ import { generics } from "./generics.js";
 import { getInteractionCatalog, normalizeDialogueAsset } from "./scene-assets.js";
 
 /** Manual projection contains presentation and local navigation only, never executable actions. */
-export function manualDialogueData(source, { includeEventNames = false } = {}) {
+export function manualDialogueData(source, { includeSignalIds = false } = {}) {
   // This is the active presentation DTO used by invitations, not stored scene preparation.
   // Reuse catalog validation for its page links before exposing it to another participant.
   if (!Array.isArray(source?.nodes)) throw new Error("У диалога пока нет страниц.");
@@ -13,7 +13,7 @@ export function manualDialogueData(source, { includeEventNames = false } = {}) {
   return { id: dialogue.id, name: dialogue.name, startNodeId: dialogue.startPageId,
     nodes: dialogue.pages.map((node) => ({ id: node.id, text: node.text, art: node.art,
       responses: node.responses.map((response) => ({ id: response.id, label: response.label,
-        nextNodeId: response.nextPageId, eventName: includeEventNames ? response.eventName : "" })) })) };
+        nextNodeId: response.nextPageId, signalId: includeSignalIds ? response.signalId : "" })) })) };
 }
 
 const defaultOpen = async (data) => {
@@ -27,7 +27,7 @@ const defaultOpen = async (data) => {
 export function createManualDialogueService({ openWindow = defaultOpen, messageService } = {}) {
   const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "manual-dialogues" });
   const shown = new Set();
-  const getManualContext = ({ sceneId, episodeId, dialogueId, pageId, schemeId = "main" }) => {
+  const getManualContext = ({ sceneId, stateId, dialogueId, pageId, groupId = "main" }) => {
     requireGM();
     const scene = game.scenes.get(sceneId);
     if (!scene) throw new Error("Сцена не найдена.");
@@ -36,7 +36,7 @@ export function createManualDialogueService({ openWindow = defaultOpen, messageS
       const source = { ...asset, startNodeId: pageId ?? asset.startPageId,
         nodes: asset.pages.map((page) => ({ ...page, responses: page.responses.map((response) => ({ ...response, nextNodeId: response.nextPageId })) })) };
       if (!source.nodes.some((node) => node.id === source.startNodeId)) throw new Error("Страница диалога не найдена.");
-      return { dialogue: manualDialogueData(source, { includeEventNames: true }), sourceName: asset.name, sceneId, schemeId, episodeId };
+      return { dialogue: manualDialogueData(source, { includeSignalIds: true }), sourceName: asset.name, sceneId, groupId, stateId };
     }
     throw new Error("Диалог не найден в каталоге сцены.");
   };
