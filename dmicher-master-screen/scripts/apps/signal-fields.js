@@ -1,4 +1,6 @@
 import { generics } from "../generics.js";
+import { renderSchema, readSignalSchemaField } from "./signal-schema-fields.js";
+export { renderSchema, bindSignalFields } from "./signal-schema-fields.js";
 import { localizedDescription } from "../model.js";
 import { validateSignalMacro, validateStandaloneMacro } from "../signal-macros.js";
 
@@ -19,10 +21,6 @@ export async function macroValidationSummary(catalog, entry) {
   return failed ? { valid: false, text: failed.error } : { valid: true, text: subscriptions.length ? t("Интерфейсы проверены", "Interfaces validated") : t("Синтаксис проверен; без подписок", "Syntax validated; no subscriptions") };
 }
 
-export function renderSchema(fields, direction) {
-  return `<div data-signal-schema="${direction}">${fields.map((field, index) => `<fieldset data-signal-field="${direction}" data-index="${index}"${field.builtin ? " disabled" : ""}><div class="ms-grid-two">${input("field-name", t("Имя", "Name"), field.name, "required")}${choose("field-type", t("Тип", "Type"), [{ id: "string", name: t("Текст", "Text") }, { id: "integer", name: t("Целое число", "Integer") }, { id: "number", name: t("Дробное число", "Number") }, { id: "boolean", name: t("Логическое", "Boolean") }], field.type)}</div><label class="ms-check"><input type="checkbox" name="field-nullable"${field.nullable ? " checked" : ""}>${t("Может быть null", "May be null")}</label>${input("field-default", t("Значение по умолчанию (JSON)", "Default value (JSON)"), Object.hasOwn(field, "default") ? JSON.stringify(field.default) : "")}<div class="ms-grid-two">${field.type === "string" ? input("field-minLength", t("Минимальная длина", "Minimum length"), field.minLength, 'type="number" min="0"') + input("field-maxLength", t("Максимальная длина", "Maximum length"), field.maxLength, 'type="number" min="0"') : ""}${["integer", "number"].includes(field.type) ? input("field-min", t("Минимум", "Minimum"), field.min, 'type="number" step="any"') + input("field-max", t("Максимум", "Maximum"), field.max, 'type="number" step="any"') : ""}${field.type === "number" ? input("field-decimals", t("Точность", "Decimals"), field.decimals, 'type="number" min="0" max="12"') : ""}</div><label>${t("Описание", "Description")}<textarea name="field-description">${e(localizedDescription(field.description))}</textarea></label>${field.builtin ? `<small>${t("Системное поле", "System field")}</small>` : `<button type="button" data-screen-action="removeSignalField" data-direction="${direction}" data-index="${index}">${t("Удалить поле", "Remove field")}</button>`}</fieldset>`).join("")}</div><button type="button" data-screen-action="addSignalField" data-direction="${direction}">+ ${t("Поле", "Field")}</button>`;
-}
-
 export function renderSignalFields(signal, catalog) {
   if (!signal) return `<p>${t("Выберите сигнал эмитента.", "Select an emitter's signal.")}</p>`;
   return `<section data-signal-fields><p class="ms-note">${t("Эмитент", "Emitter")}: ${e(emitterName(catalog, signal.emitterKey))}</p>${input("signal-name", t("Название", "Name"), signal.name, signal.builtin ? "readonly" : "required")}<label>${t("Описание", "Description")}<textarea name="signal-description"${signal.builtin ? " readonly" : ""}>${e(localizedDescription(signal.description))}</textarea></label><h4>${t("Параметры", "Parameters")}</h4>${renderSchema(signal.parameters, "parameters")}<h4>${t("Возврат", "Returns")}</h4>${renderSchema(signal.returns, "returns")}</section>`;
@@ -34,11 +32,7 @@ export function readSignalFields(root, previous) {
   if (!signal.builtin) { signal.name = value(root, "signal-name"); signal.description = description(value(root, "signal-description"), signal.description); }
   for (const direction of ["parameters", "returns"]) signal[direction] = [...root.querySelectorAll(`[data-signal-field="${direction}"]`)].map((row) => {
     const original = previous[direction][Number(row.dataset.index)];
-    if (original.builtin) return original;
-    const field = { name: value(row, "field-name"), type: value(row, "field-type"), nullable: row.querySelector('[name="field-nullable"]')?.checked === true, description: description(value(row, "field-description"), original.description) };
-    for (const key of ["min", "max", "minLength", "maxLength", "decimals"]) if (value(row, `field-${key}`) !== "") field[key] = Number(value(row, `field-${key}`));
-    const raw = value(row, "field-default"); if (raw !== "") { try { field.default = JSON.parse(raw); } catch { throw new Error(t(`Поле «${field.name}»: исправьте JSON значения по умолчанию.`, `Field “${field.name}”: correct the default JSON.`)); } }
-    return field;
+    return readSignalSchemaField(row, original);
   });
   return signal;
 }

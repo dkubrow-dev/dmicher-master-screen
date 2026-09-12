@@ -8,10 +8,10 @@ function fixture({ emitFailure = false, signal = async () => ({ status: "done", 
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   const player = { id: "player", isGM: false, role: 1, active: true };
   const other = { id: "other", isGM: false, role: 1, active: true };
-  const pc = { id: "pc", x: 0, y: 0, width: 1, height: 1,
+  const pc = { id: "pc", documentName: "Token", x: 0, y: 0, width: 1, height: 1,
     actor: { id: "actor-pc", testUserPermission: (user) => user.id === player.id }, object: { checkCollision: () => false } };
-  const npc = { id: "npc", name: "Shopkeeper", x: 100, y: 0, width: 1, height: 1, texture: { src: "npc.webp" } };
-  const tile = { id: "chest", name: "Chest", x: 100, y: 0, width: 100, height: 100, texture: { src: "chest.webp" } };
+  const npc = { id: "npc", documentName: "Token", name: "Shopkeeper", x: 100, y: 0, width: 1, height: 1, texture: { src: "npc.webp" } };
+  const tile = { id: "chest", documentName: "Tile", name: "Chest", x: 100, y: 0, width: 100, height: 100, texture: { src: "chest.webp" } };
   const tags = {};
   const scene = { id: "scene", grid: { size: 100, distance: 5 }, tokens: new Map([["pc", pc], ["npc", npc]]), tiles: new Map([["chest", tile]]),
     getFlag: (_module, name) => name === "objectBindings" ? { bindings: Object.fromEntries(Object.entries(tags).map(([id, values]) => [`Token:${id}`, { type: "Token", id, tags: values }])) }

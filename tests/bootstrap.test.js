@@ -230,7 +230,7 @@ test("controller wires a Tile's declared signal through an owned macro to a stat
   try {
     const macros = new Map(); globalThis.fromUuid = async (uuid) => macros.get(uuid);
     controller = new ScreenController();
-    f.scene.tiles = new Map([["lever", { id: "lever", name: "Lever", x: 0, y: 0, width: 100, height: 100, hidden: false }]]);
+    f.scene.tiles = new Map([["lever", { id: "lever", documentName: "Tile", name: "Lever", x: 0, y: 0, width: 100, height: 100, hidden: false }]]);
     f.scene.tokens.get("guard").object.checkCollision = () => false;
     const definition = defaultDefinition();
     definition.states[0].interactions = [{ id: "lever-use", name: "Pull lever", enabled: true,

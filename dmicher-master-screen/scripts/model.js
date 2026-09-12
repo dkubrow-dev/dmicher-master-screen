@@ -1,4 +1,5 @@
 import { DEFAULT_DESCRIPTIONS } from "./object-descriptions.js";
+import { isSceneObjectType } from "./scene-object-types.js";
 
 export const MODULE_ID = "dmicher-master-screen";
 export const VERSION = "0.0.1";
@@ -67,9 +68,9 @@ function uniqueId(value, ids, label) {
 function normalizeInteractions(entries) {
   const ids = new Set();
   return list(entries).slice(0, 100).map((entry) => {
-    if (entry.target?.type && !["Token", "Tile"].includes(entry.target.type)) throw new Error("Взаимодействие привязывается к токену или тайлу");
+    if (entry.target?.type && !isSceneObjectType(entry.target.type)) throw new Error("Неизвестный тип объекта взаимодействия");
     return { id: uniqueId(entry.id, ids, "Взаимодействие"), name: text(entry.name, 100).trim() || "Взаимодействовать",
-      enabled: entry.enabled !== false, target: { type: entry.target?.type === "Tile" ? "Tile" : "Token", id: text(entry.target?.id, 64) },
+      enabled: entry.enabled !== false, target: { type: entry.target?.type ?? "Token", id: text(entry.target?.id, 64) },
       range: number(entry.range, 5, 0, 100000), signalId: text(entry.signalId, 160), parameters: clone(entry.parameters ?? {}), conditions: normalizeConditions(entry.conditions) };
   });
 }

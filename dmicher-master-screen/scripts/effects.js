@@ -1,11 +1,8 @@
 import { sanitizeScriptHTML } from "./script-text.js";
+import { sceneObjectCenter, sceneObjectBounds, isSceneObjectHidden } from "./scene-object-geometry.js";
 /** Foundry adapters. Scene rules and effect ownership remain in the runtime. */
 export function tokenCenter(token, scene) {
-  const scale = token.documentName && token.documentName !== "Token" ? 1 : Number(scene.grid?.size ?? 100);
-  return token.getCenterPoint?.(token._source ?? token) ?? {
-    x: Number(token.x ?? 0) + Number(token.width ?? token.shape?.width ?? 1) * scale / 2,
-    y: Number(token.y ?? 0) + Number(token.height ?? token.shape?.height ?? 1) * scale / 2
-  };
+  return token.getCenterPoint?.(token._source ?? token) ?? sceneObjectCenter(token, scene) ?? { x: NaN, y: NaN };
 }
 
 export function sceneDistance(scene, a, b) {
@@ -20,9 +17,9 @@ export function speechRecipients(scene, npc, { range = 0, visibleOnly = true, al
   const destination = tokenCenter(npc, scene);
   return values(game.users).filter((user) => {
     if (Number(user.role) >= 3) return true;
-    if (Number(user.role) < 1 || Number(user.role) > 2 || npc.hidden) return false;
+    if (Number(user.role) < 1 || Number(user.role) > 2 || isSceneObjectHidden(npc) || ![destination.x, destination.y].every(Number.isFinite)) return false;
     return values(scene.tokens).some((observer) => {
-      if (observer.id === npc.id || !observer.actor?.testUserPermission?.(user, "OWNER")) return false;
+      if ((observer === npc || npc.documentName === "Token" && observer.id === npc.id) || !observer.actor?.testUserPermission?.(user, "OWNER")) return false;
       const tags = scene.getFlag?.("dmicher-master-screen", "objectBindings")?.bindings?.[`Token:${observer.id}`]?.tags ?? [];
       if (allowTags.length && !allowTags.some((tag) => tags.includes(tag)) || denyTags.some((tag) => tags.includes(tag))) return false;
       const origin = tokenCenter(observer, scene);
@@ -55,6 +52,14 @@ export function crossesRectangle(from, to, zone) {
 
 const emojiObjects = new Map();
 const speechObjects = new Map();
+function positionDecoration(label, document, object, offset) {
+  const bounds = sceneObjectBounds(document, document.parent);
+  const stage = globalThis.canvas?.stage;
+  // Wall and Region containers use scene coordinates, unlike a token's local origin.
+  const anchor = bounds && stage && object.toLocal?.({ x: bounds.x + bounds.width / 2, y: bounds.y }, stage);
+  label.position.set(anchor?.x ?? Number(object.w ?? 100) / 2, (anchor?.y ?? 0) - offset);
+  label.visible = !isSceneObjectHidden(document) || globalThis.game?.user?.isGM === true;
+}
 export function setObjectSpeech(document, bubble) {
   const object = document?.object ?? document;
   if (!object?.addChild) return;
@@ -66,8 +71,7 @@ export function setObjectSpeech(document, bubble) {
     label.anchor.set(0.5, 1); label.eventMode = "none"; object.addChild(label); speechObjects.set(object, label);
   }
   label.text = String(bubble.text); label.style.fontSize = Number(bubble.fontSize || 24);
-  label.position.set(Number(object.w ?? 100) / 2, -42);
-  label.visible = !document.hidden || globalThis.game?.user?.isGM === true;
+  positionDecoration(label, document, object, 42);
 }
 export function setTokenEmoji(token, text) {
   const object = token?.object ?? token;
@@ -87,7 +91,7 @@ export function setTokenEmoji(token, text) {
     emojiObjects.set(object, label);
   }
   label.text = String(text);
-  label.position.set(Number(object.w ?? 100) / 2, -4);
+  positionDecoration(label, token, object, 4);
 }
 
 export function clearTokenEmojis() {

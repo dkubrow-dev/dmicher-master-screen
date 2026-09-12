@@ -88,12 +88,37 @@ scene.tokens.set(token.id, token); game.scenes.set(scene.id, scene);
 scene.flags[MODULE_ID].objectBindings = { schemaVersion: 1, revision: 0, bindings: { "Token:guard": { type: "Token", id: "guard", groupId: "main", tags: [], notes: "", initialScript:null,transitionScripts:{},scripts: [], shops:[],dialogues:[] } } };
 scene.tiles.set("menu", { id: "menu", name: "Menu", x: 150, y: 150, hidden: false, width: 100, height: 100, texture: { src: "" } });
 scene.tokens.set("waiter", { ...token, id: "waiter", name: "Waiter", actor: { id: "waiter-actor", name: "Waiter actor", testUserPermission: () => false } });
+scene.drawings = new Map([["notice", { id: "notice", documentName: "Drawing", name: "Notice", x: 350, y: 100, shape: { type: "r", width: 100, height: 60 }, rotation: 0, hidden: false }]]);
+scene.walls = new Map([["gate", { id: "gate", documentName: "Wall", name: "Gate", c: [500, 100, 600, 100] }]]);
+scene.lights = new Map([["lamp", { id: "lamp", documentName: "AmbientLight", name: "Lamp", x: 700, y: 100, hidden: false }]]);
 globalThis.emptyScene = { ...scene, id: "scene-empty", name: "Empty scene", flags: {}, tokens: new Map(), tiles: new Map() };
 game.scenes.set(emptyScene.id, emptyScene);
 const navigation = Handlebars.compile(await (await fetch("/scene-navigation.hbs")).text());
 document.getElementById("interface").insertAdjacentHTML("beforeend", navigation({ scenes: { active: [{ id: scene.id, name: scene.name, users: [{ name: "Player", letter: "P", color: "#999", border: "#222" }] }, { id: emptyScene.id, name: emptyScene.name }], levels: Number(version.split(".")[0]) === 14 ? [{ id: "level-a", sceneId: scene.id, name: "Ground floor" }] : [] } }));
 const renderer = { screen: { width: innerWidth, height: innerHeight }, resize(width, height) { Object.assign(this.screen, { width, height }); } };
 globalThis.canvas = { scene, ready: true, app: { renderer }, screenDimensions: [innerWidth, innerHeight], stage: { pivot: { x: 0, y: 0 }, position: { x: innerWidth / 2, y: innerHeight / 2, set(x, y) { this.x = x; this.y = y; } }, on() {}, off() {} }, pan() {}, tokens: { activate() {}, placeables: [], controlled: [] } };
+canvas.stage.children = [];
+canvas.stage.addChild = (child) => { canvas.stage.children.push(child); child.parent = canvas.stage; };
+canvas.stage.removeChild = (child) => { canvas.stage.children = canvas.stage.children.filter((entry) => entry !== child); child.parent = null; };
+canvas.animatePan = async (position) => { globalThis.focusedMapPosition = position; };
+globalThis.PIXI = { Graphics: class {
+  clear() { return this; } lineStyle() { return this; }
+  drawRect(x, y, width, height) { this.bounds = {x, y, width, height}; return this; }
+  destroy() { this.destroyed = true; }
+} };
+for (const [collection, layerName] of [['tokens','tokens'],['tiles','tiles'],['drawings','drawings'],['walls','walls'],['lights','lighting']]) {
+  const layer = canvas[layerName] = { placeables: [], controlled: [],
+    activate() { canvas.activeLayer = this; globalThis.activeNativeLayer = layerName; },
+    releaseAll() { this.controlled = []; }
+  };
+  for (const document of scene[collection].values()) {
+    document.parent = scene;
+    document.documentName ??= collection === 'tiles' ? 'Tile' : 'Token';
+    document.object = { document, layer, control() { layer.controlled = [this]; globalThis.focusedMapObject = `${document.documentName}:${document.id}`; }, checkCollision: () => false };
+    layer.placeables.push(document.object);
+  }
+}
+canvas.activeLayer = canvas.tokens;
 const { ScreenController } = await import("/modules/dmicher-master-screen/scripts/controller.js");
 const { installScreenSettingHelp } = await import("/modules/dmicher-master-screen/scripts/setting-help.js");
 installScreenSettingHelp((page, anchor) => { globalThis.helpTarget = { page, anchor }; });

@@ -13,10 +13,10 @@
 .dmicher-master-screen .window-content > .ms-body { flex: 1; min-height: 0; }
 .dmicher-master-screen .ms-script-table-scroll { overflow-x: auto; }
 .dmicher-master-screen .ms-script-table { width: 100%; min-width: 480px; table-layout: fixed; }
-.dmicher-master-screen .ms-script-table th:first-child { width: 32px; }
-.dmicher-master-screen .ms-script-table th:nth-child(2) { width: 120px; }
-.dmicher-master-screen .ms-script-table th:nth-child(4) { width: 80px; }
-.dmicher-master-screen .ms-script-table th:last-child { width: 35px; }
+.dmicher-master-screen .ms-script-table > thead > tr > th:first-child { width: 32px; }
+.dmicher-master-screen .ms-script-table > thead > tr > th:nth-child(2) { width: 150px; }
+.dmicher-master-screen .ms-script-table > thead > tr > th:nth-child(4) { width: 65px; }
+.dmicher-master-screen .ms-script-table > thead > tr > th:last-child { width: 35px; }
 .dmicher-master-screen .ms-script-table td, .dmicher-master-screen .ms-automation-table td { vertical-align: top; padding: 4px; }
 .dmicher-master-screen .ms-script-table textarea { width: 100%; min-height: 115px; font-family: monospace; font-size: 12px; }
 .dmicher-master-screen .ms-script-table select, .dmicher-master-screen .ms-script-table input { width: 100%; }
@@ -45,6 +45,27 @@
 .dmicher-master-screen .ms-state-script-table td:last-child button { display: inline-flex; width: auto; min-height: 24px; margin: 2px 4px; }
 .dmicher-master-screen .ms-script-block > summary { cursor: pointer; font-weight: bold; padding: 5px; }
 .dmicher-master-screen .ms-script-combat { margin: 8px 0; }
+.dmicher-master-screen .ms-initial-script-actions { display: flex; align-items: center; gap: 5px; overflow-x: auto; }
+.dmicher-master-screen .ms-initial-script-actions > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dmicher-master-screen .ms-initial-script-actions > button { flex: 0 0 auto; width: auto; margin: 0; white-space: nowrap; }
+.dmicher-master-screen .ms-script-parameter-table { width: 100%; margin: 0; border: 0; table-layout: fixed; background: transparent; font-size: 12px; }
+.dmicher-master-screen .ms-script-parameter-table > tbody > tr > th { width: 38%; font-weight: normal; text-align: left; vertical-align: middle; padding: 1px 3px; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-script-parameter-table > tbody > tr > td { padding: 1px 3px; vertical-align: middle; }
+.dmicher-master-screen .ms-script-parameter-table :is(input, select) { min-height: 22px; height: 22px; font-size: 12px; padding-block: 0; }
+.dmicher-master-screen .ms-script-parameter-table input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; margin: 2px; }
+.dmicher-master-screen .ms-script-parameter-table textarea { min-height: 40px; font: inherit; }
+.dmicher-master-screen .ms-script-parameter-table button { display: inline-flex; width: auto; min-height: 22px; margin: 0; padding: 1px 4px; font-size: 11px; line-height: 18px; }
+.dmicher-master-screen .ms-script-value, .dmicher-master-screen .ms-script-inline-actions { display: flex; align-items: center; gap: 4px; }
+.dmicher-master-screen .ms-script-value > input { flex: 1; min-width: 30px; }
+.dmicher-master-screen .ms-script-unit { flex: 0 0 auto; white-space: nowrap; font-size: 11px; opacity: .8; }
+.dmicher-master-screen .ms-script-inline-actions { flex-wrap: wrap; }
+.dmicher-master-screen .ms-script-parameter-group > summary { display: flex; align-items: center; gap: 5px; cursor: pointer; min-height: 23px; font-weight: 600; }
+.dmicher-master-screen .ms-script-parameter-group > summary::before { content: "▸"; }
+.dmicher-master-screen .ms-script-parameter-group[open] > summary::before { content: "▾"; }
+.dmicher-master-screen .ms-script-parameter-group > summary input { margin-left: auto; }
+.dmicher-master-screen .ms-script-parameter-group > table { border-left: 1px solid var(--dmicher-border, #68717a); }
+.dmicher-master-screen [data-script-json-value] { margin-top: 6px; min-height: 180px; }
+.dmicher-master-screen [data-script-json-value][hidden] { display: none; }
 .dmicher-master-screen [data-signal-field] { margin: 8px 0; padding: 8px; border: 1px solid var(--dmicher-border, #68717a); }
 .dmicher-master-screen [data-signal-field] label { display: flex; flex-direction: column; gap: 4px; }
 .dmicher-master-screen [data-signal-field] label.ms-check { flex-direction: row; align-items: center; }

@@ -9,6 +9,7 @@ import { isInteractionPaused } from "./interaction-pause.js";
 import { ObjectScriptRuntime, scriptProgressKey, initialScriptProgress } from "./script-runtime.js";
 import { createCombatAdapter } from "./combat-adapter.js";
 import { getSignalCatalog } from "./signal-catalog.js";
+import { SCENE_OBJECT_TYPES, SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -42,7 +43,7 @@ export class GroupRuntime {
     on("canvasTearDown", () => { this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); clearTokenEmojis(); });
     on("updateUser", () => notifyExecutionChange(globalThis.canvas?.scene));
     on("updateScene", (scene, changes) => { if (changes.flags?.[MODULE_ID] || Object.keys(changes).some((key) => key.startsWith(`flags.${MODULE_ID}`))) this.refresh(scene); });
-    for (const type of ["Token", "Tile", "Drawing", "AmbientLight", "AmbientSound", "MeasuredTemplate"]) on(`refresh${type}`, (object) => this.refreshObject(object.document));
+    for (const type of SCENE_OBJECT_TYPES) on(`refresh${type}`, (object) => this.refreshObject(object.document));
     on("preUpdateToken", (token, changes) => { if ("x" in changes || "y" in changes) this.previousPositions.set(token.uuid ?? token.id, tokenCenter(token, token.parent)); });
     on("updateToken", (token, changes) => {
       if (!("x" in changes || "y" in changes)) return;
@@ -91,7 +92,7 @@ export class GroupRuntime {
   refreshToken(token) { this.refreshObject(token); }
   refresh(scene) {
     if (scene?.id !== globalThis.canvas?.scene?.id) return;
-    for (const type of ["tokens", "tiles", "drawings", "lights", "sounds", "templates"]) for (const object of asArray(scene[type])) this.refreshObject(object);
+    for (const collection of Object.values(SCENE_OBJECT_COLLECTIONS)) for (const object of asArray(scene[collection])) this.refreshObject(object);
     this.onChange(scene);
   }
   isObjectMacroAttached(scene, target, macroUuid) { return getSignalCatalog(scene).macros.some((macro) => macro.ownerKey === objectKey(target) && macro.uuid === macroUuid); }

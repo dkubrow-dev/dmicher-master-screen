@@ -20,7 +20,8 @@ import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
 import { ObjectInfoApplication, ObjectBehaviorApplication } from "./apps/object-tools.js";
 import { listAvailableInteractions, objectDescriptor } from "./interaction-access.js";
-import { getSceneObject } from "./scene-objects.js";
+import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
+import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
 import { StateChooserApplication } from "./apps/state-chooser.js";
 
 export class ScreenController {
@@ -53,10 +54,7 @@ export class ScreenController {
     const definition = groupId ? getDefinition(scene, { groupId }) : null, runtime = definition ? getRuntime(scene, { groupId }) : null;
     const candidateStateId = this.selected.get(`${scene?.id}:${groupId}`) ?? this.selected.get(scene?.id);
     const selectedStateId = definition?.states.some((state) => state.id === candidateStateId) ? candidateStateId : definition?.entryStateId ?? definition?.states[0]?.id;
-    const objects = [
-      ...asArray(scene?.tokens).map((token) => ({ type: "Token", id: token.id, name: token.name })),
-      ...asArray(scene?.tiles).map((tile) => ({ type: "Tile", id: tile.id, name: tile.name || tile.texture?.src?.split("/").pop() || tile.id }))
-    ].map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
+    const objects = listNativeSceneObjects(scene).map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
     return { scene, definition, runtime, definitions, objects, mode: this.mode, groupId, selectedStateId,
       state: definition ? getState(definition, selectedStateId) : null, tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
   }
@@ -82,6 +80,11 @@ export class ScreenController {
   }
   refreshConstructorFrame() {
     this.constructorIndicator.sync(game.user?.isGM === true && this.mode === "constructor" && this.editor?.rendered === true);
+    if (this.mode !== "constructor") clearCanvasObjectFocus(globalThis.canvas);
+  }
+  focusObject(descriptor) {
+    if (!game.user?.isGM || this.mode !== "constructor") return false;
+    return focusCanvasObject(globalThis.canvas, descriptor);
   }
   openObjectInfo(descriptor) { return this.openObjectForm(descriptor, this.objectInfoWindows, ObjectInfoApplication); }
   openObjectBehavior(descriptor) { return this.openObjectForm(descriptor, this.objectBehaviorWindows, ObjectBehaviorApplication); }
@@ -307,7 +310,7 @@ export class ScreenController {
     ui.notifications.info("Укажите точку на карте. Escape — отмена.");
     return new Promise((resolve) => {
       const finish = (point) => {
-        stage.off("pointertap", click); document.removeEventListener("keydown", key);
+        stage.off("pointertapcapture", click); document.removeEventListener("keydown", key);
         this.cancelPick = null; resolve(point);
       };
       const click = (event) => {
@@ -319,7 +322,7 @@ export class ScreenController {
       };
       const key = (event) => { if (event.key === "Escape") finish(null); };
       this.cancelPick = () => finish(null);
-      stage.on("pointertap", click); document.addEventListener("keydown", key);
+      stage.on("pointertapcapture", click); document.addEventListener("keydown", key);
     });
   }
   changed(scene) {
@@ -338,7 +341,7 @@ export class ScreenController {
       .find((app) => app?.rendered && app.dirty);
     if (dirty && !(await dirty.mayDiscard())) return;
     this.mode = null;
-    this.objectMenu.close(); this.constructorIndicator.dispose();
+    this.objectMenu.close(); this.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas);
     for (const app of [this.editor, this.actor, this.shops, this.interaction, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) await app.close();
     }

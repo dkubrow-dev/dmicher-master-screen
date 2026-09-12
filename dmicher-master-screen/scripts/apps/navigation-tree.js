@@ -29,3 +29,8 @@ export function toggleMenuNode(nodes, hidden, id, visible) {
   if (leaves(nodes).every((leaf) => result.has(leaf))) return null;
   return [...result];
 }
+
+/** Both the scene tree and automation lists select the complete data row. */
+export function selectableTreeAttributes(kind, id, selected, escape) {
+  return `aria-selected="${selected}" data-select-kind="${escape(kind)}" data-select-id="${escape(id)}" tabindex="0"`;
+}

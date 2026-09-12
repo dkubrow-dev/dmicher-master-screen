@@ -12,7 +12,7 @@ import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
 import { bindIDEMenus } from "./ide-menu.js";
-import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary } from "./signal-fields.js";
+import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 const t = (ru,en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 
 const esc = generics.utilities.escapeHTML;
@@ -44,6 +44,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.tabStates = new Map();
     this.menuBranch = menuParent(this.layout.preferences.mainTab);
     this.foldedGroups = new Set();
+    this.foldedSignalBranches = new Set();
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
     this.assetPageIds = new Map();
@@ -249,6 +250,12 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (detailInputs.length) this.pendingTabInputs = null;
     for (const id of this.foldedGroups) this.applyFold(id);
+    const signalBranchKey = (node) => `${this.selectionSceneId}:${node.dataset.emitterNode ? `emitter:${node.dataset.emitterNode}` : `category:${node.dataset.signalCategory}`}`;
+    for (const node of this.element.querySelectorAll("[data-signal-category],[data-emitter-node]")) {
+      node.open = !this.foldedSignalBranches.has(signalBranchKey(node));
+      const button = node.querySelector(':scope > summary [data-screen-action="toggleSignalBranch"]');
+      if (button) button.textContent = node.open ? "▾" : "▸";
+    }
     const selectionKey = `${this.selectionSceneId}:${this.layout.preferences.mainTab}:${JSON.stringify(this.selection)}`;
     if (selectionKey !== this.revealedSelection) {
       const content = this.element.querySelector("[data-main-content]"), row = content?.querySelector('[aria-selected="true"], .is-selected');
@@ -261,6 +268,11 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.componentsDisposers.push(generics.components.bindColorFields(this.element));
+    if (this.selection.kind === "signal") this.componentsDisposers.push(bindSignalFields(this.element, {
+      getSignal: () => this.parameterDraft,
+      onChange: () => { this.captureParameterDraft(); this.dirty = true; },
+      onError: notify
+    }));
     for (const key of ["background", "textColor"]) {
       const value = this.parameterDraft?.[key], input = this.element.querySelector(`[data-ide-parameters] [name="${key}"]`);
       if (input && value !== undefined && !/^#[0-9a-f]{6}$/i.test(value)) {
@@ -270,6 +282,11 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.bindJSON();
     const listeners = { signal: this.events.signal };
+    this.element.addEventListener("toggle", (event) => {
+      if (!event.target.matches("[data-signal-category],[data-emitter-node]")) return;
+      const key = signalBranchKey(event.target);
+      if (event.target.open) this.foldedSignalBranches.delete(key); else this.foldedSignalBranches.add(key);
+    }, { ...listeners, capture: true });
     const symbol = this.element.querySelector('[name="groupSymbol"]');
     const constrainSymbol = (event) => {
       if (event?.isComposing) return;
@@ -283,6 +300,11 @@ export class MasterScreenApplication extends EditorApplication {
       const row = event.target.closest("[data-select-kind]");
       if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
       event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId).catch(notify);
+    }, listeners);
+    this.element.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key) || !event.target.matches("[data-select-kind]")) return;
+      event.preventDefault(); const row = event.target;
+      void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId).catch(notify);
     }, listeners);
     this.menuObserver?.disconnect();
     this.menuController?.dispose(); this.menuController = bindIDEMenus(this.element);
@@ -300,7 +322,7 @@ export class MasterScreenApplication extends EditorApplication {
         this.selectedMacroOwner = event.target.value;
       } else if (event.target.matches('[name="subscription-owner"]')) {
         this.captureSubscription(); void this.render({ force: true });
-      } else if (event.target.matches('[name="field-type"], [name="shopDisplay"]')) {
+      } else if (event.target.matches('[name="shopDisplay"]')) {
         try { this.captureParameterDraft(); this.dirty = true; void this.render({ force: true }); } catch (error) { notify(error); }
       }
     }, listeners);
@@ -357,6 +379,12 @@ export class MasterScreenApplication extends EditorApplication {
     this.layout.preferences.detailTab = "parameters";
     this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter((tab) => tab !== "parameters");
     this.layout.save();
+    if (this.mode === "constructor" && ["emitter", "signal", "macro"].includes(kind)) {
+      const catalog = new SignalCatalog(this.assertScene()).list();
+      const key = kind === "emitter" ? id : kind === "signal" ? catalog.signals.find((signal) => signal.id === id)?.emitterKey : catalog.macros.find((macro) => macroKey(macro) === id)?.ownerKey;
+      const emitter = catalog.emitters.find((entry) => entry.key === key);
+      if (emitter) await this.controller.focusObject?.({ type: emitter.type ?? key.split(":")[0], id: emitter.id ?? key.slice(key.indexOf(":") + 1) });
+    }
     return this.render({ force: true });
   }
 
@@ -598,6 +626,11 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, new SignalCatalog(this.assertScene()).list(), this.subscriptionConstraints());
   }
   async signalAction(action, button) {
+    if (action === "toggleSignalBranch") {
+      const node = button.closest("[data-emitter-node]");
+      if (node) { node.open = !node.open; button.textContent = node.open ? "▾" : "▸"; }
+      return true;
+    }
     const actions = ["addSignalField", "removeSignalField", "removeTreeSignal", "newSignalSubscription", "editSignalSubscription", "deleteSignalSubscription", "saveSignalSubscription"];
     if (!actions.includes(action)) return false;
     if (this.mode !== "constructor") throw new Error(t("Изменения доступны в Конструкторе.", "Editing is available in Constructor."));

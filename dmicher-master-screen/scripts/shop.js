@@ -6,6 +6,7 @@ import { objectDescriptor, objectKey, sceneObject, validateObjectAccess } from "
 import { generics } from "./generics.js";
 import { createShopSessions, requireShopSession, sessionIsLive, shopKey } from "./shop-sessions.js";
 import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
+import { isSceneObjectType } from "./scene-object-types.js";
 export { shopKey } from "./shop-sessions.js";
 
 const copy = (value) => structuredClone(value);
@@ -77,7 +78,7 @@ export function normalizeExchange(intent) {
   if (new Set(take.map((entry) => entry.entryId)).size !== take.length || take.reduce((sum, entry) => sum + entry.count, 0) > 100) fail("Предметы магазина повторяются или превышен предел количества.");
   if (!giveItemIds.length && !take.length) fail("Предложение обмена пусто.");
   const target = objectDescriptor(intent.target ?? intent.tokenId);
-  if (!["Token", "Tile"].includes(target?.type)) fail("Неизвестный тип объекта магазина.");
+  if (!isSceneObjectType(target?.type)) fail("Неизвестный тип объекта магазина.");
   const tokenId = string(target.id);
   return { kind: "exchange", requestId: string(intent.requestId), sceneId: string(intent.sceneId), tokenId,
     target: { type: target.type, id: tokenId }, shopId: string(intent.shopId),

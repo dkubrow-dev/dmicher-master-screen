@@ -34,7 +34,9 @@ export function isInteractionPaused(scene, tokenId, now = Date.now()) {
 }
 
 /** Caller owns the scene lock. Mark the first pause so the resume tick consumes no elapsed time. */
-export function freezeInteractionClock(state, tokenId, now = Date.now()) {
+export function freezeInteractionClock(state, target, now = Date.now()) {
+  const key = keyOf(target);
+  if (!key) return;
   state.interactionClocks ??= {};
-  state.interactionClocks[tokenId] ??= { pausedAt: now };
+  state.interactionClocks[key] ??= { pausedAt: now };
 }

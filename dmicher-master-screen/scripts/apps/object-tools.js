@@ -7,9 +7,10 @@ import { getInteractionCatalog } from "../scene-assets.js";
 import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
 import { normalizeConditions } from "../model.js";
 import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
-import { scriptStepTemplate } from "../script-model.js";
 import { buildScriptFields, readScriptFields, appendScriptStep, removeScriptStep, bindScriptSorting } from "./script-fields.js";
-import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary } from "./signal-fields.js";
+import { completeScriptParameters, bindScriptParameters } from "./script-parameters.js";
+import { readObjectGeometry } from "../script-movement.js";
+import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 
 const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
@@ -91,10 +92,10 @@ export class ObjectBehaviorApplication extends ObjectForm {
     }
     else if (this.tab === "features") body = this.featureFields(context);
     else {
-      body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p>${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}`) : "";
+      body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p><div class="ms-initial-script-actions">${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}</div>`) : "";
       body += definition ? this.stateScriptTable(definition, this.tab === "transitions" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
       const script = this.activeScript();
-      if (script) body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, getSignalCatalog(context.scene), { ownerKey: this.ownerKey, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) });
+      if (script) body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, getSignalCatalog(context.scene), { ownerKey: this.ownerKey, document: context.document, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) });
     }
     return { body: layout(`${this.draft.playerCharacter ? `<p class="ms-note">${t("Автоматизация персонажа игрока отключена.", "Player-character automation is disabled.")}</p>` : ""}${body}`, nav) };
   }
@@ -126,9 +127,12 @@ export class ObjectBehaviorApplication extends ObjectForm {
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = { signal: this.events.signal };
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
+    bindScriptParameters(this.element, () => ({ document: this.context().document, catalog: getSignalCatalog(this.context().scene), ownerKey: this.ownerKey }), () => { this.dirty = true; }, listeners);
+    const disposeSignalFields = bindSignalFields(this.element, { getSignal: () => this.signalDraft, onChange: () => { this.capture(); this.dirty = true; }, onError: notifyError });
+    this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
     this.element.addEventListener("change", (event) => { const target = event.target; try {
-      if (target.matches("[data-script-kind],[data-script-definition],[data-script-emoji]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; if (target.matches("[data-script-kind]")) step.parameters = scriptStepTemplate(step.kind).parameters; else if (target.matches("[data-script-emoji]")) step.parameters.emoji = target.value; else if (step.kind === "macro") step.parameters.macroUuid = target.value; else { step.parameters.signalId = target.value; const signal = getSignalCatalog(this.context().scene).signals.find((row) => row.id === target.value); step.parameters.parameters = Object.fromEntries((signal?.parameters ?? []).map((field) => [field.name, Object.hasOwn(field, "default") ? field.default : field.nullable ? null : field.type === "string" ? "" : field.type === "boolean" ? false : 0])); } this.dirty = true; void this.render({ force: true }); }
-      else if (target.matches('[name="field-type"],[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
+      if (target.matches("[data-script-kind],[data-script-emoji]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; if (target.matches("[data-script-kind]")) step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); else step.parameters.emoji = target.value; this.dirty = true; void this.render({ force: true }); }
+      else if (target.matches('[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
     } catch (error) { notifyError(error); } }, listeners);
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);
     this.element.addEventListener("drop", (event) => { if (!event.target.closest("[data-object-macro-drop]")) return; event.preventDefault(); void this.attachMacro(event).catch(notifyError); }, listeners);
@@ -141,7 +145,17 @@ export class ObjectBehaviorApplication extends ObjectForm {
     if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; }
     else if (["edit-script", "delete-script"].includes(action)) { this.selectedScript = { kind: target.dataset.kind, stateId: target.dataset.stateId }; if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; } else if (!this.activeScript()) { this.setActiveScript(newScript(this.selectedScript.kind === "initial" ? t("Исходное состояние", "Initial state") : context.definition.states.find((state) => state.id === this.selectedScript.stateId)?.name ?? t("Скрипт", "Script"), this.selectedScript.kind === "routine" ? this.selectedScript.stateId : null)); this.dirty = true; } }
     else if (action === "restore-initial") { await this.persist(); return this.controller.restoreObjectInitial(this.descriptor); }
-    else if (["add-script-step", "remove-script-step", "script-point", "script-sound"].includes(action)) { const script = this.activeScript(), step = script.steps[Number(target.dataset.step)]; if (action === "add-script-step") appendScriptStep(script); else if (action === "remove-script-step") removeScriptStep(script, Number(target.dataset.step)); else if (action === "script-point") { const point = await this.controller.pickPoint(); if (point) step.parameters.position = { ...(step.parameters.position ?? { speed: 5 }), x: point.x, y: point.y }; } else { const Picker = foundry.applications.apps?.FilePicker?.implementation ?? globalThis.FilePicker; new Picker({ type: "audio", current: step.parameters.src ?? "", callback: (src) => { step.parameters.src = src; this.dirty = true; void this.render({ force: true }); } }).browse(); return; } this.dirty = true; }
+    else if (["add-script-step", "remove-script-step", "script-point", "script-sound", "script-current-position", "script-current-size"].includes(action)) {
+      const script = this.activeScript(), step = script.steps[Number(target.dataset.step)];
+      if (action === "add-script-step") appendScriptStep(script);
+      else if (action === "remove-script-step") removeScriptStep(script, Number(target.dataset.step));
+      else if (action === "script-point") { const point = await this.controller.pickPoint(); if (point) step.parameters.position = { ...(step.parameters.position ?? { speed: 5 }), x: point.x, y: point.y }; }
+      else if (action === "script-current-position" || action === "script-current-size") {
+        const key = action === "script-current-position" ? "position" : "size", geometry = readObjectGeometry(context.document, context.scene)[key];
+        if (geometry) step.parameters[key] = { ...completeScriptParameters("move", undefined, context.document)[key], ...step.parameters[key], ...geometry };
+      } else { const Picker = foundry.applications.apps?.FilePicker?.implementation ?? globalThis.FilePicker; new Picker({ type: "audio", current: step.parameters.src ?? "", callback: (src) => { step.parameters.src = src; this.dirty = true; void this.render({ force: true }); } }).browse(); return; }
+      this.dirty = true;
+    }
     else if (["add-feature", "edit-feature", "remove-feature"].includes(action)) { const kind = target.dataset.kind, entries = this.draft[`${kind}s`] ??= []; if (action === "add-feature") { entries.push({ [`${kind}Id`]: context.catalog[`${kind}s`][0]?.id ?? "", stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) }); this.selectedFeature = { kind, index: entries.length - 1 }; this.dirty = true; } else if (action === "edit-feature") this.selectedFeature = { kind, index: Number(target.dataset.index) }; else { entries.splice(Number(target.dataset.index), 1); this.selectedFeature = null; this.dirty = true; } }
     else if (action === "open-asset") { const ref = this.selectedFeature; return this.controller.openAsset(ref.kind, this.draft[`${ref.kind}s`][ref.index][`${ref.kind}Id`]); }
     else if (action === "new-object-signal") this.signalDraft = { emitterKey: this.ownerKey, name: t("Новый сигнал", "New signal"), description: "", parameters: [], returns: [] };

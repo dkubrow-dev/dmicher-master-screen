@@ -5,22 +5,23 @@ import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies }
 import { validateParameters } from "./signal-types.js";
 import { stageScene, remapSignalIds } from "./configuration-transfer.js";
 import { normalizeScript, normalizeScripts } from "./script-model.js";
+import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js";
+import { sceneObjectCenter } from "./scene-object-geometry.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
-const collections = Object.freeze({ Token: "tokens", Tile: "tiles", Drawing: "drawings", AmbientLight: "lights", AmbientSound: "sounds", Note: "notes", MeasuredTemplate: "templates", Wall: "walls", Region: "regions" });
 const validId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
 const ids = (value = []) => {
   if (!Array.isArray(value) || value.length > 100 || value.some((id) => !validId(id))) fail("Ожидается список ID состояний.");
   return [...new Set(value)];
 };
-export function objectKey({ type, id }) { if (!collections[type] || !validId(id)) fail("Неверный тип или ID объекта сцены."); return `${type}:${id}`; }
-export const getSceneObject = (scene, target) => scene?.[collections[target?.type]]?.get?.(target?.id) ?? null;
+export function objectKey({ type, id }) { if (!Object.hasOwn(collections, type) || !validId(id)) fail("Неверный тип или ID объекта сцены."); return `${type}:${id}`; }
+export const getSceneObject = (scene, target) => Object.hasOwn(collections, target?.type) ? scene?.[collections[target.type]]?.get?.(target?.id) ?? null : null;
 export function listNativeSceneObjects(scene) {
   return Object.entries(collections).flatMap(([type, collection]) => Array.from(scene?.[collection]?.values?.() ?? []).map((document) => ({
     type, id: document.id, key: `${type}:${document.id}`, name: String(document.name || document.text || document.label || document.id),
     uuid: document.uuid ?? `Scene.${scene.id}.${type}.${document.id}`,
-    position: Number.isFinite(document.x) && Number.isFinite(document.y) ? { x: document.x, y: document.y } : null,
+    position: sceneObjectCenter(document, scene),
     hidden: typeof document.hidden === "boolean" ? document.hidden : null
   })));
 }
@@ -81,7 +82,6 @@ export function validateObjectBinding(scene, binding, definitions = getDefinitio
   }
   const assets = getInteractionCatalog(scene);
   for (const kind of ["shop", "dialogue"]) for (const reference of binding[`${kind}s`]) {
-    if (!["Token", "Tile"].includes(binding.type)) fail("Магазины и диалоги доступны токенам и тайлам.");
     if (!assets[`${kind}s`].some((asset) => asset.id === reference[`${kind}Id`])) fail("Инструмент больше не существует.");
     checkStates(reference.stateIds); checkStates(reference.conditions.stateIds);
     if (reference.conditions.groupIds.some((id) => id !== binding.groupId)) fail("Условия объекта не могут ссылаться на чужую группу.");

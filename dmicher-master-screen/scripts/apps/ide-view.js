@@ -1,5 +1,5 @@
 import { generics } from "../generics.js";
-import { MAIN_MENU, DETAIL_MENU, leaves, menuRows, menuPath } from "./navigation-tree.js";
+import { MAIN_MENU, DETAIL_MENU, leaves, menuRows, menuPath, selectableTreeAttributes } from "./navigation-tree.js";
 import { localizedDescription } from "../model.js";
 import { renderSignalFields, renderSubscriptions, macroKey, emitterName } from "./signal-fields.js";
 const t = (ru,en) => (globalThis.game?.i18n?.lang ?? "ru").startsWith("ru") ? ru : en;
@@ -36,7 +36,7 @@ export function renderSceneTree(definitions, runtimes, selection, mode) {
   for (const definition of definitions) {
     const active = runtimes.find((runtime) => runtime.groupId === definition.groupId);
     const selected = selection.kind === "group" && selection.id === definition.groupId;
-    rows.push(`<tr role="row" aria-level="1" aria-selected="${selected}" class="${selected ? "is-selected" : ""}" data-select-kind="group" data-select-id="${esc(definition.groupId)}" data-ide-kind="group" data-ide-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}">
+    rows.push(`<tr role="row" aria-level="1" ${selectableTreeAttributes("group", definition.groupId, selected, esc)} class="${selected ? "is-selected" : ""}" data-ide-kind="group" data-ide-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}">
       <td><button type="button" class="ms-tree-toggle" data-screen-action="foldGroup" data-group-id="${esc(definition.groupId)}" aria-label="Свернуть или раскрыть группу" aria-expanded="true">▾</button><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="group" data-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}"><span class="ms-color-swatch" style="${colorStyle(definition)}">${esc(definition.symbol ?? "🎬")}</span>${esc(definition.groupName)}</button></td>
       <td>${mode === "director" ? `<span class="ms-note">${active?.halted ? "Остановлена" : active?.stateId ? "Работает" : "Не запущена"}</span>` : `${definition.states.length}`}</td></tr>`);
     for (const state of definition.states) {
@@ -47,13 +47,35 @@ export function renderSceneTree(definitions, runtimes, selection, mode) {
   return `<table class="ms-ide-tree" role="treegrid" aria-label="Группы и состояния"><tbody>${rows.join("")}</tbody></table>`;
 }
 
-export function renderSignalTree(catalog, selection, mode, definitions = []) {
-  const groups = [...definitions.map((group) => ({ id: group.groupId, name: group.groupName })), { id: null, name: t("Без группы", "Ungrouped") }];
-  return `<div class="ms-signal-tree" role="tree">${groups.map((group) => {
-    const emitters = catalog.emitters.filter((emitter) => (emitter.groupId ?? null) === group.id);
-    if (!emitters.length) return "";
-    return `<details open><summary>${esc(group.name)}</summary>${emitters.map((emitter) => `<details open data-emitter-node="${esc(emitter.key)}"><summary><span data-select-kind="emitter" data-select-id="${esc(emitter.key)}">${esc(emitter.name)}</span>${mode === "constructor" ? button("addSignal", "+", `data-emitter-key="${esc(emitter.key)}" aria-label="${t("Добавить сигнал", "Add signal")}"`) : ""}</summary><table><tbody>${catalog.signals.filter((signal) => signal.emitterKey === emitter.key).map((signal) => `<tr data-select-kind="signal" data-select-id="${esc(signal.id)}" aria-selected="${selection.id === signal.id}" class="${selection.id === signal.id ? "is-selected" : ""}"><td>${button("selectNode", `${localizedDescription(signal.label) || signal.name}`, `data-kind="signal" data-id="${esc(signal.id)}"`)}<small>${signal.label ? esc(signal.name) : ""}</small></td><td>${signal.builtin ? t("Системный", "System") : mode === "constructor" ? button("removeTreeSignal", "×", `data-id="${esc(signal.id)}" aria-label="${t("Удалить сигнал", "Delete signal")}"`) : ""}</td></tr>`).join("")}</tbody></table></details>`).join("")}</details>`;
-  }).join("")}</div>`;
+export function signalTreeCategories(catalog) {
+  const byType = (type) => catalog.emitters.filter((emitter) => (emitter.type ?? emitter.key.split(":")[0]) === type);
+  const assigned = new Set(["Scene", "Combat", "Shop", "Dialogue", "Group", "Token", "Tile", "Drawing", "Wall"]);
+  return [
+    { id: "scene", name: t("Сцена", "Scene"), emitters: [...byType("Scene"), ...byType("Combat")], children: [
+      { id: "shops", name: t("Магазины", "Shops"), emitters: byType("Shop") },
+      { id: "dialogues", name: t("Диалоги", "Dialogues"), emitters: byType("Dialogue") }
+    ] },
+    { id: "groups", name: t("Группы", "Groups"), emitters: byType("Group") },
+    { id: "tokens", name: t("Токены", "Tokens"), emitters: byType("Token") },
+    { id: "tiles", name: t("Тайлы", "Tiles"), emitters: byType("Tile") },
+    { id: "drawings", name: t("Рисунки", "Drawings"), emitters: byType("Drawing") },
+    { id: "walls", name: t("Стены", "Walls"), emitters: byType("Wall") },
+    { id: "other", name: t("Прочие", "Other"), emitters: catalog.emitters.filter((emitter) => !assigned.has(emitter.type ?? emitter.key.split(":")[0])) }
+  ];
+}
+
+export function renderSignalTree(catalog, selection, mode) {
+  const renderEmitter = (emitter) => {
+    const selected = selection.kind === "emitter" && selection.id === emitter.key;
+    const name = emitter.type === "Combat" ? t("Боевой агент", "Combat agent") : emitter.name;
+    const rows = catalog.signals.filter((signal) => signal.emitterKey === emitter.key).map((signal) => {
+      const chosen = selection.kind === "signal" && selection.id === signal.id;
+      return `<tr ${selectableTreeAttributes("signal", signal.id, chosen, esc)} class="${chosen ? "is-selected" : ""}"><td><span class="ms-tree-name">${esc(localizedDescription(signal.label) || signal.name)}</span></td><td class="ms-signal-technical"><code>${esc(signal.name)}</code></td><td>${signal.builtin ? `<span class="ms-signal-status">${t("Системный", "System")}</span>` : mode === "constructor" ? button("removeTreeSignal", "×", `data-id="${esc(signal.id)}" aria-label="${t("Удалить сигнал", "Delete signal")}"`) : ""}</td></tr>`;
+    });
+    return `<details open class="ms-signal-emitter" data-emitter-node="${esc(emitter.key)}"><summary ${selectableTreeAttributes("emitter", emitter.key, selected, esc)} class="${selected ? "is-selected" : ""}">${button("toggleSignalBranch", "▾", `class="ms-tree-toggle" aria-label="${t("Свернуть или раскрыть", "Collapse or expand")}"`)}<span class="ms-tree-name">${esc(name)}</span>${mode === "constructor" ? button("addSignal", "+", `data-emitter-key="${esc(emitter.key)}" aria-label="${t("Добавить сигнал", "Add signal")}"`) : ""}</summary><table class="ms-ide-tree ms-signal-table"><colgroup><col><col class="ms-signal-technical-column"><col class="ms-signal-status-column"></colgroup><thead><tr><th>${t("Название", "Name")}</th><th>${t("Техническое имя", "Technical name")}</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table></details>`;
+  };
+  const renderCategory = (category) => `<details open class="ms-signal-category" data-signal-category="${category.id}"><summary>${esc(category.name)} <small>${category.emitters.length}</small></summary>${category.emitters.map(renderEmitter).join("")}${(category.children ?? []).map(renderCategory).join("")}</details>`;
+  return `<div class="ms-signal-tree">${signalTreeCategories(catalog).map(renderCategory).join("")}</div>`;
 }
 
 export function renderMacroList(catalog, selection, resolveMacro = () => null, ownerKey = "", validation = new Map()) {

@@ -1,7 +1,8 @@
 import { MODULE_ID } from "./model.js";
 import { asArray, getDefinitions } from "./store.js";
+import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 
-export const SCENE_COLLECTIONS = { Token: "tokens", Tile: "tiles", AmbientLight: "lights", AmbientSound: "sounds", Wall: "walls", Drawing: "drawings", Note: "notes", Region: "regions", MeasuredTemplate: "templates" };
+export const SCENE_COLLECTIONS = SCENE_OBJECT_COLLECTIONS;
 export const sceneUuid = (scene) => scene.uuid ?? `Scene.${scene.id}`;
 export const virtualUuid = (scene, type, id) => `${sceneUuid(scene)}.dmicher.${type}.${id}`;
 const description = (ru, en) => ({ ru, en });

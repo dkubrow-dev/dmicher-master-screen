@@ -158,6 +158,9 @@
 .dmicher-master-screen .ms-ide-divider:hover, .dmicher-master-screen .ms-ide-divider:focus-visible { background: var(--dmicher-row-hover); }
 .dmicher-master-screen .ms-ide-tree { width: 100%; margin: 0; border: 0; border-collapse: collapse; table-layout: fixed; background: transparent; }
 .dmicher-master-screen .ms-ide-tree tr { border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen [data-select-kind] { cursor: pointer; }
+.dmicher-master-screen [data-select-kind]:hover { background: var(--dmicher-row-hover); }
+.dmicher-master-screen [data-select-kind]:focus-visible { outline: 1px solid var(--dmicher-accent); outline-offset: -1px; }
 .dmicher-master-screen .ms-ide-tree td { padding: 1px 3px; height: 27px; }
 .dmicher-master-screen .ms-ide-tree td:last-child { width: 90px; text-align: right; white-space: nowrap; }
 .dmicher-master-screen .ms-ide-tree tr.is-selected, .dmicher-master-screen .ms-ide-list-row.is-selected, .dmicher-master-screen .ms-ide-block-link.is-selected { background: var(--dmicher-row-hover); outline: 1px solid var(--dmicher-accent); outline-offset: -1px; }
@@ -170,6 +173,39 @@
 .dmicher-master-screen .ms-ide-list-row { display: flex; justify-content: space-between; align-items: center; gap: 4px; min-width: 0; padding: 2px 4px; border-bottom: 1px solid var(--dmicher-border-muted); }
 .dmicher-master-screen .ms-ide-list-row > span:first-child { overflow-wrap: anywhere; }
 .dmicher-master-screen .ms-ide-inline-actions { display: flex; gap: 2px; }
+.dmicher-master-screen .ms-signal-category { margin: 0; border: 0; padding: 0; }
+.dmicher-master-screen .ms-signal-category > summary { padding: 3px 5px; border-bottom: 1px solid var(--dmicher-border-muted); font-weight: 600; cursor: pointer; }
+.dmicher-master-screen .ms-signal-category > summary small { font-weight: normal; opacity: .65; }
+.dmicher-master-screen .ms-signal-category > .ms-signal-category { margin-left: 12px; }
+.dmicher-master-screen .ms-signal-emitter { margin: 0 0 0 12px; border: 0; padding: 0; }
+.dmicher-master-screen .ms-signal-emitter > summary { display: flex; align-items: center; gap: 3px; padding: 1px 3px; min-height: 25px; list-style: none; border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-signal-emitter > summary::-webkit-details-marker { display: none; }
+.dmicher-master-screen .ms-signal-emitter > summary .ms-tree-name { flex: 1; min-width: 0; }
+.dmicher-master-screen .ms-signal-emitter > summary > button { flex: 0 0 auto; width: auto; min-width: 20px; margin: 0; padding: 0 3px; }
+.dmicher-master-screen .ms-signal-emitter > summary.is-selected { background: var(--dmicher-row-hover); outline: 1px solid var(--dmicher-accent); outline-offset: -1px; }
+.dmicher-master-screen .ms-signal-table th { font-size: 10px; font-weight: normal; text-align: left; padding: 1px 3px; opacity: .75; }
+.dmicher-master-screen .ms-signal-table td { height: 23px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.dmicher-master-screen .ms-signal-table .ms-signal-technical-column { width: 36%; }
+.dmicher-master-screen .ms-signal-table .ms-signal-status-column { width: 62px; }
+.dmicher-master-screen .ms-signal-table td:last-child { width: auto; }
+.dmicher-master-screen .ms-signal-table .ms-signal-technical code { font-size: 10px; background: transparent; padding: 0; white-space: nowrap; }
+.dmicher-master-screen .ms-signal-table .ms-signal-status { font-size: 10px; opacity: .65; }
+.dmicher-master-screen .ms-signal-field { margin: 2px 0; padding: 0; border: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-signal-field > summary { display: flex; align-items: center; gap: 5px; padding: 2px 4px; min-height: 26px; cursor: pointer; }
+.dmicher-master-screen .ms-signal-field > summary::before { content: "▸"; font-size: 10px; }
+.dmicher-master-screen .ms-signal-field[open] > summary::before { content: "▾"; }
+.dmicher-master-screen .ms-signal-field > summary input { flex: 1; min-width: 40px; width: 0; }
+.dmicher-master-screen .ms-signal-field-table { margin: 0; width: 100%; table-layout: fixed; border: 0; background: transparent; }
+.dmicher-master-screen .ms-signal-field-table th { width: 37%; text-align: left; font-weight: normal; padding: 1px 4px 1px 18px; font-size: 11px; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-signal-field-table td { padding: 1px 4px; }
+.dmicher-master-screen .ms-signal-field input:not([type="checkbox"]), .dmicher-master-screen .ms-signal-field select { height: 23px; min-height: 23px; padding: 1px 4px; font-size: 12px; }
+.dmicher-master-screen .ms-signal-field input[type="checkbox"] { margin: 0; width: 16px; height: 16px; }
+.dmicher-master-screen .ms-signal-field-table textarea { min-height: 42px; padding: 2px 4px; font-size: 12px; }
+.dmicher-master-screen .ms-signal-field-table button { display: inline-flex; width: auto; height: 23px; min-height: 23px; padding: 1px 6px; margin: 0 3px 0 0; }
+.dmicher-master-screen .ms-signal-default { display: flex; gap: 3px; align-items: center; }
+.dmicher-master-screen .ms-signal-default > * { min-width: 0; flex: 1; width: 0; }
+.dmicher-master-screen .ms-signal-field-json { padding: 4px; }
+.dmicher-master-screen .ms-signal-field-json textarea { width: 100%; min-height: 120px; font: 11px monospace; }
 .dmicher-master-screen .ms-ide-shell .ms-ide-block-link { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--dmicher-border-muted); text-align: left; padding: 6px 8px; background: transparent; }
 .dmicher-master-screen .ms-ide-detail fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .dmicher-master-screen .ms-ide-detail .ms-parameter-row, .dmicher-master-screen .ms-ide-detail .ms-subscriber-row { padding: 5px 0; border-bottom: 1px solid var(--dmicher-border-muted); }

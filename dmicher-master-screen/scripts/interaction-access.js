@@ -1,5 +1,5 @@
 import { getRuntimes } from "./store.js";
-import { resolveObjectTools, getObjectBindings } from "./scene-objects.js";
+import { resolveObjectTools, getObjectBindings, getSceneObject } from "./scene-objects.js";
 import { sceneDistance, tokenCenter } from "./effects.js";
 import { getConditionGate, getConditionKey } from "./interaction-conditions.js";
 import { isExecutionHalted } from "./execution.js";
@@ -8,7 +8,7 @@ export const objectDescriptor = (value) => typeof value === "string" ? { type: "
 export const objectKey = (value) => { const target = objectDescriptor(value); return target ? `${target.type}:${target.id}` : ""; };
 export const sceneObject = (scene, value) => {
   const target = objectDescriptor(value);
-  return target?.type === "Token" ? scene?.tokens?.get(target.id) : target?.type === "Tile" ? scene?.tiles?.get(target.id) : null;
+  return getSceneObject(scene, target);
 };
 export const interactionConditionId = (config) => config?.shopId || config?.dialogueId ? `${objectKey(config.target)}:${config.shopId ?? config.dialogueId}` : config?.id;
 
@@ -22,8 +22,8 @@ export function validateObjectAccess({ scene, runtime, descriptor, target, condi
   const actorToken = scene.tokens?.get(actorTokenId);
   if (!user || !actorToken?.actor || actorToken.hidden || (descriptor.target.type === "Token" && actorToken.id === target.id)
     || (!user.isGM && !actorToken.actor.testUserPermission?.(user, "OWNER"))) fail("Нужен принадлежащий вам персонаж на карте.");
-  const origin = tokenCenter(actorToken, scene), destination = descriptor.target.type === "Token" ? tokenCenter(target, scene)
-    : { x: Number(target.x) + Number(target.width) / 2, y: Number(target.y) + Number(target.height) / 2 };
+  const origin = tokenCenter(actorToken, scene), destination = tokenCenter(target, scene);
+  if (![origin.x, origin.y, destination.x, destination.y].every(Number.isFinite)) fail("Не удалось определить положение объекта на сцене.");
   if (actorToken.level != null && target.level != null && actorToken.level !== target.level) fail("Объект находится на другом уровне сцены.");
   if (sceneDistance(scene, origin, destination) > Number(descriptor.range ?? 5)) fail("Персонаж слишком далеко от объекта.");
   if (!actorToken.object?.checkCollision || actorToken.object.checkCollision(destination, { origin, type: "sight", mode: "any" })) fail("Объект должен находиться в прямой видимости персонажа.");

@@ -27,7 +27,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     if (!game.user.isGM || !scene || scene.id !== this.sceneId) return { ...parent, html: '<p>Вернитесь к сцене предпросмотра.</p>' };
     const asset = this.getAsset(scene); if (!asset) return { ...parent, html: '<p>Инструмент больше не существует.</p>' };
     const definitions = getDefinitions(scene), bindings = Object.values(new SceneObjects(scene).list().bindings);
-    const objects = listNativeSceneObjects(scene).filter((entry) => ["Token", "Tile"].includes(entry.type));
+    const objects = listNativeSceneObjects(scene);
     const actors = [...scene.tokens.values()].filter((token) => token.actor);
     if (!this.conditions) {
       const binding = bindings.find((entry) => entry[`${this.kind}s`]?.some((link) => link[`${this.kind}Id`] === asset.id)), group = definitions.find((entry) => entry.groupId === binding?.groupId) ?? definitions[0];

@@ -88,7 +88,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
           } else if (session.status === "interrupted") {
             session.status = "active"; session.step++; signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "opened"));
           }
-          if (dialogue.target.type === "Token") freezeInteractionClock(state, dialogue.target.id);
+          freezeInteractionClock(state, dialogue.target);
         } else {
           session = Object.values(state.dialogueSessions).find((entry) => entry?.sessionId === command.sessionId && entry.userId === user.id);
           if (!session) fail("Разговор не найден или принадлежит другому игроку.");

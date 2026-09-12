@@ -12,8 +12,49 @@ import { requestHalt } from "../dmicher-master-screen/scripts/execution.js";
 import { SceneSignals } from "../dmicher-master-screen/scripts/signals.js";
 import { SignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
 import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";
+import { SCENE_OBJECT_COLLECTIONS } from "../dmicher-master-screen/scripts/scene-object-types.js";
+import { freezeInteractionClock } from "../dmicher-master-screen/scripts/interaction-pause.js";
 
 const copy = (value) => structuredClone(value);
+
+test("interaction pause uses the same typed key as routine execution", () => {
+  const state = {};
+  freezeInteractionClock(state, { type: "Drawing", id: "notice" }, 100);
+  freezeInteractionClock(state, { type: "Drawing", id: "notice" }, 200);
+  freezeInteractionClock(state, { type: "Token", id: "notice" }, 300);
+  assert.deepEqual(state.interactionClocks, { "Drawing:notice": { pausedAt: 100 }, "Token:notice": { pausedAt: 300 } });
+});
+
+for (const [type, geometry] of Object.entries({
+  Drawing: { x: 100, y: 0, shape: { type: "r", width: 100, height: 100 } },
+  Wall: { c: [100, 0, 200, 100] },
+  AmbientLight: { x: 150, y: 50 }, AmbientSound: { x: 150, y: 50 },
+  Note: { x: 150, y: 50 }, MeasuredTemplate: { x: 150, y: 50, t: "circle", distance: 5 },
+  Region: { shapes: [{ type: "rectangle", x: 100, y: 0, width: 100, height: 100, rotation: 0 }] }
+})) test(`${type} supports authenticated dialogue and shop access with its native geometry`, async () => {
+  const f = await fixture(), target = { type, id: "interactive" };
+  const document = { ...copy(geometry), ...target, documentName: type, name: type, parent: f.scene };
+  f.scene[SCENE_OBJECT_COLLECTIONS[type]] = new Map([[target.id, document]]);
+  f.flags.objectBindings.bindings[`${type}:${target.id}`] = {
+    ...copy(f.flags.objectBindings.bindings["Token:waiter"]), ...target
+  };
+  const available = listAvailableInteractions(f.scene, target, f.pc, f.player);
+  assert.deepEqual(available.map((entry) => entry.kind), ["shop", "dialogue"]);
+  assert.deepEqual(listAvailableInteractions(f.scene, target, f.pc, f.stranger), []);
+  const command = { ...f.intent(target), kind: "start", dialogueId: "talk" };
+  const opened = await f.dialogueCommand(command);
+  assert.equal(opened.status, "active");
+  assert.ok(getRuntime(f.scene).interactionClocks[`${type}:${target.id}`]);
+  assert.equal((await f.dialogueCommand({ ...command, kind: "leave", sessionId: opened.sessionId })).status, "left");
+  const lease = await f.shop.requestSession(f.intent(target));
+  const result = await f.shop.requestTrade({ ...f.intent(target), kind: "exchange", sessionId: lease.sessionId,
+    requestId: "native-trade", giveItemIds: [], take: [{ entryId: "sword", count: 1 }] });
+  assert.equal(result.status, "done");
+  assert.equal(f.actor.items.size, 1);
+  document.hidden = true;
+  assert.deepEqual(listAvailableInteractions(f.scene, target, f.pc, f.player), []);
+});
+
 async function fixture() {
   let serial = 0, writes = 0;
   const gm = { id: "gm", isGM: true, role: 4, active: true }, player = { id: "player", isGM: false, role: 1, active: true };

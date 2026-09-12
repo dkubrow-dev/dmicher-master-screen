@@ -5,20 +5,19 @@ import { generics } from "./generics.js";
 import { theme, notifyError } from "./ui.js";
 import { installScreenSettingHelp } from "./setting-help.js";
 import { updateSceneNavigationBadges } from "./apps/group-badges.js";
-import { findCanvasObject, canvasPointerPosition } from "./apps/canvas-object.js";
+import { findCanvasObject, canvasPointerPosition, clearCanvasObjectFocus, listenCanvasObjectClicks } from "./apps/canvas-object.js";
 import { installSceneSignals } from "./scene-signals.js";
 
 let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals;
 const hooks = [];
-let stage, tap;
+let detachCanvas;
 const on = (name, callback) => hooks.push([name, Hooks.on(name, callback)]);
 
 function attachCanvas() {
-  if (stage && tap) stage.off("pointertap", tap);
+  detachCanvas?.();
   controller.cancelPick?.();
-  stage = globalThis.canvas?.stage;
-  if (!stage) return;
-  tap = (event) => {
+  if (!globalThis.canvas?.stage) return;
+  const handleTap = (event) => {
     if (controller.cancelPick || event.button > 0 || event.shiftKey || event.ctrlKey || event.altKey) return;
     const constructorMode = controller.mode === "constructor" && game.user.isGM;
     if (game.user.isGM && !constructorMode && !["director", "actor"].includes(controller.mode)) return;
@@ -26,7 +25,7 @@ function attachCanvas() {
     if (target) { try { controller.openObjectMenu(target, canvasPointerPosition(canvas, event)); } catch (error) { notifyError(error); } }
     else controller.objectMenu.close();
   };
-  stage.on("pointertap", tap);
+  detachCanvas = listenCanvasObjectClicks(canvas, handleTap);
   controller.changed(canvas.scene);
 }
 
@@ -59,7 +58,7 @@ Hooks.once("ready", () => {
   on("canvasReady", attachCanvas);
   on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
   on("updateScene", () => updateSceneNavigationBadges(controller));
-  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); if (stage && tap) stage.off("pointertap", tap); });
+  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
   on("createChatMessage", (message, _options, userId) => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
@@ -72,8 +71,9 @@ Hooks.once("ready", () => {
 globalThis.addEventListener?.("pagehide", () => {
   controller?.editor?.layout?.dispose();
   controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
+  clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
-  if (stage && tap) stage.off("pointertap", tap);
+  detachCanvas?.();
   for (const [name, id] of hooks) Hooks.off(name, id);
   removeControls?.(); removeSettingHelp?.(); removeSceneSignals?.(); unregister?.(); theme.dispose();
 }, { once: true });

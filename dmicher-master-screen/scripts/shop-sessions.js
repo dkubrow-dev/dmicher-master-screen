@@ -65,7 +65,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         if (!reusing) { consumeCondition(runtime, conditionKey, policy); signal = interactionSignal(current.scene, "Shop", shopId, session, "opened"); }
         runtime.shops ??= {};
         runtime.shops[shopId] ??= { items: clone(current.behavior.shop.items ?? []) };
-        if (target.type === "Token") freezeInteractionClock(runtime, target.id);
+        freezeInteractionClock(runtime, target);
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;
         if (existing.userId !== user.id && !user.isGM) fail("Нельзя завершить чужую сессию магазина.");

@@ -1,5 +1,6 @@
 import { generics } from "../generics.js";
 import { scriptStepTemplate } from "../script-model.js";
+import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
 
 const t = (ru, en) => game.i18n?.lang?.startsWith("ru") ? ru : en;
 const e = (value) => generics.utilities.escapeHTML(String(value ?? ""));
@@ -9,23 +10,17 @@ const kinds = () => [["wait", t("Ожидание", "Wait")], ["move", t("Пер
   ["sound", t("Звук", "Sound")], ["signal", t("Сигнал", "Signal")], ["macro", t("Макрос", "Macro")]];
 
 /** Row order is presentation only. IDs and outgoing edges define execution. */
-export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, open = false, combatSupported = false } = {}) {
+export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, open = false, combatSupported = false } = {}) {
   const blocks = scripts.map((script, index) => {
     const prefix = `script-${index}`;
     const check = (name, label, active) => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}"${active ? " checked" : ""}>${e(label)}</label>`;
     const combat = script.combat ?? {};
     return `<details class="ms-object-feature ms-script-block" data-script-index="${index}"${open ? " open" : ""}><summary>${e(script.name || t("Скрипт", "Script"))}</summary><div class="ms-object-row">
       <label>${t("Название скрипта", "Script name")}<input name="${prefix}-name" value="${e(script.name)}"></label>${check("enabled", t("Включить", "Enable"), script.enabled !== false)}</div>
-      <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция", "Function")}</th><th>${t("Параметры (JSON)", "Parameters (JSON)")}</th><th>${t("Переход", "Next")}</th><th></th></tr></thead><tbody>
+      <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция", "Function")}</th><th>${t("Параметры", "Parameters")}</th><th>${t("Переход", "Next")}</th><th></th></tr></thead><tbody>
       ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td><select aria-label="${t("Функция", "Function")}" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}">${kinds().map(([kind, name]) => `<option value="${kind}"${step.kind === kind ? " selected" : ""}>${e(name)}</option>`).join("")}</select>
-        ${step.kind === "move" ? `<button type="button" data-screen-action="script-point" data-index="${index}" data-step="${stepIndex}">${t("Точка с карты", "Map point")}</button>` : ""}
-        ${step.kind === "sound" ? `<button type="button" data-screen-action="script-sound" data-index="${index}" data-step="${stepIndex}">${t("Выбрать звук", "Choose sound")}</button>` : ""}
-        ${step.kind === "emotion" ? `<select data-script-emoji data-index="${index}" data-step="${stepIndex}" aria-label="${t("Выбрать символ", "Choose symbol")}"><option value="">${t("Символ…", "Symbol…")}</option>${["😀", "🙂", "😐", "😟", "😠", "😱", "😴", "❓", "❗", "💬", "❤️", "⚔️"].map((emoji) => `<option>${emoji}</option>`).join("")}</select>` : ""}
-        ${step.kind === "signal" || step.kind === "macro" ? `<select aria-label="${t("Выбрать определение", "Choose definition")}" data-script-definition data-index="${index}" data-step="${stepIndex}"><option value="">${t("Выбрать…", "Choose…")}</option>${(step.kind === "signal" ? catalog.signals.filter((item) => item.emitterKey === ownerKey) : catalog.macros.filter((item) => item.ownerKey === ownerKey)).map((item) => {
-          const id = item.id ?? item.uuid, label = item.uuid ? game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.uuid : item.name;
-          return `<option value="${e(id)}"${id === (step.parameters.signalId ?? step.parameters.macroUuid) ? " selected" : ""}>${e(label)}</option>`;
-        }).join("")}</select>` : ""}</td>
-        <td><textarea name="${prefix}-step-${stepIndex}-parameters" aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false">${e(JSON.stringify(step.parameters, null, 2))}</textarea></td>
+        <button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}">JSON</button></td>
+        <td><div data-script-parameter-fields>${renderScriptParameters(step, { index, stepIndex, document, ownerKey, catalog })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false">${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
         <td><input name="${prefix}-step-${stepIndex}-next" aria-label="${t("Следующие шаги", "Next steps")}" value="${e(step.next.join(", "))}" placeholder="—"></td>
         <td><button type="button" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></td></tr>`).join("")}
       </tbody></table></div>
@@ -39,6 +34,9 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
 }
 
 export function readScriptFields(root, scripts) {
+  for (const control of root.querySelectorAll?.("[data-script-param]") ?? []) {
+    if (!control.disabled && control.checkValidity?.() === false) throw new Error(`${control.getAttribute("aria-label") ?? ""}: ${control.validationMessage}`);
+  }
   const value = (name) => root.querySelector(`[name="${name}"]`)?.value ?? "";
   return scripts.map((script, index) => {
     const prefix = `script-${index}`;
