@@ -150,6 +150,38 @@ try {
     assert.equal(initialButtonTops.length, 3);
     assert.ok(Math.max(...initialButtonTops) - Math.min(...initialButtonTops) <= 1, 'initial-state actions share a single row');
     await page.screenshot({path:path.join(output,`${version}-script-parameters.png`)});
+    // Hold Foundry between context preparation and DOM replacement. A second
+    // refresh and input from the still-visible form must share a valid draft.
+    await page.evaluate(() => {
+      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      const prepare = form._prepareContext;
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      globalThis.refreshProbe = { form, release, revision: form.revision };
+      form._prepareContext = async function(options) {
+        const result = await prepare.call(this, options);
+        this._prepareContext = prepare;
+        refreshProbe.prepared = true;
+        await gate;
+        return result;
+      };
+      refreshProbe.pending = form.refresh();
+    });
+    await page.waitForFunction(() => refreshProbe.prepared);
+    assert.equal(await page.evaluate(() => { refreshProbe.second = refreshProbe.form.refresh(); return !!refreshProbe.form.activeScript(); }), true);
+    await behavior.locator('[name="script-0-name"]').fill('Draft typed during refresh');
+    await page.evaluate(async () => { refreshProbe.release(); await Promise.all([refreshProbe.pending, refreshProbe.second]); });
+    assert.equal(await behavior.locator('[name="script-0-name"]').inputValue(), 'Draft typed during refresh');
+    assert.equal(await page.evaluate(() => refreshProbe.form.revision === refreshProbe.revision && refreshProbe.form.dirty), true);
+    await behavior.locator('footer [data-screen-action="save"]').click();
+    const durationField = parameter(moveRow, ['duration']);
+    await durationField.fill('');
+    await durationField.dispatchEvent('change');
+    await page.evaluate(() => refreshProbe.form.refresh());
+    assert.equal(await durationField.inputValue(), '', 'unnamed compact fields retain unfinished input');
+    assert.equal(await durationField.evaluate(input => input === input.ownerDocument.activeElement), true);
+    await durationField.fill('0'); await durationField.dispatchEvent('change');
+    await behavior.locator('footer [data-screen-action="save"]').click();
     await behavior.locator('[data-tab="features"]').click();
     await behavior.locator('[data-screen-action="add-feature"][data-kind="shop"]').first().click();
     await behavior.locator('[name="feature-asset"]').selectOption('shop-a');
@@ -270,6 +302,27 @@ try {
     assert.equal(savedActions.find(step => step.id === 6).parameters.waitMode, 'all');
     await dialogueRow.scrollIntoViewIfNeeded();
     await page.screenshot({path:path.join(output,`${version}-dialogue-action.png`)});
+    // A catalog rename must reach an already-dirty form without destroying an
+    // unfinished JSON edit or granting its draft a newer storage revision.
+    if (!await dialogueRow.locator('[data-script-json-value]').isVisible()) await dialogueRow.locator('[data-script-json]').click();
+    const unfinishedDialogueJSON = '{"dialogueId":';
+    await dialogueRow.locator('[data-script-json-value]').fill(unfinishedDialogueJSON);
+    const dialogueDraftRevision = await page.evaluate(() => [...controller.objectBehaviorWindows.values()].find(window => window.rendered).revision);
+    await page.evaluate(async () => {
+      const { SceneAssets } = await import('/modules/dmicher-master-screen/scripts/scene-assets.js');
+      const assets = new SceneAssets(scene), talk = assets.list().dialogues.find(entry => entry.id === 'talk');
+      await assets.saveDialogue({ ...talk, name: 'Talk renamed while editing' });
+      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      await Promise.all([form.refresh(), form.refresh()]);
+    });
+    assert.equal(await dialogueRow.locator('[data-script-json-value]').inputValue(), unfinishedDialogueJSON);
+    assert.equal(await dialogueRow.locator('[data-script-json-value]').isVisible(), true);
+    assert.deepEqual(await dialogueRow.locator('[data-script-json-value]').evaluate(input => ({ focused: input === input.ownerDocument.activeElement, caret: input.selectionStart })), { focused: true, caret: unfinishedDialogueJSON.length });
+    assert.equal(await parameter(dialogueRow, ['dialogueId']).locator('option[value="talk"]').textContent(), 'Talk renamed while editing');
+    assert.equal(await page.evaluate(() => [...controller.objectBehaviorWindows.values()].find(window => window.rendered).revision), dialogueDraftRevision);
+    await dialogueRow.locator('[data-script-json-value]').fill(JSON.stringify(savedActions.find(step => step.id === 6).parameters));
+    await dialogueRow.locator('[data-script-json-value]').dispatchEvent('change');
+    await behavior.locator('footer [data-screen-action="save"]').click();
     await behavior.locator('[data-tab="automation"]').click(); await behavior.locator('[data-screen-action="new-object-signal"]').click();
     await behavior.locator('[name="signal-name"]').fill('guard.alert');
     await behavior.locator('[data-screen-action="addSignalField"][data-direction="parameters"]').click();
@@ -340,7 +393,7 @@ try {
     await page.screenshot({path:path.join(output,`${version}-bottom.png`)});
     errors.push(...await page.evaluate(()=>globalThis.errors));
     assert.deepEqual(errors,[]);
-    reports.push({version,language,checks:'layout, category overlays, native item forms, object info clipboard and native settings, native object layer/focus/frame, one-line initial actions, script table and JSON synchronization, emoji palette layout/anchors/selection/dismissal, emotion size, state transition pairs, approach timing modes, follow completion modes, dialogue wait modes and token UUIDs, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, FilePicker, cancelled state chooser',errors});
+    reports.push({version,language,checks:'layout, category overlays, native item forms, object info clipboard and native settings, native object layer/focus/frame, one-line initial actions, overlapping refresh with late input, dirty reference refresh with unfinished JSON, script table and JSON synchronization, emoji palette layout/anchors/selection/dismissal, emotion size, state transition pairs, approach timing modes, follow completion modes, dialogue wait modes and token UUIDs, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, FilePicker, cancelled state chooser',errors});
     await context.close();
   }
   fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(reports,null,2));

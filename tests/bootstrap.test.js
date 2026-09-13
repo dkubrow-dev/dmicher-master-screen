@@ -33,6 +33,22 @@ globalThis.foundry = {
 const { ScreenController } = await import("../dmicher-master-screen/scripts/controller.js");
 const { getDefinition } = await import("../dmicher-master-screen/scripts/store.js");
 
+test("a synchronous refresh failure is reported without preventing other open windows from updating", async () => {
+  const f = fixture(14), controller = new ScreenController(), originalError = console.error;
+  const updates = [], reports = [];
+  console.error = (...args) => reports.push(args);
+  try {
+    controller.actor = { rendered: true, refresh() { throw new Error("refresh failed"); } };
+    controller.shops = { rendered: true, refresh() { updates.push("shops"); } };
+    assert.doesNotThrow(() => controller.changed(f.scene));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(updates, ["shops"]);
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0][1].message, "refresh failed");
+    assert.deepEqual(f.scene.updates, []);
+  } finally { console.error = originalError; await f.dispose(); }
+});
+
 function createHooks() {
   let next = 0;
   const entries = new Map();

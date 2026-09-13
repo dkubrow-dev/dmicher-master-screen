@@ -19,30 +19,102 @@ const options = (items, current, empty = t("Не выбрано", "Not selected"
 const section = (title, body) => `<section class="ms-object-feature"><h3>${e(title)}</h3>${body}</section>`;
 const layout = (body, nav = "") => nav + `<div class="ms-object-scroll">${body}</div><footer>${button("cancel", t("Закрыть", "Close"))}${button("save", t("Сохранить", "Save"))}</footer>`;
 const newScript = (name, stateId) => ({ ...(stateId ? { stateId } : {}), name, enabled: true, repeat: false, steps: [] });
+const fieldKey = (input) => {
+  if (input?.name) return JSON.stringify([input.name, input.type]);
+  const step = input?.closest?.("[data-script-step]"), data = input?.dataset ?? {};
+  const key = ["scriptParam", "scriptParamGroup", "scriptParamNull", "scriptStateGroup", "scriptStateValue"].find((name) => Object.hasOwn(data, name));
+  return step && key ? JSON.stringify([step.closest("[data-script-index]")?.dataset.scriptIndex, step.dataset.stepId, key, data[key], data.pairIndex]) : null;
+};
+const formFields = (element) => [...element.querySelectorAll("input,select,textarea")].filter((input) => fieldKey(input) !== null);
 
 class ObjectForm extends ScreenFormApplication {
   static PARTS = { main: { template: "modules/dmicher-master-screen/templates/object-tools.hbs", scrollable: [".ms-object-scroll"] } };
   constructor(controller, descriptor, options = {}) { super(options); this.controller = controller; this.descriptor = { type: descriptor.type, id: descriptor.id }; this.sceneId = currentScene()?.id; this.draft = null; }
   get ownerKey() { return `${this.descriptor.type}:${this.descriptor.id}`; }
-  context() {
+  context({ reload = false } = {}) {
     const scene = game.scenes?.get(this.sceneId) ?? (currentScene()?.id === this.sceneId ? currentScene() : null), document = scene && getSceneObject(scene, this.descriptor);
     if (!document) throw new Error(t("Объект больше не существует.", "The object no longer exists."));
-    if (!this.draft) {
-      this.revision = getObjectBindings(scene).revision;
-      this.draft = clone(new SceneObjects(scene).get(this.descriptor) ?? { ...this.descriptor, groupId: null, tags: getObjectTags(scene, this.descriptor), notes: "", playerCharacter: false, initialScript: null, transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
-      this.original = clone(this.draft);
+    if (!this.draft || reload && this.reloadRequested && !this.dirty) {
+      const revision = getObjectBindings(scene).revision;
+      const draft = clone(new SceneObjects(scene).get(this.descriptor) ?? { ...this.descriptor, groupId: null, tags: getObjectTags(scene, this.descriptor), notes: "", playerCharacter: false, initialScript: null, transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
+      const original = clone(draft), previous = this.draft;
+      Object.assign(this, { draft, original, revision, reloadRequested: false });
+      this.reconcileSelection?.(previous);
     }
     const definitions = getDefinitions(scene), definition = definitions.find((item) => item.groupId === this.draft.groupId);
     return { scene, document, definitions, definition, catalog: getInteractionCatalog(scene) };
   }
-  async _onRender(context, options) { await super._onRender(context, options); this.bindEvents(); }
-  refresh() { if (this.rendered && !this.dirty) { this.draft = null; return this.render({ force: true }); } }
+  async _onRender(context, options) {
+    await super._onRender(context, options);
+    const fields = formFields(this.element), saved = this.refreshInputs, presentation = this.refreshPresentation;
+    if (saved) for (const input of fields) {
+      const index = saved.findIndex((entry) => entry.key === fieldKey(input));
+      if (index < 0) continue;
+      const [entry] = saved.splice(index, 1); input.value = entry.value; input.checked = entry.checked; input.setCustomValidity?.(entry.error);
+    }
+    if (presentation) {
+      for (const [index, detail] of [...this.element.querySelectorAll("details")].entries()) if (index < presentation.details.length) detail.open = presentation.details[index];
+      for (const editor of presentation.editors) {
+        const area = fields.find((input) => input.name === editor.name);
+        if (!area) continue;
+        area.hidden = editor.hidden;
+        area.closest?.("[data-script-step]")?.querySelector("[data-script-json]")?.setAttribute("aria-expanded", String(!area.hidden));
+      }
+      const focused = presentation.focus && fields.find((input) => fieldKey(input) === presentation.focus.key);
+      focused?.focus?.({ preventScroll: true });
+      if (focused?.setSelectionRange && Number.isInteger(presentation.focus.start)) focused.setSelectionRange(presentation.focus.start, presentation.focus.end);
+    }
+    this.refreshInputs = null; this.refreshBaseline = null; this.refreshPresentation = null; this.renderedDraft = this.draft;
+    if (this.persistTask) this.lockSaveControls();
+    this.bindEvents();
+  }
+  refresh() {
+    if (this.persistTask) return;
+    if (this.rendered && !this.dirty) this.reloadRequested = true;
+    return super.refresh();
+  }
+  captureRefreshDraft() {
+    const focused = this.element.ownerDocument.activeElement;
+    this.refreshPresentation = {
+      details: [...this.element.querySelectorAll("details")].map((detail) => detail.open),
+      editors: [...this.element.querySelectorAll("[data-script-json-value]")].map(({ name, hidden }) => ({ name, hidden })),
+      focus: fieldKey(focused) && this.element.contains?.(focused) ? { key: fieldKey(focused), start: focused.selectionStart, end: focused.selectionEnd } : null
+    };
+    if (!this.dirty) {
+      this.refreshBaseline = { draft: this.draft, original: this.original, revision: this.revision,
+        selectedScript: this.selectedScript, selectedFeature: this.selectedFeature };
+      return;
+    }
+    // Input can arrive while an asynchronous render still owns the old DOM.
+    // Keep that form's revision and raw text, including unfinished JSON values.
+    if (this.refreshBaseline) Object.assign(this, this.refreshBaseline);
+    this.reloadRequested = false;
+    this.refreshInputs = formFields(this.element).map((input) => ({ key: fieldKey(input), value: input.value, checked: input.checked,
+      error: input.validity?.customError ? input.validationMessage : "" }));
+    try { this.capture(); } catch { /* Raw fields remain available for correction. */ }
+  }
   assertCurrentScene() { if (currentScene()?.id !== this.sceneId) throw new Error(t("Вернитесь к сцене редактируемого объекта.", "Return to this object's scene.")); }
-  async persist({ close = false } = {}) {
-    this.assertCurrentScene(); const scene = this.context().scene;
-    const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
-    if (Object.keys(patch).length) await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true });
-    this.draft = null; this.dirty = false; if (close) await this.close(); this.controller.changed(scene); if (!close) await this.render({ force: true });
+  lockSaveControls() {
+    this.saveControls ??= new Map();
+    for (const control of this.element.querySelectorAll("input,select,textarea,button")) {
+      if (!this.saveControls.has(control)) this.saveControls.set(control, control.disabled);
+      control.disabled = true;
+    }
+  }
+  persist({ close = false } = {}) {
+    if (this.persistTask) return this.persistTask;
+    this.lockSaveControls();
+    this.persistTask = Promise.resolve().then(async () => {
+      this.assertCurrentScene(); const scene = this.context().scene;
+      const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
+      if (Object.keys(patch).length) await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true });
+      this.reloadRequested = true; this.dirty = false; if (close) await this.close(); this.controller.changed(scene);
+      if (!close) await super.refresh();
+    }).finally(() => {
+      for (const [control, disabled] of this.saveControls) control.disabled = disabled;
+      this.saveControls = null; this.persistTask = null;
+    });
+    return this.persistTask;
   }
   async handleAction(action) { if (action === "cancel" && await this.mayDiscard()) return this.close(); if (action === "save") { this.capture(); return this.persist(); } }
 }
@@ -51,7 +123,7 @@ export class ObjectInfoApplication extends ObjectForm {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-info"), position: { width: 570, height: "auto" }, window: { resizable: true } };
   get title() { return t("Информация об объекте", "Object information"); }
   async _prepareContext() {
-    const { document, definitions } = this.context();
+    const { document, definitions } = this.context({ reload: true });
     const facts = [[t("Название", "Name"), document.name ?? document.label ?? ""], [t("Тип", "Type"), this.descriptor.type], ["ID", document.id], ["UUID", document.uuid], ["Actor UUID", document.actor?.uuid ?? ""]];
     return { body: layout(`<dl class="ms-object-metadata">${facts.map(([label, text]) => `<dt>${e(label)}</dt><dd><span>${e(text)}</span>${button("copy-value", "⧉", `class="ms-copy-value" data-copy-value="${e(text)}" aria-label="${e(t(`Скопировать ${label}`, `Copy ${label}`))}"`)}</dd>`).join("")}</dl>${button("native-settings", t("Настройки", "Settings"))}${this.descriptor.type === "Token" ? `<label class="ms-check"><input type="checkbox" name="object-player-character"${this.draft.playerCharacter ? " checked" : ""}>${t("Персонаж игрока", "Player character")}</label>` : ""}<label>${t("Группа", "Group")}<select name="object-group">${options(definitions.map((item) => ({ id: item.groupId, name: item.groupName })), this.draft.groupId, t("Без группы", "Unassigned"))}</select></label>${input("object-tags", t("Теги, через запятую", "Tags, comma separated"), this.draft.tags?.join(", ") ?? "")}<label>${t("Заметки мастера", "GM notes")}<textarea name="object-notes" rows="4" maxlength="8000">${e(this.draft.notes)}</textarea></label>`) };
   }
@@ -77,15 +149,26 @@ export class ObjectBehaviorApplication extends ObjectForm {
       dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
       catalog: getSignalCatalog(context.scene) };
   }
-  activeScript() { const ref = this.selectedScript; return !ref ? null : ref.kind === "initial" ? this.draft.initialScript : ref.kind === "transition" ? this.draft.transitionScripts?.[ref.stateId] : this.draft.scripts?.find((script) => script.stateId === ref.stateId); }
+  activeScript() { const ref = this.selectedScript; return !ref || !this.draft ? null : ref.kind === "initial" ? this.draft.initialScript : ref.kind === "transition" ? this.draft.transitionScripts?.[ref.stateId] : this.draft.scripts?.find((script) => script.stateId === ref.stateId); }
+  activeFeature() { const ref = this.selectedFeature; return ref && this.draft?.[`${ref.kind}s`]?.[ref.index]; }
+  reconcileSelection(previous) {
+    if (this.selectedFeature) {
+      const { kind, index } = this.selectedFeature, reference = previous?.[`${kind}s`]?.[index];
+      const key = (entry) => JSON.stringify([entry[`${kind}Id`], [...(entry.stateIds ?? [])].sort()]);
+      const next = reference ? this.draft[`${kind}s`].findIndex((entry) => key(entry) === key(reference)) : -1;
+      this.selectedFeature = next < 0 ? null : { kind, index: next };
+    }
+    if (previous?.groupId !== this.draft.groupId || !this.activeScript()) this.selectedScript = null;
+  }
   setActiveScript(script) {
     const ref = this.selectedScript;
+    if (!ref) return;
     if (ref.kind === "initial") this.draft.initialScript = script;
     else if (ref.kind === "transition") { this.draft.transitionScripts ??= {}; if (script) this.draft.transitionScripts[ref.stateId] = script; else delete this.draft.transitionScripts[ref.stateId]; }
     else { this.draft.scripts ??= []; const i = this.draft.scripts.findIndex((item) => item.stateId === ref.stateId); if (i >= 0) this.draft.scripts.splice(i, 1); if (script) this.draft.scripts.push(script); }
   }
   async _prepareContext() {
-    const context = this.context(), { definition } = context;
+    const context = this.context({ reload: true }), { definition } = context;
     const nav = `<nav class="ms-object-tabs">${[["transitions", t("Переходы", "Transitions")], ["features", t("Особенности", "Features")], ["routine", t("Рутина", "Routine")], ["automation", t("Автоматизация", "Automation")]].map(([tab, name]) => button("tab", name, `data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")}</nav>`;
     let body;
     if (this.tab === "automation") {
@@ -124,7 +207,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   capture() {
     if (!this.draft || !this.element) return;
     if (["routine", "transitions"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
-    if (this.tab === "features" && this.selectedFeature && this.element.querySelector('[name="feature-asset"]')) { const ref = this.selectedFeature, conditions = readConditionFields(this.element, "feature-conditions"); this.draft[`${ref.kind}s`][ref.index] = { ...this.draft[`${ref.kind}s`][ref.index], [`${ref.kind}Id`]: value(this.element, "feature-asset"), stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions }; }
+    if (this.tab === "features" && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) { const ref = this.selectedFeature, conditions = readConditionFields(this.element, "feature-conditions"); this.draft[`${ref.kind}s`][ref.index] = { ...this.activeFeature(), [`${ref.kind}Id`]: value(this.element, "feature-asset"), stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions }; }
     if (this.tab === "automation") { if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
   }
   async _onRender(context, options) {
@@ -134,7 +217,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
     const disposeSignalFields = bindSignalFields(this.element, { getSignal: () => this.signalDraft, onChange: () => { this.capture(); this.dirty = true; }, onError: notifyError });
     this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
     this.element.addEventListener("change", (event) => { const target = event.target; try {
-      if (target.matches("[data-script-kind]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); this.dirty = true; void this.render({ force: true }); }
+      if (target.matches("[data-script-kind]")) { this.capture(); const step = this.activeScript()?.steps[Number(target.dataset.step)]; if (!step) { void this.render({ force: true }); return; } step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); this.dirty = true; void this.render({ force: true }); }
       else if (target.matches('[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
     } catch (error) { notifyError(error); } }, listeners);
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);
@@ -143,13 +226,22 @@ export class ObjectBehaviorApplication extends ObjectForm {
   async attachMacro(event) { const data = JSON.parse(event.dataTransfer.getData("text/plain")), macro = data.uuid && await fromUuid(data.uuid); if (macro?.documentName !== "Macro") throw new Error(t("Перетащите макрос Foundry.", "Drop a Foundry macro.")); this.capture(); await new SignalCatalog(this.context().scene).attachMacro(this.ownerKey, macro.uuid); return this.render({ force: true }); }
   async handleAction(action, target) {
     if (action === "information") return this.controller.openObjectInfo(this.descriptor);
+    // A button from the previous DOM cannot edit the newly loaded selection.
+    if (action !== "cancel" && this.renderedDraft && this.renderedDraft !== this.draft) return this.render({ force: true });
     if (["cancel", "save"].includes(action)) return super.handleAction(action, target);
     this.capture(); const context = this.context(), catalog = new SignalCatalog(context.scene);
     if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; }
-    else if (["edit-script", "delete-script"].includes(action)) { this.selectedScript = { kind: target.dataset.kind, stateId: target.dataset.stateId }; if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; } else if (!this.activeScript()) { this.setActiveScript(newScript(this.selectedScript.kind === "initial" ? t("Исходное состояние", "Initial state") : context.definition.states.find((state) => state.id === this.selectedScript.stateId)?.name ?? t("Скрипт", "Script"), this.selectedScript.kind === "routine" ? this.selectedScript.stateId : null)); this.dirty = true; } }
+    else if (["edit-script", "delete-script"].includes(action)) {
+      const { kind, stateId } = target.dataset, state = context.definition?.states.find((entry) => entry.id === stateId);
+      if (kind !== "initial" && !state) { this.selectedScript = null; return this.render({ force: true }); }
+      this.selectedScript = { kind, stateId };
+      if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; }
+      else if (!this.activeScript()) { this.setActiveScript(newScript(kind === "initial" ? t("Исходное состояние", "Initial state") : state.name, kind === "routine" ? stateId : null)); this.dirty = true; }
+    }
     else if (action === "restore-initial") { await this.persist(); return this.controller.restoreObjectInitial(this.descriptor); }
     else if (["add-script-step", "remove-script-step", "script-point", "script-sound", "script-current-position", "script-current-size"].includes(action)) {
-      const script = this.activeScript(), step = script.steps[Number(target.dataset.step)];
+      const script = this.activeScript(), step = script?.steps[Number(target.dataset.step)];
+      if (!script || action !== "add-script-step" && !step) return this.render({ force: true });
       if (action === "add-script-step") appendScriptStep(script);
       else if (action === "remove-script-step") removeScriptStep(script, Number(target.dataset.step));
       else if (action === "script-point") { const point = await this.controller.pickPoint(); if (point) step.parameters.position = { ...(step.parameters.position ?? { speed: 5 }), x: point.x, y: point.y }; }
@@ -159,8 +251,20 @@ export class ObjectBehaviorApplication extends ObjectForm {
       } else { const Picker = foundry.applications.apps?.FilePicker?.implementation ?? globalThis.FilePicker; new Picker({ type: "audio", current: step.parameters.src ?? "", callback: (src) => { step.parameters.src = src; this.dirty = true; void this.render({ force: true }); } }).browse(); return; }
       this.dirty = true;
     }
-    else if (["add-feature", "edit-feature", "remove-feature"].includes(action)) { const kind = target.dataset.kind, entries = this.draft[`${kind}s`] ??= []; if (action === "add-feature") { entries.push({ [`${kind}Id`]: context.catalog[`${kind}s`][0]?.id ?? "", stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) }); this.selectedFeature = { kind, index: entries.length - 1 }; this.dirty = true; } else if (action === "edit-feature") this.selectedFeature = { kind, index: Number(target.dataset.index) }; else { entries.splice(Number(target.dataset.index), 1); this.selectedFeature = null; this.dirty = true; } }
-    else if (action === "open-asset") { const ref = this.selectedFeature; return this.controller.openAsset(ref.kind, this.draft[`${ref.kind}s`][ref.index][`${ref.kind}Id`]); }
+    else if (["add-feature", "edit-feature", "remove-feature"].includes(action)) {
+      const kind = target.dataset.kind, entries = this.draft[`${kind}s`] ??= [], index = Number(target.dataset.index);
+      if (action === "add-feature") {
+        if (!context.definition?.states.some((state) => state.id === target.dataset.stateId)) return this.render({ force: true });
+        entries.push({ [`${kind}Id`]: context.catalog[`${kind}s`][0]?.id ?? "", stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) }); this.selectedFeature = { kind, index: entries.length - 1 }; this.dirty = true;
+      } else if (!entries[index]) { this.selectedFeature = null; return this.render({ force: true }); }
+      else if (action === "edit-feature") this.selectedFeature = { kind, index };
+      else { entries.splice(index, 1); this.selectedFeature = null; this.dirty = true; }
+    }
+    else if (action === "open-asset") {
+      const ref = this.selectedFeature, binding = this.activeFeature(), id = ref && binding?.[`${ref.kind}Id`];
+      if (!id || !context.catalog[`${ref.kind}s`].some((asset) => asset.id === id)) { this.selectedFeature = null; return this.render({ force: true }); }
+      return this.controller.openAsset(ref.kind, id);
+    }
     else if (action === "new-object-signal") this.signalDraft = { emitterKey: this.ownerKey, name: t("Новый сигнал", "New signal"), description: "", parameters: [], returns: [] };
     else if (action === "edit-object-signal") this.signalDraft = clone(catalog.list().signals.find((signal) => signal.id === target.dataset.id));
     else if (action === "remove-object-signal") { await catalog.removeSignal(target.dataset.id); this.signalDraft = null; }

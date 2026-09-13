@@ -87,6 +87,25 @@ export class MasterScreenApplication extends EditorApplication {
     return super.refresh();
   }
 
+  captureRefreshDraft() {
+    if (!this.dirty) {
+      this.refreshDraftSnapshot = { sceneId: this.selectionSceneId, selectionKey: JSON.stringify(this.selection),
+        parameterDraft: clone(this.parameterDraft), parameterRevision: this.parameterRevision,
+        draft: clone(this.draft), draftRevision: this.draftRevision, stateDirty: this.stateDirty };
+      return;
+    }
+    const previous = this.refreshDraftSnapshot;
+    this.refreshDraftSnapshot = null;
+    if (previous) {
+      if (previous.sceneId !== this.selectionSceneId || previous.selectionKey !== JSON.stringify(this.selection)) return;
+      // Input can arrive while a clean background render is awaiting data. The
+      // visible form still belongs to its original revision at that moment.
+      for (const field of ["parameterDraft", "parameterRevision", "draft", "draftRevision"]) this[field] = previous[field];
+      this.stateDirty ||= previous.stateDirty;
+    }
+    this.captureParameterDraft(); this.captureSubscription();
+  }
+
   onDraftInput(event) {
     if (event.target.matches("[data-tab-visibility]")) return false;
     if (event.target.closest("[data-ide-parameters]")) return true;
@@ -157,6 +176,12 @@ export class MasterScreenApplication extends EditorApplication {
     const base = await super._prepareContext(options);
     if (parameterDirty) this.dirty = true;
     const { preferences } = this.layout;
+    const presentation = {
+      isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
+      presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
+      presentationTitle: this.layout.presentation === "panel" ? t("Открыть ширму в отдельном окне", "Open screen in a separate window") : t("Вернуть ширму в панель", "Return screen to panel")
+    };
+    if (base.missing) return { ...base, ...presentation, isDirector: this.mode === "director" };
     const catalog = current.scene ? new SignalCatalog(current.scene).list() : { emitters: [], signals: [], subscriptions: [], macros: [] };
     const assets = current.scene ? new SceneAssets(current.scene).list() : { shops: [], dialogues: [], revision: 0 };
     const objectState = current.scene ? new SceneObjects(current.scene).list() : { bindings: {}, revision: 0 };
@@ -224,16 +249,14 @@ export class MasterScreenApplication extends EditorApplication {
       }
       if (this.selection.kind === "group" && selected) detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
     }
-    return { ...base, mainHTML, detailHTML, nodeActions,
+    return { ...base, ...presentation, mainHTML, detailHTML, nodeActions,
       badgesHTML: renderGroupBadges(definitions, runtimes),
-      mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail),
-      isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
-      presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
-      presentationTitle: this.layout.presentation === "panel" ? t("Открыть ширму в отдельном окне", "Open screen in a separate window") : t("Вернуть ширму в панель", "Return screen to panel") };
+      mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail) };
   }
 
   async _onRender(context, options) {
     await super._onRender(context, options);
+    this.refreshDraftSnapshot = null;
     this.layout.bind();
     this.controller.refreshConstructorFrame?.();
     updateSceneNavigationBadges(this.controller);
@@ -599,15 +622,23 @@ export class MasterScreenApplication extends EditorApplication {
       const ownerKey = this.selectedMacroOwner ?? `Scene:${scene.id}`; await catalog.attachMacro(ownerKey, macro.uuid); selection = ["macro", macroKey({ownerKey,uuid:macro.uuid})];
     }
     if (action === "deleteSelected") {
-      if (this.parameterDraft?.builtin) throw new Error(t("Встроенные определения нельзя удалять.", "Built-in definitions cannot be deleted."));
+      const selected = clone(this.selection), draft = clone(this.parameterDraft);
+      if (!draft) throw new Error(t("Выберите удаляемый элемент.", "Select an entry to delete."));
+      if (draft.builtin) throw new Error(t("Встроенные определения нельзя удалять.", "Built-in definitions cannot be deleted."));
       const confirmed = await this.inlineChoice(t("Удалить выбранный элемент?", "Delete the selected entry?"), [{ value: "delete", label: t("Удалить", "Delete") }, { value: "cancel", label: t("Отмена", "Cancel") }]);
       if (confirmed !== "delete") return;
-      if (this.selection.kind === "group") await groups.deleteGroup(this.selection.id);
-      else if (this.selection.kind === "state") await groups.deleteState(this.selection.groupId, this.selection.id);
-      else if (this.selection.kind === "signal") await catalog.removeSignal(this.selection.id);
-      else if (this.selection.kind === "macro") await catalog.removeMacro(this.parameterDraft.ownerKey,this.parameterDraft.uuid);
-      else if (this.selection.kind === "shop") await new SceneAssets(scene).deleteShop(this.selection.id);
-      else if (this.selection.kind === "dialogue") await new SceneAssets(scene).deleteDialogue(this.selection.id);
+      if (this.assertScene().id !== scene.id || JSON.stringify(this.selection) !== JSON.stringify(selected)) throw new Error(t("Выбор изменился. Повторите удаление.", "The selection changed. Repeat the deletion."));
+      // Confirmation may outlive the selected entry's window draft. Use its
+      // captured identity, never whatever a later refresh put in the form.
+      if (selected.kind === "group") await groups.deleteGroup(selected.id);
+      else if (selected.kind === "state") await groups.deleteState(selected.groupId, selected.id);
+      else if (selected.kind === "signal") await catalog.removeSignal(selected.id);
+      else if (selected.kind === "macro") {
+        if (!catalog.list().macros.some((entry) => entry.ownerKey === draft.ownerKey && entry.uuid === draft.uuid)) throw new Error(t("Выбранный элемент больше не существует.", "The selected entry no longer exists."));
+        await catalog.removeMacro(draft.ownerKey, draft.uuid);
+      }
+      else if (selected.kind === "shop") await new SceneAssets(scene).deleteShop(selected.id);
+      else if (selected.kind === "dialogue") await new SceneAssets(scene).deleteDialogue(selected.id);
       else throw new Error(t("Выберите удаляемый элемент.", "Select an entry to delete."));
     }
     this.resetDraft(); this.parameterDraft = null;
@@ -638,7 +669,15 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "editSignalSubscription") { this.subscriptionDraft = clone(catalog.list().subscriptions.find((row) => row.id === button.dataset.id)); this.subscriptionValidation = null; }
     if (action === "deleteSignalSubscription") { await catalog.removeSubscription(button.dataset.id); this.subscriptionDraft = null; }
     if (action === "saveSignalSubscription") {
-      try { this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft); this.subscriptionValidation = { valid: true }; this.parameterRevision = catalog.list().revision; }
+      const revision = catalog.list().revision, selectionKey = JSON.stringify(this.selection);
+      try {
+        this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft, { expectedRevision: revision });
+        this.subscriptionValidation = { valid: true };
+        const nextRevision = catalog.list().revision;
+        // Only our own isolated subscription write can advance the form's
+        // baseline. A stale signal draft must still fail its later save.
+        if (this.parameterRevision === revision && nextRevision === revision + 1 && JSON.stringify(this.selection) === selectionKey) this.parameterRevision = nextRevision;
+      }
       catch (error) { this.subscriptionValidation = { valid: false, error: error.message, snippet: error.snippet }; notify(error); }
     }
     await this.render({ force: true }); return true;

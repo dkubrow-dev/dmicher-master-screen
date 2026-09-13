@@ -9,7 +9,23 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
   events = null;
 
   refresh() {
-    if (this.rendered && !this.dirty) return this.render({ force: true });
+    if (!this.rendered || this.dirty && !this.captureRefreshDraft) return;
+    if (this.refreshTask) {
+      if (this.refreshing) this.refreshAgain = true;
+      return this.refreshTask;
+    }
+    // External updates share a render. A dirty form still needs fresh reference
+    // lists; its capture hook preserves inputs and the original save revision.
+    this.refreshTask = Promise.resolve().then(async () => {
+      do {
+        this.refreshAgain = false;
+        if (!this.rendered || this.dirty && !this.captureRefreshDraft) break;
+        this.refreshing = true;
+        try { this.captureRefreshDraft?.(); await this.render({ force: true }); }
+        finally { this.refreshing = false; }
+      } while (this.refreshAgain);
+    }).finally(() => { this.refreshTask = null; });
+    return this.refreshTask;
   }
 
   resetDraft() { this.dirty = false; this.draft = null; }
@@ -22,6 +38,7 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
     this.element.addEventListener("input", (event) => {
       if (this.onDraftInput?.(event) === false) return;
       this.dirty = true;
+      if (this.refreshing) this.captureRefreshDraft?.();
       const status = this.element.querySelector("[data-save-status]");
       if (status) status.textContent = localizedMessage("Есть несохранённые изменения");
     }, options);

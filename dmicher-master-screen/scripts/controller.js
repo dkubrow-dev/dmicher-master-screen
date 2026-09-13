@@ -338,7 +338,7 @@ export class ScreenController {
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
     for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
-      if (app?.rendered) void Promise.resolve(app.refresh?.()).catch(notifyError);
+      if (app?.rendered) void Promise.resolve().then(() => app.rendered && app.refresh?.()).catch(notifyError);
     }
     for (const runtime of getRuntimes(scene)) void this.workspace.apply(scene, runtime).catch(notifyError);
   }

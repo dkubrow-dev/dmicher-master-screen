@@ -53,3 +53,45 @@ test("rebinding a form does not duplicate actions and leaves native submits unto
   root.dispatchEvent(new Event("click", { cancelable: true }));
   assert.equal(calls, 1);
 });
+
+test("external refreshes coalesce and refresh again only after an update during rendering", async () => {
+  const { app } = fixture(); app.rendered = true;
+  const releases = []; let renders = 0;
+  app.render = () => { renders++; return new Promise((resolve) => releases.push(resolve)); };
+  const task = app.refresh();
+  assert.equal(app.refresh(), task);
+  await Promise.resolve(); assert.equal(renders, 1);
+  assert.equal(app.refresh(), task);
+  app.refresh(); releases.shift()();
+  await new Promise(setImmediate); assert.equal(renders, 2);
+  releases.shift()(); await task;
+  assert.equal(app.refreshTask, null);
+});
+
+test("typing before a queued refresh captures the dirty form before rendering", async () => {
+  const { app, root } = fixture(); app.rendered = true; app.bindEvents();
+  const captured = []; app.captureRefreshDraft = () => captured.push(app.dirty);
+  let renders = 0; app.render = async () => { renders++; };
+  const task = app.refresh(); root.dispatchEvent(new Event("input"));
+  await task;
+  assert.equal(app.dirty, true); assert.equal(renders, 1); assert.deepEqual(captured, [true]);
+});
+
+test("input during a refresh captures the dirty draft for the next queued render", async () => {
+  const { app, root } = fixture(); app.rendered = true; app.bindEvents();
+  let release, renders = 0; const captures = [];
+  app.captureRefreshDraft = () => captures.push(app.dirty);
+  app.render = () => { renders++; return new Promise((resolve) => { release = resolve; }); };
+  const task = app.refresh(); await Promise.resolve(); app.refresh();
+  root.dispatchEvent(new Event("input")); release(); await new Promise(setImmediate); release(); await task;
+  assert.deepEqual(captures, [false, true, true]); assert.equal(renders, 2);
+});
+
+test("a failed refresh releases its queue for the next external update", async () => {
+  const { app } = fixture(); app.rendered = true;
+  app.render = () => { throw new Error("Render failed"); };
+  await assert.rejects(app.refresh(), /Render failed/);
+  assert.equal(app.refreshing, false); assert.equal(app.refreshTask, null);
+  let rendered = false; app.render = async () => { rendered = true; };
+  await app.refresh(); assert.equal(rendered, true);
+});
