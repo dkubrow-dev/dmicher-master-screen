@@ -105,6 +105,33 @@ test("disabling chat hides dependent rows without discarding their JSON values",
   assert.equal(parameters.chat.timing, "before");
 });
 
+test("emotion and speech expose localized execution modes directly before duration and keep JSON values", () => {
+  const previous = globalThis.game;
+  try {
+    for (const [lang, label, parallel, wait] of [["ru", "Режим выполнения", "Вместе со следующим", "До следующего"], ["en", "Execution mode", "Alongside next step", "Before next step"]]) {
+      globalThis.game = { i18n: { lang } };
+      for (const kind of ["emotion", "speech"]) {
+        const parameters = completeScriptParameters(kind, { duration: 3.25, ...(kind === "speech" ? { chat: { text: "Keep this text" }, bubble: { text: "Bubble" } } : { emoji: "!", size: 18.5 }) });
+        const html = renderScriptParameters({ kind, parameters });
+        assert.ok(html.includes(`aria-label="${label}"`));
+        assert.ok(html.includes(parallel) && html.includes(wait));
+        const modeIndex = html.indexOf(param(["executionMode"]));
+        const durationIndex = html.indexOf(param(["duration"]));
+        assert.ok(modeIndex >= 0 && durationIndex > modeIndex);
+        assert.equal((html.slice(modeIndex, durationIndex).match(/<tr>/g) ?? []).length, 1);
+        for (const executionMode of ["parallel", "wait"]) {
+          setScriptParameter(parameters, ["executionMode"], executionMode);
+          const fromJSON = JSON.parse(JSON.stringify(parameters));
+          assert.deepEqual(normalizeScript({ steps: [{ id: 1, kind, parameters: fromJSON }] }).steps[0].parameters, fromJSON);
+          assert.equal(fromJSON.duration, 3.25);
+          if (kind === "speech") { assert.equal(fromJSON.chat.text, "Keep this text"); assert.equal(fromJSON.bubble.text, "Bubble"); }
+          else { assert.equal(fromJSON.emoji, "!"); assert.equal(fromJSON.size, 18.5); }
+        }
+      }
+    }
+  } finally { globalThis.game = previous; }
+});
+
 test("signal parameter paths treat Unicode, punctuation and prototype names as data", () => {
   const parameters = JSON.parse('{"parameters":{"__proto__":{"x":1},"a.b":2}}');
   setScriptParameter(parameters, ["parameters", "__proto__", "x"], 7);

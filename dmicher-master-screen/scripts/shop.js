@@ -9,12 +9,16 @@ import { generics } from "./generics.js";
 import { createShopSessions, requireShopSession, shopKey } from "./shop-sessions.js";
 import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
 import { isSceneObjectType } from "./scene-object-types.js";
+import { debugTrace, debugError } from "./debug.js";
 export { shopKey } from "./shop-sessions.js";
 
 const copy = (value) => structuredClone(value);
 const id = () => globalThis.foundry?.utils?.randomID?.() ?? crypto.randomUUID();
 const fail = (message) => { throw new Error(message); };
 const escape = (text) => generics.utilities.escapeHTML(String(text ?? ""));
+const tradeDebugContext = (intent, userId) => ({ sceneId: intent.sceneId, groupId: intent.groupId, runId: intent.runId,
+  target: intent.target, shopId: intent.shopId, actorTokenId: intent.actorTokenId, sessionId: intent.sessionId,
+  requestId: intent.requestId, userId, giveItemIds: intent.giveItemIds, take: intent.take });
 
 /** One transferable lot is a whole Item document. Quantities and currencies remain opaque. */
 export function itemTransferData(item) {
@@ -144,6 +148,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     trim(runtime.tradeRequests);
     await save(current.scene, runtime);
     const oldShop = copy(runtime.shops?.[shopKey(current)] ?? null), created = [];
+    debugTrace("shop", "exchange.processing", () => tradeDebugContext(intent, user.id));
     let creationUncertain = false, deletionStarted = false;
     try {
       for (const { entry, count } of takes) {
@@ -185,8 +190,10 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       delete runtime.shopSessions[shopKey(current)];
       await save(current.scene, runtime);
       onChange(current.scene);
+      debugTrace("shop", "exchange.done", () => ({ ...tradeDebugContext(intent, user.id), createdItemIds: receipt.createdItemIds, givenItemIds: receipt.givenItemIds }));
       return copy(receipt);
     } catch (error) {
+      debugError("shop", "exchange.rollback", error, () => tradeDebugContext(intent, user.id));
       const rollbackErrors = [];
       const marked = asArray(actor.items).filter((item) => {
         const marker = item.getFlag?.(MODULE_ID, "exchange") ?? item.flags?.[MODULE_ID]?.exchange;
@@ -220,6 +227,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       if (rollbackErrors.length) receipt.rollbackErrors = rollbackErrors;
       try { await save(current.scene, runtime); } catch { receipt.status = "uncertain"; }
       onChange(current.scene);
+      debugTrace("shop", "exchange.rollback.result", () => ({ ...tradeDebugContext(intent, user.id), status: receipt.status, rollbackErrors }));
       return copy(receipt);
     }
   };
@@ -252,7 +260,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
     }
     onChange(scene); return result;
   };
-  const receive = async (intent, user, message = null) => {
+  const receiveOnce = async (intent, user, message = null) => {
     intent = normalizeExchange(intent);
     const initial = context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId);
     if (!initial.scene) fail(localizedMessage("Сцена магазина не найдена."));
@@ -275,9 +283,18 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       runtime.shopSessions[shopKey(current)].status = "pending";
       runtime.shopSessions[shopKey(current)].draft = { giveItemIds: copy(intent.giveItemIds), take: copy(intent.take) };
       await save(current.scene, runtime); onChange(current.scene);
+      debugTrace("shop", `exchange.${receipt.status}`, () => tradeDebugContext(intent, user.id));
       return approvalRequired ? copy(receipt) : { receipt: copy(receipt), session: copy(session), key };
     });
     return staged.receipt ? completeApproval(initial.scene, intent, user, staged.key, staged.session) : staged;
+  };
+  const receive = async (intent, user, message = null) => {
+    debugTrace("shop", "exchange.received", () => tradeDebugContext(intent, user.id));
+    try {
+      const result = await receiveOnce(intent, user, message);
+      if (result.error) debugError("shop", "exchange.failed", result.error, () => tradeDebugContext(intent, user.id));
+      return result;
+    } catch (error) { debugError("shop", "exchange.failed", error, () => tradeDebugContext(intent, user.id)); throw error; }
   };
   const decideOnce = async (messageId, approved) => {
     if (!authority() || !game.user?.isGM) fail(localizedMessage("Решение доступно ведущему мастеру."));
@@ -314,7 +331,13 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
   };
   const decide = (messageId, approved) => {
     if (decisions.has(messageId)) return decisions.get(messageId);
-    const task = decideOnce(messageId, approved).finally(() => decisions.delete(messageId));
+    debugTrace("shop", "approval.begin", { messageId, approved });
+    const task = decideOnce(messageId, approved).then((result) => {
+      debugTrace("shop", "approval.result", () => ({ messageId, approved, status: result.status, ...tradeDebugContext(result.intent ?? {}, result.userId) }));
+      if (result.error) debugError("shop", "approval.failed", result.error, { messageId, approved });
+      return result;
+    }).catch((error) => { debugError("shop", "approval.failed", error, { messageId, approved }); throw error; })
+      .finally(() => decisions.delete(messageId));
     decisions.set(messageId, task); return task;
   };
   return Object.freeze({

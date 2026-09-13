@@ -2,7 +2,8 @@ import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { dialogueObjectMessage, dialoguePlayerMessage } from "../dialogue-history.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose } from "./dialogue-presentation.js";
+import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
+import { debugTrace } from "../debug.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -22,7 +23,11 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
     this.session = { sessionId: invitationId ?? this.id, step: 0 };
     this.history = [];
     this.appendPage();
+    this.trace("manual.opened");
   }
+  trace(event, details = {}) { debugTrace("dialogue", event, () => ({ dialogueId: this.dialogue.id,
+    sessionId: this.session.sessionId, pageId: this.pageId, step: this.session.step,
+    status: this.finished ? "finished" : "active", gmPreview: this.gmPreview, ...details })); }
   appendPage() {
     const page = this.dialogue.pages.find((entry) => entry.id === this.pageId);
     if (page) this.history.push(dialogueObjectMessage(this.session, page, this.dialogue, { name: this.sourceName }));
@@ -37,7 +42,7 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
       finished: this.finished, canFinish: !this.finished, manual: true, gmPreview: this.gmPreview,
       signalId: this.gmPreview ? this.signalId : "" };
   }
-  async _onRender(context, options) { await super._onRender(context, options); restoreDialogueScroll(this); }
+  async _onRender(context, options) { await super._onRender(context, options); restoreDialogueScroll(this); renderDialogueAudio(this, context.messages); }
   static answer(_event, button) {
     if (this.finished || button.dataset.pageId !== this.pageId) return;
     const page = this.dialogue.pages.find((entry) => entry.id === this.pageId);
@@ -52,16 +57,20 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
       this.pageId = response.nextPageId;
       this.appendPage();
     } else { this.finished = true; this.signalId = response.signalId; }
+    this.trace("manual.answer", { responseId: response.id });
     return this.render({ force: true });
   }
-  static finish() { captureDialogueScroll(this); this.finished = true; return this.render({ force: true }); }
+  static finish() { captureDialogueScroll(this); this.finished = true; this.trace("manual.finished"); return this.render({ force: true }); }
   static leave() { return this.close(); }
   async close(options = {}) {
     if (this.closeTask) return this.closeTask;
     this.closeTask = (async () => {
       if (!this.finished && !await confirmDialogueClose()) return;
       this.finished = true;
-      return super.close(options);
+      disposeDialogueAudio(this);
+      const result = await super.close(options);
+      this.trace("manual.closed");
+      return result;
     })().finally(() => { this.closeTask = null; });
     return this.closeTask;
   }

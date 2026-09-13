@@ -40,7 +40,8 @@ export function normalizeDialogueAsset(raw) {
     });
     if (new Set(responses.map((entry) => entry.id)).size !== responses.length) fail(localizedMessage("ID ответов страницы не должны повторяться."));
     return { id: id(page.id || randomId(), localizedMessage("Страница")), name: name(page.name || localizedMessage("Страница"), localizedMessage("Страница")),
-      text: prose(page.text ?? "", 12000, localizedMessage("Текст страницы")), art: prose(page.art ?? "", 1024, localizedMessage("Арт страницы")), imageAlignment: page.imageAlignment ?? "left", responses };
+      text: prose(page.text ?? "", 12000, localizedMessage("Текст страницы")), art: prose(page.art ?? "", 1024, localizedMessage("Арт страницы")),
+      audio: prose(page.audio ?? "", 1024, text("Звук блока", "Page audio")).trim(), imageAlignment: page.imageAlignment ?? "left", responses };
   });
   if (!pages.length || new Set(pages.map((entry) => entry.id)).size !== pages.length) fail(localizedMessage("Диалог должен содержать страницы с уникальными ID."));
   const startPageId = raw.startPageId ?? pages[0].id;

@@ -8,7 +8,7 @@ import { normalizeTags } from "../model.js";
 import { generics } from "../generics.js";
 import { evaluateInteractionPreview } from "../interaction-access.js";
 import { dialogueObjectMessage, dialoguePlayerMessage } from "../dialogue-history.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose } from "./dialogue-presentation.js";
+import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 
 const esc = generics.utilities.escapeHTML;
 const clone = structuredClone;
@@ -69,6 +69,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     if (!page.responses.length) this.ended = true;
   }
   resetDialogue(pageId = null) {
+    disposeDialogueAudio(this);
     this.pageId = pageId; this.ended = false; this.dialogueHistory = []; this.dialogueSession.step = 0;
     this.scrollState = null; this.feedback = "";
   }
@@ -87,6 +88,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = this.bindEvents();
     restoreDialogueScroll(this);
+    if (this.kind === "dialogue") renderDialogueAudio(this, this.allowed ? this.dialogueHistory : []);
     this.element.addEventListener("change", (event) => {
       if (!["groupId", "actorTokenId"].includes(event.target.name)) return;
       try {
@@ -149,6 +151,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     this.closeTask = (async () => {
       if (this.kind === "dialogue" && this.dialogueHistory.length && !this.ended && !await confirmDialogueClose()) return;
       this.ended = true;
+      disposeDialogueAudio(this);
       return super.close(options);
     })().finally(() => { this.closeTask = null; });
     return this.closeTask;

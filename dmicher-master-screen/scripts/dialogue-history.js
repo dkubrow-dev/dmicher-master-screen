@@ -3,7 +3,7 @@
 export function dialogueObjectMessage(session, page, dialogue, target) {
   return { id: `${session.sessionId}.${session.step}.object`, role: "object", name: target?.name ?? dialogue?.name ?? "",
     text: page?.text ?? "", img: page?.art || target?.texture?.src || target?.actor?.img || "",
-    imageAlignment: page?.imageAlignment === "right" ? "right" : "left" };
+    audio: page?.audio ?? "", imageAlignment: page?.imageAlignment === "right" ? "right" : "left" };
 }
 
 export function dialoguePlayerMessage(session, response, token, user) {
@@ -24,7 +24,7 @@ export function dialogueSessionView(session, dialogue, target, { role = "speaker
   return { sessionId: session.sessionId, dialogueId: session.dialogueId, groupId: session.groupId, runId: session.runId,
     actorTokenId: session.actorTokenId, target: structuredClone(session.target), role, ...(listenerTokenId ? { listenerTokenId } : {}),
     nodeId: session.nodeId, step: session.step, status: session.status, targetName: target?.name ?? dialogue?.name ?? session.title ?? "",
-    title: dialogue?.name ?? session.title ?? "", text: current.text, art: current.img, imageAlignment: current.imageAlignment,
+    title: dialogue?.name ?? session.title ?? "", text: current.text, art: current.img, audio: current.audio, imageAlignment: current.imageAlignment,
     // An already-open session without a transcript can display its current page;
     // this never reconstructs previous answers or rewrites saved data.
     history: structuredClone(session.history?.length ? session.history : page ? [current] : []),

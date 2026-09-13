@@ -128,6 +128,13 @@ export const SCREEN_HELP_SETTINGS = [
   ...OBJECT_HELP_SETTINGS,
 
   {
+    id: "settings-debug", ru: "Отладка сцены", en: "Scene debugging",
+    fields: [["[data-screen-debug]", "debug", "Отладка", "Debug",
+      "В Режиссёре включите «Отладка», откройте консоль Foundry (F12 → Console) и повторите проблемное действие. Включите уровень Verbose/Debug и фильтр dmicher-master-screen. Журнал показывает переходы, шаги скриптов, операции магазинов и диалогов, ошибки с идентификаторами объектов. При нескольких мастерах исполнение видно в консоли мастера, который выполняет автоматизацию. Настройка общая для мира, выключена по умолчанию и применяется сразу. После проверки снимите галку; перезагрузка не требуется.",
+      "In Director, enable Debug, open the Foundry console (F12 → Console), and repeat the affected action. Enable the Verbose/Debug level and filter by dmicher-master-screen. The log shows transitions, script steps, shop and dialogue operations, and errors with object identifiers. With multiple GMs, execution appears in the console of the GM running automation. This world-wide setting is off by default and applies immediately. Disable it after checking; no reload is needed."]]
+  },
+
+  {
     "id": "settings-group",
     "ru": "Группа и оформление строк",
     "en": "Groups and row appearance",
@@ -321,12 +328,28 @@ export const SCREEN_HELP_SETTINGS = [
         "The label of the reply button the player chooses."
       ],
       [
-        "imageAlignment",
+        "dialoguePageImageAlignment",
         "image-alignment",
         "Выравнивание картинки",
         "Image alignment",
         "Выберите слева (по умолчанию) или справа для картинки этого блока. Текст будет обтекать её.",
         "Choose left (default) or right alignment for this block's image. Text wraps around it."
+      ],
+      [
+        "dialoguePageAudio",
+        "page-audio",
+        "Звук блока",
+        "Page audio",
+        "С Premium выберите или загрузите аудиофайл штатной кнопкой Foundry. Звук прозвучит при показе блока; после окончания его можно повторить значком динамика. Без действующей лицензии сохранённый звук не воспроизводится.",
+        "With Premium, choose or upload an audio file using Foundry's file picker. It plays when the page appears; replay it with the speaker icon after it ends. Saved audio is silent without a valid license."
+      ],
+      [
+        "dmicher-master-screen.dialogueVolume",
+        "volume",
+        "Громкость диалогов",
+        "Dialogue volume",
+        "С Premium откройте «Плейлисты → Управление громкостью» и измените громкость диалогов для себя. Нулевое значение отключает звук; громкость других участников не меняется.",
+        "With Premium, open Playlists → Volume controls and adjust dialogue volume for yourself. Zero mutes audio; other participants' volume is unchanged."
       ],
     ]
   },

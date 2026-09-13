@@ -3,6 +3,7 @@ import { MODULE_ID } from "./model.js";
 import { requireGM } from "./store.js";
 import { generics } from "./generics.js";
 import { getInteractionCatalog, normalizeDialogueAsset } from "./scene-assets.js";
+import { debugTrace, debugError } from "./debug.js";
 
 /** Manual projection contains presentation and local navigation only, never executable actions. */
 export function manualDialogueData(source, { includeSignalIds = false } = {}) {
@@ -11,7 +12,7 @@ export function manualDialogueData(source, { includeSignalIds = false } = {}) {
   if (!Array.isArray(source?.pages)) throw new Error(localizedMessage("У диалога пока нет страниц."));
   const dialogue = normalizeDialogueAsset(source);
   return { id: dialogue.id, name: dialogue.name, startPageId: dialogue.startPageId,
-    pages: dialogue.pages.map((page) => ({ id: page.id, text: page.text, art: page.art, imageAlignment: page.imageAlignment,
+    pages: dialogue.pages.map((page) => ({ id: page.id, text: page.text, art: page.art, audio: page.audio, imageAlignment: page.imageAlignment,
       responses: page.responses.map((response) => ({ id: response.id, label: response.label,
         nextPageId: response.nextPageId, signalId: includeSignalIds ? response.signalId : "" })) })) };
 }
@@ -60,10 +61,13 @@ export function createManualDialogueService({ openWindow = defaultOpen, messageS
     const invitationId = foundry.utils.randomID();
     const data = { version: 1, invitationId, ...source,
       dialogue: invitationDialogue(manualDialogueData(source.dialogue)), manual: true };
-    const messages = await chat.create({ author: game.user.id,
+    let messages;
+    try { messages = await chat.create({ author: game.user.id,
       content: `<p>${generics.utilities.escapeHTML(text(`Мастер приглашает к диалогу «${source.dialogue.name}». Сцену ведёт мастер.`, `The GM invites you to the dialogue “${source.dialogue.name}”. The GM is directing the scene.`))}</p>`,
       flags: { [MODULE_ID]: { manualDialogue: data } } },
-    { audience: { type: "users", userIds: recipients }, kind: "manual-dialogue", technical: false, key: invitationId });
+    { audience: { type: "users", userIds: recipients }, kind: "manual-dialogue", technical: false, key: invitationId }); }
+    catch (error) { debugError("dialogue", "manual.invitation.failed", error, () => ({ ...selection, userIds: recipients, invitationId })); throw error; }
+    debugTrace("dialogue", "manual.invited", () => ({ ...selection, userIds: recipients, invitationId }));
     return messages.map((message) => message.id);
   };
   return Object.freeze({

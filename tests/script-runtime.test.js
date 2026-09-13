@@ -39,6 +39,40 @@ test("group transition scripts finish before routines and never replay on refres
   await f.runtime.enter(f.scene, "calm"); await f.tick(); assert.equal(f.npc.x, 100); assert.equal(f.progress("transition").status, "done"); assert.equal(f.progress(), undefined);
   await f.tick(); assert.equal(f.progress().action.remainingMs, 1500); f.runtime.refresh(f.scene); await f.tick(); assert.equal(f.progress().action.remainingMs, 1000); assert.equal(f.npc.x, 100);
 });
+test("a repeating transition keeps executing and intentionally prevents the routine from starting", async (t) => {
+  const f = await fixture({ transition: script([step(1, "move", { duration: 0, position: { x: 100, y: 0 } }, [2]), step(2, "emotion", { emoji: "", duration: 0 })], { repeat: true }),
+    routine: script([step(1, "speech", { bubble: { enabled: true, text: "Routine reached" }, chat: { enabled: false } })]) });
+  game.settings = { get: () => true }; const entries = []; t.mock.method(console, "debug", (...entry) => entries.push(entry));
+  await f.runtime.enter(f.scene, "calm");
+  for (let i = 0; i < 20; i++) await f.tick();
+  assert.equal(f.npc.x, 100); assert.equal(f.progress(), undefined); assert.equal(f.progress("transition").status, "ready");
+  assert.equal(f.runtime.busy, false); assert.equal(f.runtime.scripts.jobs.size, 0);
+  assert.ok(entries.some(([name]) => name.includes("routine.blockedByRepeatingTransition")));
+  assert.ok(entries.some(([name, value]) => name.includes("step.complete") && value.repeating && value.nextStepId === 1));
+});
+test("movement, concurrent emotion and speech reach every random branch after a finite transition", async () => {
+  for (const [random, branch] of [[0, 4], [0.5, 14], [0.99, 25]]) {
+    const f = await fixture({ transition: script([step(1, "move", { duration: 0, position: { x: 100, y: 0 } }, [2]), step(2, "emotion", { emoji: "", duration: 0 })]),
+      routine: script([step(1, "move", { duration: 0.5, position: { x: 200, y: 0 } }, [2]), step(2, "emotion", { emoji: "?", duration: 5 }, [3]),
+        step(3, "speech", { duration: 5, chat: { enabled: false }, bubble: { enabled: true, text: "Thinking", fontSize: 24 } }, [4, 14, 25]),
+        ...[4, 14, 25].map(id => step(id, "wait", { seconds: 1 }))]) });
+    f.runtime.scripts.random = () => random;
+    const displayed = []; f.runtime.visuals = { update: (object, value) => { if (object === f.npc) displayed.push(clone(value)); } };
+    await f.runtime.enter(f.scene, "calm");
+    for (let i = 0; i < 25 && f.progress()?.stepId !== branch; i++) await f.tick();
+    assert.equal(f.npc.x, 200); assert.equal(f.progress().stepId, branch);
+    assert.ok(displayed.some(value => value.emoji === "?" && value.bubble?.text === "Thinking"));
+    assert.equal(f.progress().bubble, null); assert.equal(f.runtime.busy, false);
+  }
+});
+test("a timed transition emotion keeps its clock after the transition hands control to its routine", async () => {
+  const f = await fixture({ transition: script([step(1, "emotion", { emoji: "!", duration: 2 })]), routine: script([step(1, "wait", { seconds: 10 })]) });
+  await f.runtime.enter(f.scene, "calm"); await f.tick();
+  assert.equal(f.progress("transition").status, "done"); assert.equal(f.progress("transition").emoji, "!");
+  await f.tick(); assert.equal(f.progress("transition").emojiEffect.remainingMs, 1500);
+  await f.tick(); await f.tick(); await f.tick(); assert.equal(f.progress("transition").emoji, "");
+  assert.equal(f.progress().stepId, 1);
+});
 test("Token and Tile interaction pauses freeze script duration and resume without catch-up", async () => {
   const f = await fixture({ routine: script([step(1, "wait", { seconds: 7 })]) }); await f.runtime.enter(f.scene, "calm"); await f.tick();
   const target = { type: "Tile", id: "tile" }, release = beginInteractionPause(f.scene, target); assert.equal(isInteractionPaused(f.scene, target), true);

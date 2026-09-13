@@ -7,6 +7,7 @@ import { INTERACTION_LEASE_MS, shopSessionIsLive } from "./interaction-session-m
 import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
 import { requestGMReply } from "./gm-request.js";
 import { interactionSignal, notifyInteractionSignal } from "./interaction-signals.js";
+import { debugTrace, debugError } from "./debug.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -26,7 +27,7 @@ export function requireShopSession(current, intent, user) {
 /** A Scene shop asset owns one lease; a waiter only identifies its admission point. */
 export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange, emitSignal }) {
   const pending = new Map();
-  const process = async (command, user) => {
+  const processOnce = async (command, user) => {
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail(localizedMessage("Неизвестная команда магазина."));
     if (!command.shopId) fail(localizedMessage("Нужно выбрать конкретный магазин."));
     const initial = context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId);
@@ -96,6 +97,19 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     }).finally(releasePause);
     if (signal) await notifyInteractionSignal(emitSignal, initial.scene, signal);
     return result;
+  };
+  const process = async (command, user) => {
+    const details = () => ({ sceneId: command.sceneId, groupId: command.groupId, runId: command.runId,
+      shopId: command.shopId, target: command.target, actorTokenId: command.actorTokenId,
+      sessionId: command.sessionId, userId: user.id, revision: command.revision });
+    if (command.kind !== "renew") debugTrace("shop", `${command.kind}.begin`, details);
+    try {
+      const session = await processOnce(command, user);
+      if (command.kind !== "renew") debugTrace("shop", `${command.kind}.result`, () => ({ ...details(),
+        sessionId: session?.sessionId ?? command.sessionId, status: session?.status ?? "closed",
+        revision: session?.revision, giveItemIds: session?.draft?.giveItemIds, take: session?.draft?.take }));
+      return session;
+    } catch (error) { debugError("shop", `${command.kind}.failed`, error, details); throw error; }
   };
   const send = async (command) => {
     command = { ...command, groupId: command.groupId ?? "main" };

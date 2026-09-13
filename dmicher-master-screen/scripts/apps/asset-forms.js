@@ -2,6 +2,7 @@ import { text as t } from "../localization.js";
 import { generics } from "../generics.js";
 import { localizedDescription } from "../model.js";
 import { getObjectTags } from "../store.js";
+import { isDialogueAudioAvailable } from "../premium-provider.js";
 import { escapeHTML as esc, actionButton as button, textInput, selectOptions as options, formValue } from "./form-fields.js";
 
 const input = (name, label, value = "", attributes = "") => textInput(name, label, value, attributes, "ms-field");
@@ -52,10 +53,15 @@ function renderShopItems(draft, readOnly) {
   return `<div data-shop-stock-drop class="ms-asset-stock ${draft.display === "tiles" ? "is-tiles" : ""}">${[...groups].map(([category, items]) => `<section><h4>${esc(category)}</h4><div class="ms-stock-items">${items.map((item) => `<div class="ms-stock-entry" data-shop-entry="${esc(item.id)}"><img src="${esc(item.data.img || "icons/svg/item-bag.svg")}" alt=""><span>${esc(item.data.name)}</span><label class="ms-field">${t("Начальный запас", "Initial stock")}<input type="number" min="0" step="1" name="shopStock" data-entry-id="${esc(item.id)}" value="${item.stock}" ${readOnly ? "disabled" : ""}></label>${readOnly ? "" : button("removeShopItem", "×", `data-id="${esc(item.id)}" aria-label="${t("Убрать товар", "Remove item")}"`)}</div>`).join("")}</div></section>`).join("") || `<p class="ms-note">${t("Перетащите сюда предметы из каталога Foundry или листа персонажа. Сохраняется копия предмета; инвентарь источника не меняется.", "Drop items here from the Foundry directory or a character sheet. A copy is saved; the source inventory is unchanged.")}</p>`}</div>`;
 }
 
-function renderPageImageAlignment(page) {
+function renderPageMediaOptions(page) {
   return `<label class="ms-field">${t("Выравнивание изображения", "Image alignment")}<select name="dialoguePageImageAlignment">${options([
     { id: "left", name: t("Слева", "Left") }, { id: "right", name: t("Справа", "Right") }
-  ], page.imageAlignment ?? "left")}</select></label>`;
+  ], page.imageAlignment ?? "left")}</select></label>${renderPageAudio(page)}`;
+}
+
+function renderPageAudio(page) {
+  if (!isDialogueAudioAvailable()) return "";
+  return `<div class="ms-dialogue-audio-field">${input("dialoguePageAudio", t("Звук блока", "Page audio"), page.audio ?? "", 'maxlength="1024"')}${button("assetFilePicker", t("Выбрать звук", "Choose audio"), 'data-field="dialoguePageAudio"')}</div>`;
 }
 
 function renderDialoguePagePreview(page) {
@@ -88,7 +94,7 @@ export function renderAssetForm({ kind, draft, pageId, mode, catalog, bindings, 
     const page = draft.pages.find((entry) => entry.id === pageId) ?? draft.pages[0];
     html += `<label class="ms-field">${t("Первый блок", "First page")}<select name="dialogueStartPage">${options(draft.pages, draft.startPageId)}</select></label>`;
     html += `<nav class="ms-dialogue-page-tabs">${draft.pages.map((entry) => button("selectAssetPage", entry.name, `data-id="${esc(entry.id)}" aria-pressed="${entry.id === page?.id}"`)).join("")}</nav>`;
-    if (page) html += `<section data-asset-page="${esc(page.id)}">${input("dialoguePageName", t("Название блока", "Page name"), page.name, "required")}${textarea("dialoguePageText", t("Текст блока", "Page text"), page.text, 4)}${input("dialoguePageArt", t("Изображение блока", "Page image"), page.art ?? "")}${button("assetFilePicker", t("Выбрать изображение", "Choose image"), 'data-field="dialoguePageArt"')}${renderPageImageAlignment(page)}${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<h4>${t("Ответы", "Responses")}</h4>${page.responses.map((response, index) => `<fieldset class="ms-response-row" data-asset-response="${index}">${input("responseLabel", t("Ответ", "Response"), response.label, "required")}<div class="ms-grid-two"><label class="ms-field">${t("Продолжение", "Continue to")}<select name="responseNextPage">${options(draft.pages, response.nextPageId, t("Завершить диалог", "Finish dialogue"))}</select></label><label class="ms-field">${t("Сигнал ответа", "Response signal")}<select name="responseSignal">${options(catalog.signals.filter((signal) => signal.emitterKey === `Dialogue:${draft.id}`).map((signal) => ({id:signal.id,name:signal.name})), response.signalId, t("Без сигнала", "No signal"))}</select></label></div>${textarea("responseParameters", t("Параметры сигнала (JSON)", "Signal parameters (JSON)"), JSON.stringify(response.parameters ?? {}))}${readOnly ? "" : button("removeAssetResponse", t("Убрать ответ", "Remove response"), `data-index="${index}"`)}</fieldset>`).join("")}<p class="ms-note">${t("«Завершить диалог» доступно игроку всегда. Переписка остаётся в окне; сигнал ответа не испускается.", "Finish dialogue is always available. The transcript remains in the window; no response signal is emitted.")}</p>${readOnly ? "" : button("addAssetResponse", t("+ Ответ", "+ Response"))}</section>`;
+    if (page) html += `<section data-asset-page="${esc(page.id)}">${input("dialoguePageName", t("Название блока", "Page name"), page.name, "required")}${textarea("dialoguePageText", t("Текст блока", "Page text"), page.text, 4)}${input("dialoguePageArt", t("Изображение блока", "Page image"), page.art ?? "")}${button("assetFilePicker", t("Выбрать изображение", "Choose image"), 'data-field="dialoguePageArt"')}${renderPageMediaOptions(page)}${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<h4>${t("Ответы", "Responses")}</h4>${page.responses.map((response, index) => `<fieldset class="ms-response-row" data-asset-response="${index}">${input("responseLabel", t("Ответ", "Response"), response.label, "required")}<div class="ms-grid-two"><label class="ms-field">${t("Продолжение", "Continue to")}<select name="responseNextPage">${options(draft.pages, response.nextPageId, t("Завершить диалог", "Finish dialogue"))}</select></label><label class="ms-field">${t("Сигнал ответа", "Response signal")}<select name="responseSignal">${options(catalog.signals.filter((signal) => signal.emitterKey === `Dialogue:${draft.id}`).map((signal) => ({id:signal.id,name:signal.name})), response.signalId, t("Без сигнала", "No signal"))}</select></label></div>${textarea("responseParameters", t("Параметры сигнала (JSON)", "Signal parameters (JSON)"), JSON.stringify(response.parameters ?? {}))}${readOnly ? "" : button("removeAssetResponse", t("Убрать ответ", "Remove response"), `data-index="${index}"`)}</fieldset>`).join("")}<p class="ms-note">${t("«Завершить диалог» доступно игроку всегда. Переписка остаётся в окне; сигнал ответа не испускается.", "Finish dialogue is always available. The transcript remains in the window; no response signal is emitted.")}</p>${readOnly ? "" : button("addAssetResponse", t("+ Ответ", "+ Response"))}</section>`;
     html += renderDialogueGraph(draft.pages, draft.startPageId);
   }
   const editing = readOnly ? "" : `${isShop ? "" : `<div class="ms-asset-actions">${button("addAssetPage", t("+ Блок", "+ Page"))}${button("deleteAssetPage", t("Удалить блок", "Delete page"))}</div>`}${generics.components.renderJSONControls({ id: "asset-selection", importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discardParameters", t("Отменить ввод", "Discard edits"))}<button type="submit">${t("Сохранить", "Save")}</button></footer>`;
@@ -112,6 +118,8 @@ export function readAssetForm(root, draft, kind) {
     if (page) {
       page.name = value("dialoguePageName").trim(); page.text = value("dialoguePageText"); page.art = value("dialoguePageArt").trim();
       page.imageAlignment = value("dialoguePageImageAlignment") || "left";
+      // Losing Premium hides the control but never erases a prepared sound.
+      if (isDialogueAudioAvailable() && root.querySelector('[name="dialoguePageAudio"]')) page.audio = value("dialoguePageAudio").trim();
       page.responses = [...root.querySelectorAll("[data-asset-response]")].map((row) => ({ ...page.responses[Number(row.dataset.assetResponse)], label: row.querySelector('[name="responseLabel"]').value.trim(), nextPageId: row.querySelector('[name="responseNextPage"]').value, signalId: row.querySelector('[name="responseSignal"]').value, parameters: JSON.parse(row.querySelector('[name="responseParameters"]')?.value || "{}") }));
     }
   }

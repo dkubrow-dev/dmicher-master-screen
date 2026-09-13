@@ -7,6 +7,11 @@ const requireText = (value, max, label) => typeof value === "string" && value.le
 const number = (value, label, minimum = -Infinity, exclusive = false) => typeof value === "number" && Number.isFinite(value) && (exclusive ? value > minimum : value >= minimum) ? value : fail(localizedMessage("{0}: недопустимое число.", [label]));
 const bool = (value, fallback, label) => value === undefined ? fallback : typeof value === "boolean" ? value : fail(localizedMessage("{0}: требуется логическое значение.", [label]));
 const choice = (value, choices, fallback) => choices.includes(value ?? fallback) ? value ?? fallback : fail(localizedMessage("Ожидается один из вариантов: {0}.", [choices.join(", ")]));
+const effectExecutionMode = (value, fallback) => {
+  if (value === undefined) return fallback;
+  if (!["parallel", "wait"].includes(value)) fail(text("Режим выполнения: выберите parallel или wait.", "Execution mode: choose parallel or wait."));
+  return value;
+};
 const id = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : fail(localizedMessage("Неверный ID скрипта или состояния."));
 const seconds = (value = 0) => number(value, localizedMessage("Длительность"), 0);
 const speed = (value) => number(value, localizedMessage("Скорость"), 0, true);
@@ -30,8 +35,8 @@ export function scriptStepTemplate(kind) {
   const templates = {
     wait: { seconds: 1 }, move: { timeMode: "duration", duration: 0, position: null, rotation: null, size: null },
     approach: { targetUuid: "", distance: 0, timeMode: "duration", duration: 0, speed: 5 }, visibility: { visible: true },
-    speech: { duration: 0, chat: { enabled: true, timing: "before", text: "", allowTags: [], denyTags: [], range: 0, deleteAfter: true }, bubble: { enabled: true, text: "", fontSize: 24 } },
-    emotion: { emoji: "", duration: 0, size: DEFAULT_EMOTION_SIZE }, sound: { src: "", volume: 1 }, signal: { signalId: "", parameters: {}, before: 0, after: 0 }, macro: { macroUuid: "", before: 0, after: 0 }, state: { transitions: [] },
+    speech: { executionMode: "wait", duration: 0, chat: { enabled: true, timing: "before", text: "", allowTags: [], denyTags: [], range: 0, deleteAfter: true }, bubble: { enabled: true, text: "", fontSize: 24 } },
+    emotion: { emoji: "", executionMode: "parallel", duration: 0, size: DEFAULT_EMOTION_SIZE }, sound: { src: "", volume: 1 }, signal: { signalId: "", parameters: {}, before: 0, after: 0 }, macro: { macroUuid: "", before: 0, after: 0 }, state: { transitions: [] },
     dialogue: { dialogueId: "", tokenUuids: [], waitMode: "all" },
     follow: { targetUuid: "", minDistance: 0, maxDistance: 5, speed: 5, mode: "trajectory", finishOn: "arrival" }
   };
@@ -73,11 +78,11 @@ export function normalizeScriptStep(raw) {
     case "visibility": parameters = { visible: bool(p.visible, true, localizedMessage("Видимость")) }; break;
     case "speech": {
       const c = only(p.chat ?? {}, ["enabled", "timing", "text", "allowTags", "denyTags", "range", "deleteAfter"]), b = only(p.bubble ?? {}, ["enabled", "text", "fontSize"]);
-      parameters = { duration: seconds(p.duration), chat: { enabled: bool(c.enabled, true, localizedMessage("Чат")), timing: choice(c.timing, ["before", "after"], "before"), text: requireText(c.text ?? "", 12000, localizedMessage("Текст чата")), allowTags: tags(c.allowTags), denyTags: tags(c.denyTags), range: number(c.range ?? 0, localizedMessage("Расстояние"), 0), deleteAfter: bool(c.deleteAfter, true, localizedMessage("Удалять сообщение")) }, bubble: { enabled: bool(b.enabled, true, localizedMessage("Пузырь")), text: requireText(b.text ?? "", 4000, localizedMessage("Текст пузыря")), fontSize: number(b.fontSize ?? 24, localizedMessage("Размер текста"), 1) } };
+      parameters = { executionMode: effectExecutionMode(p.executionMode, "wait"), duration: seconds(p.duration), chat: { enabled: bool(c.enabled, true, localizedMessage("Чат")), timing: choice(c.timing, ["before", "after"], "before"), text: requireText(c.text ?? "", 12000, localizedMessage("Текст чата")), allowTags: tags(c.allowTags), denyTags: tags(c.denyTags), range: number(c.range ?? 0, localizedMessage("Расстояние"), 0), deleteAfter: bool(c.deleteAfter, true, localizedMessage("Удалять сообщение")) }, bubble: { enabled: bool(b.enabled, true, localizedMessage("Пузырь")), text: requireText(b.text ?? "", 4000, localizedMessage("Текст пузыря")), fontSize: number(b.fontSize ?? 24, localizedMessage("Размер текста"), 1) } };
       if (parameters.bubble.fontSize > 200) fail(localizedMessage("Размер текста пузыря не больше 200."));
       if (!parameters.chat.enabled && !parameters.bubble.enabled) fail(localizedMessage("Для реплики включите чат или пузырь.")); break;
     }
-    case "emotion": parameters = { emoji: p.emoji === undefined || p.emoji === "" ? "" : normalizeGroupSymbol(p.emoji), duration: seconds(p.duration),
+    case "emotion": parameters = { emoji: p.emoji === undefined || p.emoji === "" ? "" : normalizeGroupSymbol(p.emoji), executionMode: effectExecutionMode(p.executionMode, "parallel"), duration: seconds(p.duration),
       size: number(p.size === undefined ? DEFAULT_EMOTION_SIZE : p.size, text("Размер эмоции", "Emotion size"), 0, true) }; break;
     case "sound": parameters = { src: requireText(p.src, 2048, localizedMessage("Файл звука")).trim(), volume: speed(p.volume ?? 1) }; if (!parameters.src) fail(localizedMessage("Выберите файл звука.")); break;
     case "signal": parameters = { signalId: requireText(p.signalId, 256, localizedMessage("Сигнал")), parameters: json(p.parameters), before: seconds(p.before), after: seconds(p.after) }; if (!parameters.signalId) fail(localizedMessage("Выберите сигнал.")); break;

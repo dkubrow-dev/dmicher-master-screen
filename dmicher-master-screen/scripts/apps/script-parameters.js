@@ -65,6 +65,8 @@ function fields(parameters, context) {
   const group = (key, label, rows, { enabled, supported = true } = {}) => `<tr><td colspan="2"><details class="ms-script-parameter-group" data-param-group="${e(key)}" open><summary>${e(label)}${enabled === undefined ? "" : `<input type="checkbox" data-script-param-group="${e(key)}" aria-label="${e(t(`Включить: ${label}`, `Enable: ${label}`))}"${enabled ? " checked" : ""}${supported ? "" : " disabled"}>`}</summary>${supported ? table(rows) : `<span class="ms-note">${t("Объект не поддерживает это действие.", "This object does not support this action.")}</span>`}</details></td></tr>`;
   const action = (name, label) => `<button type="button" data-screen-action="${name}" data-step="${context.stepIndex}" data-index="${context.index}">${e(label)}</button>`;
   const sec = { min: 0, unit: t("сек.", "sec.") };
+  const effectTiming = () => select(["executionMode"], t("Режим выполнения", "Execution mode"), [["parallel", t("Вместе со следующим", "Alongside next step")], ["wait", t("До следующего", "Before next step")]])
+    + num(["duration"], t("Длительность", "Duration"), sec);
   const delays = () => num(["before"], t("Перед вызовом", "Before call"), sec) + num(["after"], t("После вызова", "After call"), sec);
   const typedParameters = (values, declarations, path = ["parameters"]) => Object.entries(values ?? {}).map(([key, entry]) => {
     const field = declarations.find((item) => item.name === key), itemPath = [...path, key], label = key;
@@ -93,13 +95,13 @@ function fields(parameters, context) {
       break;
     }
     case "speech": {
-      rows = num(["duration"], t("Длительность", "Duration"), sec);
+      rows = effectTiming();
       rows += group("chat", t("Чат", "Chat"), check(["chat", "enabled"], t("Включить", "Enable")) + (parameters.chat.enabled ? select(["chat", "timing"], t("Публикация", "Publish"), [["before", t("До реплики", "Before speech")], ["after", t("После реплики", "After speech")]]) + textParameterRow(["chat", "text"], t("Текст", "Text")) + tags(["chat", "allowTags"], t("Разрешённые теги", "Allowed tags")) + tags(["chat", "denyTags"], t("Исключённые теги", "Excluded tags")) + num(["chat", "range"], t("Дальность", "Range"), { min: 0, unit: t("ед.", "units") }) + check(["chat", "deleteAfter"], t("Удалить после реплики", "Delete after speech")) : ""));
       rows += group("bubble", t("Облачко", "Bubble"), check(["bubble", "enabled"], t("Включить", "Enable")) + (parameters.bubble.enabled ? textParameterRow(["bubble", "text"], t("Текст", "Text")) + num(["bubble", "fontSize"], t("Размер шрифта", "Font size"), { min: 1, step: "1", unit: "px" }) : "")); break;
     }
     case "emotion":
       rows = row(t("Эмоция", "Emotion"), `<span class="ms-script-value ms-emotion-value"><input ${attrs(["emoji"])} aria-label="${t("Эмоция", "Emotion")}" value="${e(parameters.emoji)}"><button type="button" data-script-emoji-picker aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Выбрать эмоцию", "Choose emotion")}" title="${t("Выбрать эмоцию", "Choose emotion")}">☺</button></span>`)
-        + num(["size"], t("Размер", "Size"), { min: 0, unit: "px" }) + num(["duration"], t("Длительность", "Duration"), sec); break;
+        + num(["size"], t("Размер", "Size"), { min: 0, unit: "px" }) + effectTiming(); break;
     case "sound": rows = input(["src"], t("Файл", "File")) + row(t("Выбрать", "Choose"), action("script-sound", t("Выбрать звук", "Choose sound"))) + num(["volume"], t("Громкость", "Volume"), { min: 0 }); break;
     case "signal": {
       const signals = (context.catalog?.signals ?? []).filter((signal) => signal.emitterKey === context.ownerKey), signal = signals.find((item) => item.id === parameters.signalId);

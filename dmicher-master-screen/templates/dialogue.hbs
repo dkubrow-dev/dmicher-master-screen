@@ -10,6 +10,7 @@
         {{#if img}}<img class="ms-dialogue-avatar {{#if imageRight}}is-right{{else}}is-left{{/if}}" src="{{img}}" alt="">{{/if}}
         <strong class="ms-dialogue-speaker">{{name}}</strong>
         {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
+        {{#if hasAudio}}<button type="button" class="ms-dialogue-audio-replay" data-dialogue-audio-replay data-message-id="{{id}}" hidden disabled aria-label="{{dmicherScreenText 'Повторить звук блока' 'Replay page audio'}}" data-tooltip="{{dmicherScreenText 'Повторить звук блока' 'Replay page audio'}}"><i class="fa-solid fa-volume-high" aria-hidden="true"></i></button>{{/if}}
       </div>
       {{#if responses.length}}<div class="ms-dialogue-responses">{{#each responses}}<button type="button" {{#if @root.preview}}data-screen-action="previewAnswer"{{else}}data-action="answer"{{/if}} data-response-id="{{id}}" {{#if pageId}}data-page-id="{{pageId}}"{{/if}} {{#if disabled}}disabled{{/if}}>{{label}}</button>{{/each}}</div>{{/if}}
     </article>

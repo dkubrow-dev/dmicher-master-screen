@@ -2,6 +2,7 @@ import { message as localizedMessage, text } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { getRuntime, saveRuntime, withSceneLock, isAuthority } from "./store.js";
 import { requestGMReply } from "./gm-request.js";
+import { debugTrace, debugError } from "./debug.js";
 import { resolveObjectDialogue, resolveRegisteredObjectDialogue } from "./scene-objects.js";
 import { objectKey, validateObjectAccess, validateInteractionIdentity, interactionConditionId, sceneObject } from "./interaction-access.js";
 import { generics } from "./generics.js";
@@ -243,6 +244,9 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
           if (session.status === "finished") signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "closed"));
           const response = visibleSession(session, dialogue, current.target); remember(state, commandKey, response); await save(scene, state); return response;
         } catch (error) {
+          debugError("dialogue", "answer.interrupted", error, () => ({ sceneId: scene.id, groupId: session.groupId,
+            runId: session.runId, sessionId: session.sessionId, dialogueId: session.dialogueId,
+            target: session.target, nodeId: session.nodeId, step: session.step, responseId: staged.selected.id }));
           session.status = "interrupted"; session.step++;
           const response = { sessionId: session.sessionId, status: "interrupted", failure: error.message }; remember(state, commandKey, response); await save(scene, state); return response;
         }
@@ -263,7 +267,19 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
   const process = (command, user, commandId, options) => {
     const key = `${command.sceneId}:${user.id}:${commandId}`;
     if (commands.has(key)) return commands.get(key);
-    const task = processOnce(command, user, commandId, options).finally(() => commands.delete(key)); commands.set(key, task); return task;
+    const details = () => ({ sceneId: command.sceneId, groupId: command.groupId, runId: command.runId,
+      dialogueId: command.dialogueId, target: command.target, sessionId: command.sessionId,
+      actorTokenId: command.actorTokenId, userId: user.id, commandId, nodeId: command.nodeId,
+      step: command.step, responseId: command.responseId, listenerTokenId: command.listenerTokenId });
+    if (command.kind !== "renew") debugTrace("dialogue", `${command.kind}.begin`, details);
+    const task = processOnce(command, user, commandId, options).then((result) => {
+      if (command.kind !== "renew") debugTrace("dialogue", `${command.kind}.result`, () => ({ ...details(),
+        sessionId: result.sessionId, nodeId: result.nodeId, step: result.step, status: result.status, role: result.role }));
+      if (result.failure || result.error) debugError("dialogue", `${command.kind}.failed`, result.failure || result.error, details);
+      return result;
+    }).catch((error) => { debugError("dialogue", `${command.kind}.failed`, error, details); throw error; })
+      .finally(() => commands.delete(key));
+    commands.set(key, task); return task;
   };
   const send = async (raw) => {
     const command = { ...raw, groupId: raw.groupId ?? "main" }, key = JSON.stringify(command);

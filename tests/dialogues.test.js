@@ -57,6 +57,24 @@ function fixture({ emitFailure = false, signal = async () => ({ status: "done", 
   return { service, events, context, pc, npc, tile, scene, tags, gm, player, other, message, send, start, runtime: () => runtime, setRuntime: (state) => { runtime = state; } };
 }
 
+test("Debug records dialogue steps and errors without logging lease traffic", async (t) => {
+  const f = fixture();
+  game.settings = { get: () => true };
+  t.mock.method(console, "debug", () => {});
+  t.mock.method(console, "error", () => {});
+  const { result: opened } = await f.send(f.start);
+  assert.ok(console.debug.mock.calls.some((call) => call.arguments[0].endsWith("start.result") && call.arguments[1].nodeId === "start"));
+  console.debug.mock.resetCalls();
+  await f.send({ ...f.start, kind: "renew", sessionId: opened.sessionId });
+  assert.equal(console.debug.mock.callCount(), 0);
+  const { result: next } = await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 });
+  assert.equal(next.nodeId, "info");
+  const accepted = console.debug.mock.calls.find((call) => call.arguments[0].endsWith("answer.result"));
+  assert.equal(accepted.arguments[1].step, 1);
+  await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 });
+  assert.ok(console.error.mock.calls.some((call) => call.arguments[0].endsWith("answer.failed") && call.arguments[1].sessionId === opened.sessionId));
+});
+
 test("dialogue advances only on an offered answer and emits typed lifecycle signals", async () => {
   const f = fixture();
   const { result: opened } = await f.send(f.start);

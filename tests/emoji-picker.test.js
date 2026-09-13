@@ -38,6 +38,6 @@ test("palette groups are anchor destinations, with five columns and seven rows",
 test("emotion keeps the picker beside its input and exposes fractional size", () => {
   const html = renderScriptParameters({ kind: "emotion", parameters: { emoji: "!", size: 42.5, duration: 2 } });
   assert.match(html, /ms-emotion-value[^]*?<input[^]*?<button[^]*?data-script-emoji-picker/);
-  assert.doesNotMatch(html, /<select/);
+  assert.doesNotMatch(html, /<select[^>]*data-script-param="\[&quot;emoji&quot;\]"/);
   assert.match(html, /value="42.5"[^>]*step="any"/);
 });

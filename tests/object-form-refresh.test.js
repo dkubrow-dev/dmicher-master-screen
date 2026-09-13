@@ -239,3 +239,62 @@ test("a rejected save unlocks the form and preserves its dirty draft for correct
     assert.equal(app.draft, before); assert.equal(app.dirty, true); assert.equal(app.revision, 1);
   } finally { SceneObjects.prototype.save = previousSave; }
 });
+
+test("script warnings combine in one confirmation; cancelling keeps the full draft and prevents restoration", async () => {
+  const { app } = fixture(), previousSave = SceneObjects.prototype.save, api = foundry.applications.api, previousDialog = api.DialogV2;
+  const editable = { name: "script", type: "textarea", disabled: false };
+  app.element = root([editable]); app.dirty = true; app.capture = () => {};
+  app.draft.initialScript = { name: "<Instant>", repeat: true, steps: [{ id: 1, kind: "emotion", parameters: {}, next: [] }] };
+  app.draft.transitionScripts.calm = { name: "State entry", steps: [{ id: 1, kind: "speech", parameters: {}, next: [] }] };
+  const draft = app.draft, snapshot = structuredClone(draft); let prompts = 0, writes = 0, restores = 0, closed = 0;
+  api.DialogV2 = { async confirm({ content }) {
+    prompts++; assert.ok(content.includes("Duration is not set")); assert.ok(content.includes("infinite step cycle"));
+    assert.ok(content.includes("Zero-delay cycle (0 sec.)"));
+    assert.ok(content.indexOf("Zero-delay cycle") < content.indexOf("Duration is not set"));
+    assert.ok(content.includes("&lt;Instant&gt;") && !content.includes("<Instant>")); assert.ok(content.includes("State entry")); return false;
+  } };
+  SceneObjects.prototype.save = async () => { writes++; };
+  app.controller.restoreObjectInitial = () => { restores++; }; app.close = async () => { closed++; };
+  try {
+    assert.equal(await app.persist({ close: true }), false);
+    assert.equal(prompts, 1); assert.equal(writes, 0); assert.equal(closed, 0); assert.equal(editable.disabled, false);
+    assert.equal(app.draft, draft); assert.deepEqual(app.draft, snapshot); assert.equal(app.dirty, true); assert.equal(app.revision, 1);
+    await app.handleAction("restore-initial", { dataset: {} });
+    assert.equal(restores, 0); assert.equal(writes, 0); assert.equal(prompts, 2);
+  } finally { SceneObjects.prototype.save = previousSave; api.DialogV2 = previousDialog; }
+});
+
+test("zero-delay cycle confirmation identifies the steps and keeps saving available in both languages", async () => {
+  const api = foundry.applications.api, previousDialog = api.DialogV2;
+  try {
+    for (const [lang, label, allowed] of [["ru", "Цикл без задержек (0 с)", "Такая настройка допустима"], ["en", "Zero-delay cycle (0 sec.)", "This configuration is allowed"]]) {
+      const { app } = fixture(); game.i18n.lang = lang;
+      app.draft.initialScript = { name: "Parallel", repeat: true, steps: [
+        { id: 1, kind: "emotion", parameters: { duration: 10, executionMode: "parallel" }, next: [4] },
+        { id: 4, kind: "speech", parameters: { duration: 20, executionMode: "parallel" }, next: [] }
+      ] };
+      let prompted = false;
+      api.DialogV2 = { async confirm({ content }) { prompted = true; assert.ok(content.includes(label)); assert.ok(content.includes("1 → 4 → 1")); assert.ok(content.includes(allowed)); return false; } };
+      assert.equal(await app.persist(), false); assert.equal(prompted, true);
+    }
+  } finally { api.DialogV2 = previousDialog; }
+});
+
+test("confirmed instant scripts save normally and unchanged blocks are not confirmed again", async () => {
+  const { app, flags } = fixture(), previousSave = SceneObjects.prototype.save, api = foundry.applications.api, previousDialog = api.DialogV2;
+  app.draft.initialScript = { name: "Instant", repeat: true, steps: [{ id: 1, kind: "emotion", parameters: {}, next: [] }] };
+  app.dirty = true; let prompts = 0, writes = 0;
+  api.DialogV2 = { async confirm() { prompts++; return true; } };
+  SceneObjects.prototype.save = async (_target, patch) => {
+    writes++; Object.assign(flags.objectBindings.bindings[app.ownerKey], patch); flags.objectBindings.revision++;
+  };
+  app.render = async () => { app.context({ reload: true }); await ObjectForm._onRender.call(app, {}, {}); };
+  try {
+    assert.equal(await app.persist(), true); assert.equal(prompts, 1); assert.equal(writes, 1); assert.equal(app.dirty, false);
+    assert.equal(await app.persist(), true); assert.equal(prompts, 1); assert.equal(writes, 1);
+    app.draft.notes = "New note"; app.dirty = true;
+    await app.persist(); assert.equal(prompts, 1); assert.equal(writes, 2);
+    app.draft.initialScript.steps[0].parameters.emoji = "!"; app.dirty = true;
+    await app.persist(); assert.equal(prompts, 2); assert.equal(writes, 3);
+  } finally { SceneObjects.prototype.save = previousSave; api.DialogV2 = previousDialog; }
+});

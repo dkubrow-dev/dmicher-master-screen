@@ -15,6 +15,8 @@ import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-form
 import { bindIDEMenus } from "./ide-menu.js";
 import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form-fields.js";
+import { debugEnabled, setDebugEnabled } from "../debug.js";
+import { getDialogueAudioPickerOptions } from "../premium-provider.js";
 
 const clone = (value) => structuredClone(value);
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
@@ -58,6 +60,11 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   reservePopup() { return this.layout.reservePopup(); }
+
+  syncDebugControl() {
+    const input = this.element?.querySelector("[data-screen-debug]");
+    if (input) input.checked = debugEnabled();
+  }
 
   async setPresentation(presentation) {
     this.layout.setPresentation(presentation);
@@ -107,7 +114,7 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   onDraftInput(event) {
-    if (event.target.matches("[data-tab-visibility]")) return false;
+    if (event.target.matches("[data-tab-visibility], [data-screen-debug]")) return false;
     if (event.target.closest("[data-ide-parameters]")) return true;
     return super.onDraftInput(event);
   }
@@ -177,6 +184,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (parameterDirty) this.dirty = true;
     const { preferences } = this.layout;
     const presentation = {
+      debugEnabled: debugEnabled(),
       isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
       presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
       presentationTitle: this.layout.presentation === "panel" ? t("Открыть ширму в отдельном окне", "Open screen in a separate window") : t("Вернуть ширму в панель", "Return screen to panel")
@@ -301,6 +309,13 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.bindJSON();
     const listeners = { signal: this.events.signal };
+    this.element.querySelector("[data-screen-debug]")?.addEventListener("change", async (event) => {
+      const input = event.currentTarget;
+      input.disabled = true;
+      try { await setDebugEnabled(input.checked); }
+      catch (error) { notify(error); }
+      finally { this.syncDebugControl(); input.disabled = false; }
+    }, listeners);
     this.element.addEventListener("toggle", (event) => {
       if (!event.target.matches("[data-signal-category],[data-emitter-node]")) return;
       const key = signalBranchKey(event.target);
@@ -508,9 +523,15 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "assetFilePicker") {
       const sceneId = this.selectionSceneId, assetId = this.selection.id, pageId = this.element.querySelector("[data-asset-page]")?.dataset.assetPage, name = button.dataset.field;
+      const audio = name === "dialoguePageAudio";
+      if (!["shopImg", "dialoguePageArt", "dialoguePageAudio"].includes(name)) return;
+      const pickerOptions = audio ? getDialogueAudioPickerOptions(fieldValue(this.element, name)) : { type: "image", current: fieldValue(this.element, name) };
+      if (!pickerOptions) return;
+      const selectionRevision = this.parameterRevision;
       const Picker = foundry.applications.apps.FilePicker.implementation;
-      return new Picker({ type: "image", current: fieldValue(this.element, name), callback: (path) => {
-        if (this.selectionSceneId !== sceneId || this.selection.id !== assetId || (pageId && this.element.querySelector("[data-asset-page]")?.dataset.assetPage !== pageId)) { ui.notifications.warn(t("Выбор изменился. Откройте выбор изображения ещё раз.", "The selection changed. Open the image picker again.")); return; }
+      return new Picker({ ...pickerOptions, callback: (path) => {
+        if (audio && !getDialogueAudioPickerOptions(path)) return;
+        if (!this.rendered || this.mode !== "constructor" || this.selectionSceneId !== sceneId || this.selection.id !== assetId || this.parameterRevision !== selectionRevision || (pageId && this.element.querySelector("[data-asset-page]")?.dataset.assetPage !== pageId)) { ui.notifications.warn(t("Выбор изменился. Откройте выбор файла ещё раз.", "The selection changed. Open the file picker again.")); return; }
         const field = this.element.querySelector(`[name="${name}"]`); if (!field) return;
         field.value = path; field.dispatchEvent(new field.ownerDocument.defaultView.Event("input", { bubbles: true }));
       } }).render({ force: true });

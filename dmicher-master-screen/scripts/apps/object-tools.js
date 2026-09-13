@@ -10,6 +10,7 @@ import { MODULE_ID, normalizeConditions } from "../model.js";
 import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
 import { buildScriptFields, readScriptFields, bindScriptSorting } from "./script-fields.js";
 import { appendScriptStep, removeScriptStep } from "../script-editing.js";
+import { changedScriptWarnings } from "../script-warnings.js";
 import { escapeHTML as e, formValue as value, actionButton as button, textInput as input, selectOptions } from "./form-fields.js";
 import { completeScriptParameters, bindScriptParameters } from "./script-parameters.js";
 import { exportScriptBlock, importScriptBlock } from "../script-transfer.js";
@@ -134,9 +135,27 @@ class ObjectForm extends ScreenFormApplication {
     this.persistTask = Promise.resolve().then(async () => {
       this.assertCurrentScene(); const scene = this.context().scene;
       const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
+      const warnings = changedScriptWarnings(this.original, this.draft);
+      if (warnings.length) {
+        const kindNames = { initial: t("Исходное состояние", "Initial state"), transition: t("Переход", "Transition"), routine: t("Рутина", "Routine") };
+        const items = warnings.map(warning => {
+          const details = [];
+          if (warning.zeroDelayCycle) details.push(t(`Цикл без задержек (0 с): ${warning.zeroDelayCycle.join(" → ")}. Наибольший риск перегрузки: добавьте ожидание или проверьте выход из цикла. Длительность параллельного эффекта не задерживает следующий шаг.`, `Zero-delay cycle (0 sec.): ${warning.zeroDelayCycle.join(" → ")}. Highest overload risk: add a wait or check the cycle's exit. A parallel effect's duration does not delay the next step.`));
+          if (warning.durationUnset) details.push(t("Длительность не установлена: достижимые действия не задают времени выполнения.", "Duration is not set: reachable actions declare no execution time."));
+          if (warning.cycle) details.push(t(`Возможен бесконечный цикл шагов: ${warning.cycle.join(" → ")}. Проверьте переходы и «Повторять».`, `A possible infinite step cycle: ${warning.cycle.join(" → ")}. Check Next and Repeat.`));
+          return `<li><strong>${e(kindNames[warning.kind])}${warning.name ? `: ${e(warning.name)}` : ""}</strong><p>${details.map(e).join("<br>")}</p></li>`;
+        }).join("");
+        const accepted = await foundry.applications.api.DialogV2.confirm({
+          window: { title: t("Проверка скриптов перед сохранением", "Check scripts before saving") },
+          content: `<ul>${items}</ul><p>${t("Такая настройка допустима. Сохранить скрипты?", "This configuration is allowed. Save the scripts?")}</p>`, rejectClose: false
+        });
+        if (!accepted) return false;
+        this.assertCurrentScene();
+      }
       if (Object.keys(patch).length) await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true });
       this.reloadRequested = true; this.dirty = false; if (close) await this.close(); this.controller.changed(scene);
       if (!close) await super.refresh();
+      return true;
     }).finally(() => {
       for (const [control, disabled] of this.saveControls) control.disabled = disabled;
       this.saveControls = null; this.persistTask = null;
@@ -338,7 +357,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
       if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; }
       else if (!this.activeScript()) { this.setActiveScript(newScript(kind === "initial" ? t("Исходное состояние", "Initial state") : state.name, kind === "routine" ? stateId : null)); this.dirty = true; }
     }
-    else if (action === "restore-initial") { await this.persist(); return this.controller.restoreObjectInitial(this.descriptor); }
+    else if (action === "restore-initial") { if (await this.persist()) return this.controller.restoreObjectInitial(this.descriptor); return; }
     else if (["add-script-step", "remove-script-step", "script-point", "script-sound", "script-current-position", "script-current-size"].includes(action)) {
       const script = this.activeScript(), step = script?.steps[Number(target.dataset.step)];
       if (!script || action !== "add-script-step" && !step) return this.render({ force: true });

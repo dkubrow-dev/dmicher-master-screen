@@ -4,7 +4,7 @@ import { themedClasses } from "../ui.js";
 import { validateDialogueAccess } from "../dialogues.js";
 import { objectReferenceKey } from "../object-reference.js";
 import { dialogueSessionIsPresent } from "../interaction-session-model.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose } from "./dialogue-presentation.js";
+import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -82,6 +82,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   async _onRender(context, options) {
     await super._onRender(context, options);
     restoreDialogueScroll(this);
+    renderDialogueAudio(this, context.messages);
     if (this.view?.status !== "active" || this.error || this.unavailable) { clearInterval(this.leaseTimer); this.leaseTimer = null; return; }
     this.leaseTimer ??= setInterval(() => {
       if (!this.rendered || this.closing || this.view?.status !== "active") return;
@@ -157,6 +158,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
       if (!confirmed) return;
     }
     this.closing = true;
+    disposeDialogueAudio(this);
     this.viewGeneration++;
     clearInterval(this.leaseTimer); this.leaseTimer = null;
     if (this.view?.sessionId) {

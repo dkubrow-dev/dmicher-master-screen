@@ -14,6 +14,7 @@ import { getSignalCatalog } from "./signal-catalog.js";
 import { SCENE_OBJECT_TYPES, SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { DEFAULT_EMOTION_SIZE, normalizeStateTransitions } from "./script-model.js";
 import { appendFollowWaypoint } from "./script-target-movement.js";
+import { debugTrace, debugError } from "./debug.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -42,7 +43,7 @@ export class GroupRuntime {
     const run = getRuntimeForRun(scene, runId);
     return Boolean(run?.state && !isExecutionHalted(scene, run));
   }
-  report(error) { console.error(MODULE_ID, error); globalThis.ui?.notifications?.error?.(error.message ?? String(error)); }
+  report(error) { console.error(MODULE_ID, error); debugError("runtime", "failed", error); globalThis.ui?.notifications?.error?.(error.message ?? String(error)); }
   start() {
     if (this.interval) return this;
     this.disposed = false;
@@ -182,6 +183,14 @@ export class GroupRuntime {
         conditionCounts: clone(previous.conditionCounts), conditionEnabledOverrides: clone(previous.conditionEnabledOverrides) };
       if (active) resetStateConditions(next);
       await saveRuntime(scene, next);
+      debugTrace("runtime", "state.enter", () => ({ sceneId: scene.id, sceneName: scene.name, groupId, groupName: group.groupName,
+        stateId, stateName: prepared.name, previousStateId: previous.stateId, runId: next.runId, active }));
+      for (const transition of snapshot.transitions) if (transition.enabled !== false && transition.repeat && transition.steps.length) {
+        debugTrace("runtime", "routine.blockedByRepeatingTransition", () => ({ sceneId: scene.id, groupId, groupName: group.groupName,
+          stateId, stateName: prepared.name, object: transition.target, scriptName: transition.name,
+          reason: text("Переход повторяется: рутина начнётся только после завершения переходного скрипта. Проверьте «Повторять».",
+            "The transition repeats: the routine can start only after its transition script finishes. Check Repeat.") }));
+      }
       if (this.sceneRestoration?.runIds.has(plan.signalContext?.originRunId)) this.sceneRestoration.states.set(groupId, this.restorationState(scene, groupId));
       if (!preserveStatus) { await scene.setFlag(MODULE_ID, "automationHalted", false); finishSceneHalt(scene, sceneGeneration); }
       finishHalt(scene, generation, groupId); notifyExecutionChange(scene);
@@ -278,6 +287,7 @@ export class GroupRuntime {
       if (all) { await scene.setFlag(MODULE_ID, "automationHalted", true); finishSceneHalt(scene, sceneGeneration); }
       for (const id of ids) { const run = getRuntime(scene, { groupId: id }); run.halted = true; run.haltedAt = this.now();
         await saveRuntime(scene, run); finishHalt(scene, generations.get(id), id); this.tickTimes.delete(`${scene.id}:${id}`); result.push(run); }
+      debugTrace("runtime", "automation.halted", () => ({ sceneId: scene.id, sceneName: scene.name, all, groupIds: ids }));
       this.refresh(scene); return all ? result : result[0];
     });
   }
@@ -430,20 +440,34 @@ export class GroupRuntime {
             if (!this.currentObject(scene, run.runId, target, { ignoreInteractionPause: true })) continue;
             let current = this.scriptState(scene, run.runId); const key = objectKey(target);
             const object = getSceneObject(scene, target);
+            // Presentation lifetimes continue after a script hands control to its
+            // routine. Pause clocks are shared with foreground script execution.
+            jobs.push(...await this.scripts.tickEffects(scene, run.runId, object, elapsed));
+            current = this.scriptState(scene, run.runId);
             const transition = run.manual ? run.script : run.state.transitions.find((script) => objectKey(script.target) === key);
             let slot = run.manual ? "initial" : "transition", script = transition;
             const status = script && this.scriptState(scene, run.runId).scriptStates[scriptProgressKey(target, script, slot)]?.status;
             if (!script || script.enabled === false || !script.steps.length || status === "done" || run.manual && ["failed", "uncertain"].includes(status)) {
-              if (run.manual) { this.manualVisuals.set(`${scene.id}:${key}`, this.scriptState(scene, run.runId)); this.manualRuns.delete(run.runId); this.tickTimes.delete(clockKey); this.refreshObject(object); continue; }
+              if (run.manual) {
+                jobs.push(...await this.scripts.tickEffects(scene, run.runId, object, 0, { idle: true })); current = this.scriptState(scene, run.runId);
+                if (this.scripts.hasPendingEffects(current)) continue;
+                this.manualVisuals.set(`${scene.id}:${key}`, current); this.manualRuns.delete(run.runId); this.tickTimes.delete(clockKey); this.refreshObject(object); continue;
+              }
               script = run.state.scripts.find((entry) => objectKey(entry.target) === key); slot = "routine";
+            }
+            if (!script || this.scriptState(scene, run.runId).scriptStates[scriptProgressKey(target, script, slot)]?.status === "done") {
+              jobs.push(...await this.scripts.tickEffects(scene, run.runId, object, 0, { idle: true }));
+              current = this.scriptState(scene, run.runId);
             }
             if (!script) continue;
             if (this.scriptInteractionPaused(scene, current, target, scriptProgressKey(target, script, slot))) {
-              if (!current.interactionClocks[key]) { current.interactionClocks[key] = { at: now }; await this.saveScriptState(scene, current); } continue;
+              if (!current.interactionClocks[key]) { current.interactionClocks[key] = { at: now }; await this.saveScriptState(scene, current);
+                debugTrace("script", "interaction.paused", () => ({ sceneId: scene.id, groupId: run.groupId, runId: run.runId, target, scriptName: script.name, slot })); } continue;
             }
-            let budget = elapsed; if (current.interactionClocks[key]) { current.interactionClocks[key] = null; await this.saveScriptState(scene, current); budget = 0; }
+            let budget = elapsed; if (current.interactionClocks[key]) { current.interactionClocks[key] = null; await this.saveScriptState(scene, current); budget = 0;
+              debugTrace("script", "interaction.resumed", () => ({ sceneId: scene.id, groupId: run.groupId, runId: run.runId, target, scriptName: script.name, slot })); }
             try { const job = await this.scripts.tick(scene, this.scriptState(scene, run.runId), object, script, budget, { slot }); if (job) jobs.push(job); }
-            catch (error) { this.report(error); current = this.scriptState(scene, run.runId); if (current) {
+            catch (error) { debugError("script", "tick.failed", error, { sceneId: scene.id, groupId: run.groupId, stateId: run.stateId, runId: run.runId, target, scriptName: script.name, slot }); this.report(error); current = this.scriptState(scene, run.runId); if (current) {
               const progress = current.scriptStates[scriptProgressKey(target, script, slot)] ??= initialScriptProgress(script); progress.status = "failed";
               current.error = error.message; await this.saveScriptState(scene, current);
             } }

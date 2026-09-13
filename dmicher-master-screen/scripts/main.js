@@ -8,8 +8,10 @@ import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { findCanvasObject, canvasPointerPosition, clearCanvasObjectFocus, listenCanvasObjectClicks } from "./apps/canvas-object.js";
 import { installSceneSignals } from "./scene-signals.js";
 import { registerTemplateLocalization } from "./apps/template-localization.js";
+import { registerDebugSetting } from "./debug.js";
+import { registerDialogueVolume, DialogueVolumeController } from "./dialogue-volume.js";
 
-let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals;
+let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals, removeDialogueVolume;
 const hooks = [];
 let detachCanvas;
 const on = (name, callback) => hooks.push([name, Hooks.on(name, callback)]);
@@ -32,6 +34,8 @@ function attachCanvas() {
 
 Hooks.once("init", () => {
   registerTemplateLocalization(globalThis.Handlebars);
+  registerDebugSetting({ onChange: () => controller?.editor?.syncDebugControl?.() });
+  registerDialogueVolume();
   theme.install();
   controller = new ScreenController();
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
@@ -55,6 +59,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
+  removeDialogueVolume = new DialogueVolumeController().install();
   controller.runtime.start();
   removeSceneSignals = installSceneSignals(controller.signals, { onError: notifyError });
   on("canvasReady", attachCanvas);
@@ -82,5 +87,5 @@ globalThis.addEventListener?.("pagehide", () => {
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   detachCanvas?.();
   for (const [name, id] of hooks) Hooks.off(name, id);
-  removeControls?.(); removeSettingHelp?.(); removeSceneSignals?.(); unregister?.(); theme.dispose();
+  removeControls?.(); removeSettingHelp?.(); removeSceneSignals?.(); removeDialogueVolume?.(); unregister?.(); theme.dispose();
 }, { once: true });

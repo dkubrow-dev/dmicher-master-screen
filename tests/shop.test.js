@@ -62,6 +62,24 @@ function fixture({ stock = 1, failSaveAt = 0, authority = true, requireGMApprova
     runtime: () => runtime, setRuntime: (value) => { runtime = value; }, counts: () => ({ creates, deletes, saves }), message };
 }
 
+test("Debug records shop execution once without logging routine lease renewals", async (t) => {
+  const f = fixture();
+  game.settings = { get: () => true };
+  t.mock.method(console, "debug", () => {});
+  t.mock.method(console, "error", () => {});
+  await f.service.requestSession(f.intent);
+  assert.ok(console.debug.mock.calls.some((call) => call.arguments[0].endsWith("open.result")));
+  console.debug.mock.resetCalls();
+  await f.service.renewSession(f.intent);
+  assert.equal(console.debug.mock.callCount(), 0);
+  const first = await f.service.requestTrade(f.intent), second = await f.service.requestTrade(f.intent);
+  assert.equal(first.status, "done"); assert.equal(second.status, "done");
+  const completed = console.debug.mock.calls.filter((call) => call.arguments[0].endsWith("exchange.done"));
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0].arguments[1].shopId, "npc");
+  assert.equal(f.actor.items.size, 1);
+});
+
 test("item transfer strips document identity but retains opaque system stack and module data", () => {
   const data = itemTransferData({ _id: "old", ownership: { default: 3 }, folder: "folder", name: "Coins", type: "gear",
     system: { quantity: 80, denomination: "unknown" }, flags: { other: { value: 2 } } });
