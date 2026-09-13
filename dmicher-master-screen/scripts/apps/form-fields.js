@@ -18,8 +18,8 @@ export function selectOptions(items, selected, blank) {
 }
 
 /** A parameter row shares its compact layout; each editor owns its field semantics. */
-export function parameterRow(label, control) {
-  return `<tr><th scope="row">${escapeHTML(label)}</th><td>${control}</td></tr>`;
+export function parameterRow(label, control, className = "") {
+  return `<tr${className ? ` class="${escapeHTML(className)}"` : ""}><th scope="row">${escapeHTML(label)}</th><td>${control}</td></tr>`;
 }
 
 // Escape the CSS string rather than interpolating a user-controlled field name.

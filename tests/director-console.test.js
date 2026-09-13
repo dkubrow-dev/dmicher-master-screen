@@ -48,3 +48,15 @@ test("A completed method visibly reports rejection and stale/failed delivery out
   assert.match(diagnosticSummary({ context: { status: "failed" } }), /Failed/);
   assert.match(diagnosticSummary({ context: { reason: "disabled" } }), /Disabled/);
 });
+
+test("Director control events name the command, initiator and scene in RU and EN", () => {
+  const entry = { id: 8, at: "2026-09-15T12:00:00.000Z", level: "command", category: "control", event: "requested",
+    context: { command: "stop-all", commandId: "director-1", initiatorId: "gm", initiatorName: "Master <GM>", sceneName: "Hall" } };
+  for (const [lang, action, stage] of [["en", "Stop all", "Command received"], ["ru", "Остановить всё", "Команда принята"]]) {
+    globalThis.game = { i18n: { lang } };
+    const html = renderDiagnosticEntry(entry);
+    assert.ok(html.includes(action)); assert.ok(html.includes(stage));
+    assert.ok(html.includes("Master &lt;GM&gt;")); assert.ok(html.includes("Hall"));
+    assert.ok(html.includes("director-1"));
+  }
+});

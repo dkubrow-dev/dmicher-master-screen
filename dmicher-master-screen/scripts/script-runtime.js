@@ -1,6 +1,6 @@
 import { message as localizedMessage, text } from "./localization.js";
 import { withSceneLock } from "./store.js";
-import { onExecutionChange, notifyExecutionChange } from "./execution.js";
+import { notifyExecutionChange, createExecutionScope } from "./execution.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } from "./script-movement.js";
 import { createCombatAdapter } from "./combat-adapter.js";
 import { DEFAULT_EMOTION_SIZE } from "./script-model.js";
@@ -233,10 +233,17 @@ export class ObjectScriptRuntime {
       }
       let consumed = 0;
       if (["move", "approach", "follow"].includes(step.kind)) {
-        const options = { isCurrent: () => !globalThis.game?.paused && this.current(scene, state.runId, target, { scriptKey: key })
-          && sameTurn(combat, this.combat.context(scene, object)), ignoreObstacles: step.kind === "approach" };
-        const movement = step.kind === "follow" ? await advanceScriptFollow(scene, object, action.follow, params, available, options)
-          : await advanceScriptMovement(scene, object, action.movement, available, options);
+        // Foundry owns the submitted document update. The scene queue must not
+        // wait for its animation/network promise after this execution is revoked.
+        const scope = createExecutionScope(scene, { isCurrent: () => !globalThis.game?.paused
+          && this.current(scene, state.runId, target, { scriptKey: key }) && sameTurn(combat, this.combat.context(scene, object)) });
+        const options = { isCurrent: scope.current, signal: scope.signal, ignoreObstacles: step.kind === "approach" };
+        let outcome;
+        try { outcome = await scope.run(() => step.kind === "follow" ? advanceScriptFollow(scene, object, action.follow, params, available, options)
+          : advanceScriptMovement(scene, object, action.movement, available, options)); }
+        finally { scope.dispose(); }
+        if (outcome.stale) return;
+        const movement = outcome.value;
         consumed = movement.consumed;
         if (combat) { progress.combat.remaining = Math.max(0, progress.combat.remaining - consumed); this.consumeEffectTime(scene, state, object, consumed, progress); }
         available = Math.max(0, available - consumed);
@@ -273,7 +280,7 @@ export class ObjectScriptRuntime {
       if (!combat) available = 0; // A new step always starts with its own full timer.
     }
   }
-  async effect(job, admitted) {
+  async effect(job, admitted, executionCurrent) {
     const { scene, object, target, script, step, runId, stage } = job, p = step.parameters, effects = this.runtime.effects;
     const current = job.background ?? this.state(scene, runId)?.scriptStates?.[job.progressKey];
     if (stage === "combat") {
@@ -284,8 +291,8 @@ export class ObjectScriptRuntime {
     if (stage === "endTurn") { if (admitted()) await this.combat.finishTurn(scene, object, job.combat); return {}; }
     if (step.kind === "speech") {
       const start = stage === "effect";
-      if (start && admitted()) await effects.clearPreviousSpeech?.(scene, object);
-      if ((start && current?.deleteMessages || !start && p.duration > 0 && p.chat.deleteAfter) && current?.messageIds?.length) await effects.removeSpeech(current.messageIds);
+      if (start && admitted()) await effects.clearPreviousSpeech?.(scene, object, admitted);
+      if (admitted() && (start && current?.deleteMessages || !start && p.duration > 0 && p.chat.deleteAfter) && current?.messageIds?.length) await effects.removeSpeech(current.messageIds, admitted);
       if (admitted() && p.chat.enabled && p.chat.timing === (start ? "before" : "after")) {
         const messages = await effects.speak(scene, object, p.chat.text, { ...p.chat, visibleOnly: true, rich: true,
           expiresAfter: !start && p.chat.deleteAfter ? p.duration : 0 }, `${job.key}:${job.sequence}:chat`, admitted);
@@ -297,7 +304,8 @@ export class ObjectScriptRuntime {
       if (!scriptObjectCapabilities(object).visibility) throw new Error(localizedMessage("Этот объект не поддерживает скрытие."));
       if (admitted()) await object.update({ hidden: !p.visible }); return {};
     }
-    if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume); return {}; }
+    if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume, { scene, runId, target, groupId: job.groupId, manual: this.state(scene, runId)?.manual === true,
+      isCurrent: () => executionCurrent() && this.current(scene, runId, target, { ignoreInteractionPause: true }) }); return {}; }
     if (step.kind === "signal") {
       if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 });
       return {};
@@ -315,11 +323,11 @@ export class ObjectScriptRuntime {
       // can be saved. Exclude only our confirmed windows while admitting the rest.
       const isCurrent = (started = []) => {
         const turn = this.combat.context(scene, object);
-        return !globalThis.game?.paused && this.current(scene, runId, target, { scriptKey: job.progressKey, excludeDialogueSessions: started })
+        return executionCurrent() && !globalThis.game?.paused && this.current(scene, runId, target, { scriptKey: job.progressKey, excludeDialogueSessions: started })
           && (!turn || script.combat.enabled && turn.isTurn);
       };
       const sessions = await this.runtime.startScriptDialogues({ sceneId: scene.id, groupId: job.groupId, runId, target, dialogueId: p.dialogueId, tokenUuids: clone(p.tokenUuids) },
-        { isCurrent, waitForAdmission: (started = []) => this.waitUntilAdmitted(job, () => isCurrent(started)) });
+        { isCurrent, waitForAdmission: (started = []) => this.waitUntilAdmitted(job, () => isCurrent(started), executionCurrent) });
       return { sessions };
     }
     if (step.kind === "macro") {
@@ -334,38 +342,36 @@ export class ObjectScriptRuntime {
   }
   /** A partially opened dialogue batch keeps its claimed job and exact views.
    * Pauses/turn changes wait in place; losing the run releases the wait entirely. */
-  waitUntilAdmitted(job, isCurrent) {
-    if (isCurrent()) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      let timer, unsubscribe, settled = false;
-      const finish = (error) => {
-        if (settled) return; settled = true; clearInterval(timer); unsubscribe?.(); this.cancels.delete(cancel);
-        if (error) reject(error); else resolve();
-      };
-      const cancel = () => finish(new Error(text("Исполнение скрипта остановлено.", "Script execution was stopped.")));
-      const check = () => {
-        if (!this.current(job.scene, job.runId, job.target, { ignoreInteractionPause: true })) cancel();
-        else if (isCurrent()) finish();
-      };
-      unsubscribe = onExecutionChange(job.scene, check); this.cancels.add(cancel);
-      timer = setInterval(check, 100); check();
-    });
+  async waitUntilAdmitted(job, isCurrent, executionCurrent) {
+    const scope = createExecutionScope(job.scene, { isCurrent: executionCurrent });
+    this.cancels.add(scope.cancel); let timer;
+    try {
+      const outcome = await scope.run(() => new Promise((resolve, reject) => {
+        const check = () => { try { if (isCurrent()) resolve(); } catch (error) { reject(error); } };
+        timer = setInterval(check, 100); check();
+      }));
+      if (outcome.stale) throw new Error(text("Исполнение скрипта остановлено.", "Script execution was stopped."));
+    } finally { clearInterval(timer); scope.dispose(); this.cancels.delete(scope.cancel); }
   }
   async execute(job) {
     const { scene, runId, target, sequence, step, script } = job;
     const sameEffect = () => !job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.speechEffect?.id === sequence;
     const current = () => sameEffect() && this.current(scene, runId, target, { scriptKey: job.progressKey });
     const owned = () => sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true });
-    let dispose, cancel;
-    const cancelled = new Promise((resolve) => { cancel = () => resolve({ stale: true }); dispose = onExecutionChange(scene, (reason) => { if (reason === "canvas-teardown" || !owned()) cancel(); }); this.cancels.add(cancel); });
+    const scope = createExecutionScope(scene, { isCurrent: owned });
+    this.cancels.add(scope.cancel);
     const admitted = () => {
-      if (!globalThis.game?.paused && current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
+      if (scope.current() && !globalThis.game?.paused && current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
       // A turn may change while the claimed job waits outside the scene queue.
       // Keep the action ready for its next admission; never start it off-turn.
       const error = new Error(localizedMessage("Скрипт ожидает своего хода или завершения взаимодействия.")); error.code = "script-deferred"; throw error;
     };
     try {
-      const outcome = await Promise.race([Promise.resolve().then(() => { admitted(); return this.effect(job, admitted); }).then((result) => ({ result }), (error) => ({ error })), cancelled]);
+      const result = await scope.run(async () => {
+        try { admitted(); return { result: await this.effect(job, admitted, scope.current) }; }
+        catch (error) { return { error }; }
+      });
+      const outcome = result.stale ? result : result.value;
       if (outcome.stale || !owned()) { debugTrace("script", "action.cancelled", () => traceContext(scene, { runId, groupId: job.groupId }, job.object, script, step, { stage: job.stage })); return; }
       await withSceneLock(scene, async () => {
         if (!owned()) return;
@@ -427,7 +433,7 @@ export class ObjectScriptRuntime {
           { stage: job.stage, status: progress.status, nextStepId: progress.stepId, background: Boolean(progress.speechEffect) }));
         await this.save(scene, state); this.runtime.onChange(scene); this.runtime.refreshObject(job.object);
       });
-    } finally { dispose?.(); this.cancels.delete(cancel); if (this.jobs.get(job.key) === job) this.jobs.delete(job.key); }
+    } finally { scope.dispose(); this.cancels.delete(scope.cancel); if (this.jobs.get(job.key) === job) this.jobs.delete(job.key); }
   }
   dispose() { for (const cancel of this.cancels) cancel(); this.cancels.clear(); this.jobs.clear(); }
 }

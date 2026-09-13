@@ -35,6 +35,8 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
 
   resetDraft() { this.dirty = false; this.draft = null; }
 
+  disableActionWhilePending(_action) { return true; }
+
   bindEvents() {
     this.events?.abort();
     const Controller = this.element.ownerDocument.defaultView.AbortController;
@@ -57,9 +59,10 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
       const button = event.target.closest("[data-screen-action]");
       if (!button || button.disabled) return;
       event.preventDefault();
-      button.disabled = true;
+      const disable = this.disableActionWhilePending(button.dataset.screenAction);
+      if (disable) button.disabled = true;
       void this.runAction(button.dataset.screenAction, button, event)
-        .finally(() => { if (button.isConnected) button.disabled = false; });
+        .finally(() => { if (disable && button.isConnected) button.disabled = false; });
     }, options);
     this.element.addEventListener("submit", (event) => {
       const action = event.target.dataset.screenForm;

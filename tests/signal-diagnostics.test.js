@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture } from "./signal-fixture.js";
 import { clearDiagnostics, getDiagnosticEntries } from "../dmicher-master-screen/scripts/diagnostics.js";
-import { requestHalt } from "../dmicher-master-screen/scripts/execution.js";
+import { requestHalt, notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
 
 function setup() {
   const f = fixture();
@@ -112,4 +112,84 @@ test("skipped subscribers show the reason without claiming acceptance or executi
   assert.deepEqual(records().map(entry => entry.event), ["emitted", "subscriber.skipped", "completed"]);
   assert.equal(records()[1].context.reason, "player-character");
   assert.equal(records()[1].context.subscriberName, "Other");
+});
+
+test("stop cancels a subscriber while its macro document is still being resolved", async () => {
+  const f = setup(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "SlowLookup" });
+  f.data.objectBindings.bindings["Token:other"] = { groupId: "main" };
+  let called = false;
+  const { macro } = await f.subscribe(signal, "Token:other", () => { called = true; });
+  let begin, release; const began = new Promise(resolve => { begin = resolve; });
+  f.bus.resolveMacro = async () => { begin(); return new Promise(resolve => { release = resolve; }); };
+  const pending = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, signalId: signal.id });
+  await began; requestHalt(f.scene, "main");
+  let timer;
+  try {
+    const result = await Promise.race([pending, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Macro lookup blocked stop")), 1000); })]);
+    assert.equal(result.status, "stale");
+    release(macro); await nextTurn(); assert.equal(called, false);
+    assert.ok(records().some(entry => entry.event === "subscriber.stale"));
+  } finally { clearTimeout(timer); release(macro); }
+});
+
+test("canvas teardown latches cancellation through a late macro lookup or factory", async () => {
+  for (const stage of ["lookup", "factory"]) {
+    const f = setup(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "SlowFactory" });
+    let called = 0, begin, release;
+    const began = new Promise(resolve => { begin = resolve; });
+    const { macro } = await f.subscribe(signal, "Token:other", () => { called++; });
+    if (stage === "lookup") f.bus.resolveMacro = async () => { begin(); return new Promise(resolve => { release = () => resolve(macro); }); };
+    else {
+      const execute = macro.execute.bind(macro);
+      macro.execute = async () => {
+        const instance = await execute(); begin();
+        return new Promise(resolve => { release = () => resolve(instance); });
+      };
+    }
+    const pending = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, signalId: signal.id });
+    await began; notifyExecutionChange(f.scene, "canvas-teardown");
+    assert.equal((await pending).status, "stale");
+    // No group generation changes: re-viewing this scene leaves the model
+    // current, but the cancelled delivery must remain dead.
+    assert.equal(f.bus.current(f.scene), true);
+    release(); await nextTurn();
+    assert.equal(called, 0, stage);
+    assert.deepEqual(f.calls, []);
+    assert.equal(records().filter(entry => entry.event === "subscriber.completed").length, 0);
+  }
+});
+
+test("a cancelled subscriber cannot invoke retained scope commands after returning to its scene", async () => {
+  const f = setup(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "RetainedScope" });
+  await f.catalog.saveSignal({ emitterKey: "Token:other", name: "Later" });
+  let context, begin, release;
+  const began = new Promise(resolve => { begin = resolve; });
+  await f.subscribe(signal, "Token:other", async scope => { context = scope; begin(); await new Promise(resolve => { release = resolve; }); });
+  const pending = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, signalId: signal.id });
+  await began; notifyExecutionChange(f.scene, "canvas-teardown");
+  assert.equal((await pending).status, "stale");
+  assert.equal(f.bus.current(f.scene), true);
+  assert.throws(() => context.emit("Later"));
+  assert.throws(() => context.transition("main", "calm"));
+  assert.throws(() => context.halt());
+  assert.deepEqual(f.calls, []);
+  release(); await nextTurn();
+  assert.equal(records().filter(entry => entry.event === "emitted").length, 1);
+});
+
+test("an in-flight macro transition inherits the latched delivery cancellation", async () => {
+  const f = setup(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Transition" });
+  let inherited, begin, release;
+  const began = new Promise(resolve => { begin = resolve; });
+  f.bus.runtime.enter = async (_scene, _stateId, options) => {
+    inherited = options.signalContext.current; begin();
+    await new Promise(resolve => { release = resolve; });
+  };
+  await f.subscribe(signal, "Token:other", async scope => { await scope.transition("main", "calm"); });
+  const pending = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, signalId: signal.id });
+  await began; assert.equal(inherited(), true);
+  notifyExecutionChange(f.scene, "canvas-teardown");
+  assert.equal((await pending).status, "stale");
+  assert.equal(inherited(), false);
+  release(); await nextTurn();
 });

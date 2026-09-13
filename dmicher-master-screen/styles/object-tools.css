@@ -59,6 +59,12 @@
 .dmicher-master-screen .ms-parameter-table { width: 100%; margin: 0; border: 0; table-layout: fixed; background: transparent; font-size: 12px; }
 .dmicher-master-screen .ms-parameter-table > tbody > tr > th { width: 38%; font-weight: normal; text-align: left; vertical-align: middle; padding: 1px 3px; overflow-wrap: anywhere; }
 .dmicher-master-screen .ms-parameter-table > tbody > tr > td { padding: 1px 3px; vertical-align: middle; }
+.dmicher-master-screen .ms-parameter-table > tbody > tr.ms-script-zero-duration {
+  --dmicher-text: var(--dmicher-danger-text, #b71929);
+  --dmicher-input-border: var(--dmicher-danger-text, #b71929);
+  --dmicher-input-focus-border: var(--dmicher-danger-text, #b71929);
+  color: var(--dmicher-text); background: var(--dmicher-row-danger, #b719291f);
+}
 .dmicher-master-screen .ms-parameter-table :is(input, select) { min-height: 22px; height: 22px; font-size: 12px; padding-block: 0; }
 .dmicher-master-screen .ms-parameter-table input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; margin: 2px; }
 .dmicher-master-screen .ms-parameter-table textarea { min-height: 40px; font: inherit; }

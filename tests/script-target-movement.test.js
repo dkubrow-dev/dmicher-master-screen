@@ -15,6 +15,39 @@ function fixture() {
 }
 const parameters = (kind, supplied = {}) => normalizeScriptStep({ id: 1, kind, parameters: { targetUuid: "Scene.scene.Token.target", ...supplied } }).parameters;
 
+test("a stopped movement ignores the result of an already submitted document update", async () => {
+  const f = fixture(), movement = planScriptApproach(f.scene, f.npc, parameters("approach", { duration: 2 }));
+  let current = true, release;
+  f.npc.update = () => new Promise(resolve => { release = resolve; });
+  const advancing = advanceScriptMovement(f.scene, f.npc, movement, 1, { isCurrent: () => current });
+  current = false; release();
+  assert.deepEqual(await advancing, { consumed: 0, done: false });
+  assert.equal(movement.remainingMs, 2000);
+});
+
+test("movement cancellation terminates interpolation immediately and again after a late native write", async () => {
+  const f = fixture(), movement = planScriptApproach(f.scene, f.npc, parameters("approach", { duration: 2 }));
+  const abort = new AbortController(); let release, stopped = 0;
+  f.npc.object.stopAnimation = () => { stopped++; };
+  f.npc.update = () => new Promise(resolve => { release = resolve; });
+  const advancing = advanceScriptMovement(f.scene, f.npc, movement, 1, { signal: abort.signal });
+  abort.abort(); assert.equal(stopped, 1);
+  release(); assert.deepEqual(await advancing, { consumed: 0, done: false });
+  assert.equal(stopped, 2); assert.equal(movement.remainingMs, 2000);
+});
+
+test("a stopped follow does not mark arrival or continue a remaining waypoint after a late write", async () => {
+  const f = fixture(), p = parameters("follow", { mode: "direct", minDistance: 1, maxDistance: 5 });
+  const follow = planScriptFollow(f.scene, f.npc, p);
+  let current = true, release, updates = 0;
+  f.npc.update = changes => new Promise(resolve => { updates++; release = () => { Object.assign(f.npc, changes); resolve(); }; });
+  const advancing = advanceScriptFollow(f.scene, f.npc, follow, p, 100, { isCurrent: () => current });
+  current = false; release();
+  assert.deepEqual(await advancing, { consumed: 0, done: false });
+  assert.equal(updates, 1);
+  assert.equal(follow.catchingUp, true);
+});
+
 test("target action parameters are typed, nonnegative and have explicit completion modes", () => {
   assert.equal(parameters("approach").timeMode, "duration"); assert.equal(parameters("approach").duration, 0);
   assert.equal(parameters("follow").mode, "trajectory"); assert.equal(parameters("follow").finishOn, "arrival");

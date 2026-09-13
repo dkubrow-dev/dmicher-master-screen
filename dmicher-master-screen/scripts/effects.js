@@ -1,6 +1,7 @@
 import { message as localizedMessage } from "./localization.js";
 import { sanitizeScriptHTML, escapeScriptText as escapeHTML } from "./script-text.js";
 import { objectCenter, sceneDistance, isSceneObjectHidden } from "./scene-object-geometry.js";
+import { ScriptAudioService } from "./script-audio.js";
 /** Foundry adapters. Scene rules and effect ownership remain in the runtime. */
 const values = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
 
@@ -26,9 +27,13 @@ export function speechRecipients(scene, speaker, { range = 0, visibleOnly = true
 }
 
 export function createFoundryEffects(chat) {
+  const audio = new ScriptAudioService(chat);
   const messages = chat?.createMessageService({ ownerId: "dmicher-master-screen", channel: "npc-speech" });
   const speechMetadata = (message) => message.getFlag?.("dmicher-master-screen", "scriptSpeech") ?? message.flags?.["dmicher-master-screen"]?.scriptSpeech;
   return {
+    start: () => audio.start(),
+    dispose: () => audio.dispose(),
+    stop: (scene, options) => audio.stop(scene, options),
     async speak(scene, speaker, phrase, options, key, enabled) {
       if (!messages) throw new Error(localizedMessage("Общий сервис чата Generics недоступен."));
       const ids = speechRecipients(scene, speaker, options);
@@ -40,21 +45,20 @@ export function createFoundryEffects(chat) {
           expiresAt: Number(options?.expiresAfter) > 0 ? Date.now() + options.expiresAfter * 1000 : null } } }
       }, { audience: { type: "users", userIds: ids }, delivery: "per-recipient", key, kind: "npc-speech", technical: false, enabled });
     },
-    async clearPreviousSpeech(scene, object) {
+    async clearPreviousSpeech(scene, object, enabled = () => true) {
       const objectKey = `${scene.id}:${object.documentName}:${object.id}`;
-      for (const message of messages?.find() ?? []) { const meta = speechMetadata(message); if (meta?.objectKey === objectKey && meta.removeOnNext) await messages.remove(message.id); }
+      for (const message of messages?.find() ?? []) {
+        if (!enabled()) break;
+        const meta = speechMetadata(message); if (meta?.objectKey === objectKey && meta.removeOnNext) await messages.remove(message.id);
+      }
     },
     async cleanupSpeech(now = Date.now()) {
       for (const message of messages?.find() ?? []) { const meta = speechMetadata(message); if (Number(meta?.expiresAt) > 0 && meta.expiresAt <= now) await messages.remove(message.id); }
     },
-    async removeSpeech(ids) {
-      for (const id of ids ?? []) if (messages?.get(id)) await messages.remove(id);
+    async removeSpeech(ids, enabled = () => true) {
+      for (const id of ids ?? []) { if (!enabled()) break; if (messages?.get(id)) await messages.remove(id); }
     },
-    async sound(src, volume = 1) {
-      const helper = globalThis.foundry?.audio?.AudioHelper ?? globalThis.AudioHelper;
-      if (!helper?.play) throw new Error(localizedMessage("Проигрывание звука Foundry недоступно."));
-      return helper.play({ src, volume, channel: "environment", loop: false }, true);
-    },
+    sound: (src, volume, options) => audio.sound(src, volume, options),
     async spawn(scene, spawn, runId, isCurrent) {
       const actor = await fromUuid(spawn.actorUuid);
       if (!actor || actor.documentName !== "Actor" || !actor.getTokenDocument) throw new Error(localizedMessage("Актор подкрепления не найден."));

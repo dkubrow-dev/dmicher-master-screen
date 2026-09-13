@@ -32,7 +32,7 @@ function write(method, category, event, context, error) {
     const at = new Date().toISOString();
     const failure = method === "error" || error !== undefined ? diagnosticError(error) : undefined;
     if (record) appendDiagnostic({ at, level: failure || method === "error" ? "error" : method, category, event, context: details, ...(failure ? { error: failure } : {}) });
-    if (verbose) globalThis.console?.[method === "signal" ? "debug" : method]?.(`${MODULE_ID} | [${category}] ${event}`, { at, ...details, ...(failure ? { error: failure } : {}) });
+    if (verbose) globalThis.console?.[["signal", "command"].includes(method) ? "debug" : method]?.(`${MODULE_ID} | [${category}] ${event}`, { at, ...details, ...(failure ? { error: failure } : {}) });
   } catch { /* Diagnostics cannot alter an action's result. */ }
 }
 
@@ -41,3 +41,5 @@ export function debugTrace(category, event, context = {}) { write("debug", categ
 export function debugError(category, event, error, context = {}) { write("error", category, event, context, error); }
 /** Operational signal delivery is visible to the GM even with Debug disabled. */
 export function signalTrace(event, context = {}, error) { write("signal", "signal", event, context, error); }
+/** Director commands are journal entries, never subscribable gameplay signals. */
+export function commandTrace(event, context = {}, error) { write(event === "failed" ? "error" : "command", "control", event, context, error); }

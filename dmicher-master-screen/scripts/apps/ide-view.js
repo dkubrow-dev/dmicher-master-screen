@@ -29,6 +29,22 @@ const colorStyle = (entry) => {
   return `background:${valid(entry.background, "#26303C")};color:${valid(entry.textColor, "#FFFFFF")}`;
 };
 
+export function renderSceneControls(showResumeAll) {
+  const hidden = (visible) => visible ? "" : "hidden";
+  const controls = button("haltScene", `■ ${t("Остановить всё", "Stop all")}`, `data-scene-control="stop" class="ms-ide-emergency" ${hidden(!showResumeAll)} title="${t("Остановить всю автоматизацию всех групп", "Stop all automation in all groups")}"`)
+    + button("resumeAll", `▶ ${t("Продолжить всё", "Resume all")}`, `data-scene-control="resume" ${hidden(showResumeAll)} title="${t("Заново запустить все группы в текущих состояниях", "Restart all groups in their current states")}"`)
+    + button("restoreAllInitial", `↶ ${t("Вернуть в исходное состояние", "Restore initial state")}`, `data-scene-control="restore" ${hidden(showResumeAll)} title="${t("Восстановить исходные скрипты объектов и выбрать начальные состояния групп; оставить автоматизацию остановленной", "Run object initial scripts and select group entry states; leave automation stopped")}"`);
+  return `<span class="ms-scene-commands" role="group" aria-label="${t("Управление автоматизацией сцены", "Scene automation controls")}">${controls}</span>`;
+}
+
+/** Update state visibility without replacing controls being clicked. */
+export function syncSceneControls(root, { sceneHalted, restoringInitial } = {}) {
+  const showResumeAll = sceneHalted && !restoringInitial;
+  for (const control of root?.querySelectorAll?.("[data-scene-control]") ?? []) {
+    control.hidden = control.dataset.sceneControl === "stop" ? showResumeAll : !showResumeAll;
+  }
+}
+
 export function renderSceneTree(definitions, runtimes, selection, mode) {
   const rows = [];
   for (const definition of definitions) {

@@ -44,16 +44,21 @@ function instanceFields(source) {
 }
 /** The saved annotation is checked without running code. The live factory is checked
  * again before execute so stale or dishonest declarations never bypass the contract. */
-export async function executeSignalMacro(macro, signal, parameters, context = {}) {
+export async function executeSignalMacro(macro, signal, parameters, context = {}, { isCurrent = () => true } = {}) {
   requireMacro(macro);
   const inspection = inspectSignalMacro(macro, signal);
   if (!inspection.valid) throw new Error(inspection.error);
+  if (!isCurrent()) return;
   const instance = await macro.execute({ signalContext: context });
+  // The factory can await I/O too. A cancelled delivery must never invoke the
+  // returned behavior, even if its original scene becomes current again.
+  if (!isCurrent()) return;
   if (!isRecord(instance) || typeof instance.execute !== "function") throw new Error(localizedMessage("Макрос должен вернуть объект с методом execute."));
   const contract = assertSignalInterface(signal, { parameters: instanceFields(instance.parameters), returns: instanceFields(instance.returns) });
   const values = validateSignalValues(signal.parameters, parameters);
   for (const field of contract.parameters) instance.parameters[field.name].value = structuredClone(values[field.name]);
   await instance.execute(context);
+  if (!isCurrent()) return;
   const output = Object.fromEntries(contract.returns.map((field) => [field.name, instance.returns[field.name]?.value]));
   // Extra declared return fields are allowed, but every declared value remains typed.
   validateSignalValues(contract.returns, output, { defaults: false });

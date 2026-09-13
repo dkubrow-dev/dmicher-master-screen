@@ -13,7 +13,11 @@ const signalEvents = () => ({
   completed: t("Сигнал обработан", "Signal completed"),
   rejected: t("Сигнал отклонён", "Signal rejected")
 });
-const levelName = (level) => ({ debug: t("Отладка", "Debug"), signal: t("Сигнал", "Signal"), error: t("Ошибка", "Error") })[level] ?? level;
+const commandEvents = () => ({ requested: t("Команда принята", "Command received"), completed: t("Команда выполнена", "Command completed"),
+  scheduled: t("Восстановление запущено", "Restoration scheduled"), cancelled: t("Команда отменена новой командой", "Command superseded"), failed: t("Ошибка команды", "Command failed") });
+const commandNames = () => ({ "start-all": t("Запустить всё", "Start all"), "resume-all": t("Продолжить всё", "Resume all"),
+  "stop-all": t("Остановить всё", "Stop all"), "restore-initial": t("Вернуть в исходное состояние", "Restore initial state") });
+const levelName = (level) => ({ debug: t("Отладка", "Debug"), signal: t("Сигнал", "Signal"), command: t("Команда", "Command"), error: t("Ошибка", "Error") })[level] ?? level;
 const resultNames = () => ({ stale: t("Исполнение устарело", "Execution became stale"), failed: t("Ошибка", "Failed"),
   removed: t("Подписка удалена", "Subscription removed"), "player-character": t("Персонаж игрока", "Player character"),
   disabled: t("Отключён", "Disabled"), halted: t("Остановлен", "Stopped"), blocked: t("Запуск заблокирован", "Execution blocked") });
@@ -26,14 +30,15 @@ const formatTime = (at) => {
 export function diagnosticSummary(entry) {
   const context = entry.context ?? {};
   const participants = [context.emitterName ?? context.emitterKey, context.subscriberName ?? context.subscriberKey].filter(Boolean).join(" → ");
-  return [context.signalName, participants, context.objectName ?? context.objectKey, context.scriptName,
+  return [commandNames()[context.command], context.initiatorName ?? context.initiatorId, entry.category === "control" ? context.sceneName ?? context.sceneId : null,
+    context.signalName, participants, context.objectName ?? context.objectKey, context.scriptName,
     context.stepId ? `${t("Шаг", "Step")} ${context.stepId}` : null,
     resultNames()[context.status] ?? resultNames()[context.reason], context.allowed === false ? t("Отказ", "Rejected") : null,
     entry.error?.message].filter(Boolean).join(" · ");
 }
 
 export function renderDiagnosticEntry(entry) {
-  const title = entry.category === "signal" ? signalEvents()[entry.event] ?? entry.event : entry.event;
+  const title = (entry.category === "signal" ? signalEvents() : entry.category === "control" ? commandEvents() : {})[entry.event] ?? entry.event;
   const details = { ...entry.context, ...(entry.error ? { error: entry.error } : {}) };
   return `<tr data-console-entry="${esc(entry.id)}" data-level="${esc(entry.level)}"><td class="ms-console-time"><time datetime="${esc(entry.at)}">${esc(formatTime(entry.at))}</time><small>${esc(levelName(entry.level))}</small></td><td><details><summary><span class="ms-console-event">${esc(title)}</span><code>${esc(entry.category)}.${esc(entry.event)}</code><span class="ms-console-summary">${esc(diagnosticSummary(entry))}</span></summary><pre>${esc(JSON.stringify(details, null, 2))}</pre></details></td></tr>`;
 }
@@ -95,8 +100,8 @@ export class DirectorConsole {
     if (!this.root) return;
     const includeDebug = this.isDebugEnabled();
     this.root.querySelector("[data-console-filter]").textContent = includeDebug
-      ? t("Сигналы, ошибки и отладка", "Signals, errors and debug")
-      : t("Сигналы и ошибки", "Signals and errors");
+      ? t("Команды, сигналы, ошибки и отладка", "Commands, signals, errors and debug")
+      : t("Команды, сигналы и ошибки", "Commands, signals and errors");
     const entries = this.read({ sceneId: this.sceneId, includeDebug });
     const follow = this.scroll.scrollHeight - this.scroll.clientHeight - this.scroll.scrollTop <= 24;
     const previousTop = this.scroll.scrollTop;

@@ -105,6 +105,28 @@ test("disabling chat hides dependent rows without discarding their JSON values",
   assert.equal(parameters.chat.timing, "before");
 });
 
+test("zero action durations are highlighted without flagging speed, offsets or signal payload values", () => {
+  for (const kind of ["wait", "move", "approach", "emotion", "speech"]) {
+    const key = kind === "wait" ? "seconds" : "duration";
+    const parameters = { [key]: 0 };
+    const zero = renderScriptParameters({ kind, parameters });
+    assert.equal((zero.match(/class="ms-script-zero-duration"/g) ?? []).length, 1, kind);
+    assert.ok(zero.includes("data-script-duration"));
+    assert.ok(!zero.includes("aria-invalid"));
+    parameters[key] = 0.25;
+    assert.ok(!renderScriptParameters({ kind, parameters }).includes('class="ms-script-zero-duration"'), kind);
+    if (["move", "approach"].includes(kind)) {
+      parameters[key] = 0; parameters.timeMode = "speed"; parameters.speed = 0;
+      assert.ok(!renderScriptParameters({ kind, parameters }).includes("data-script-duration"), kind);
+    }
+  }
+  for (const kind of ["signal", "macro", "follow", "sound"]) {
+    const html = renderScriptParameters({ kind, parameters: { before: 0, after: 0, speed: 0, volume: 0, parameters: { duration: 0 } } });
+    assert.ok(!html.includes("data-script-duration"), kind);
+    assert.ok(!html.includes('class="ms-script-zero-duration"'), kind);
+  }
+});
+
 test("emotion and speech expose localized execution modes directly before duration and keep JSON values", () => {
   const previous = globalThis.game;
   try {

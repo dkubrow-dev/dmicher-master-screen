@@ -22,7 +22,10 @@ test("groups and states have independent order, unique names, copy and move", as
 test("existing groups retain one valid entry state; an empty scene may have no groups", async () => {
   const f = sceneFixture(), before = clone(f.scene.flags), runtime = new GroupRuntime({ effects: {} });
   runtime.refresh(f.scene); await runtime.tick(); assert.deepEqual(f.scene.flags, before);
-  await runtime.haltAll(f.scene); assert.deepEqual(f.scene.flags, { [MODULE_ID]: { automationHalted: true } });
+  await runtime.haltAll(f.scene); assert.equal(f.scene.flags[MODULE_ID].automationHalted, true);
+  const firstHalt = f.scene.flags[MODULE_ID].automationHaltId; assert.ok(firstHalt);
+  await runtime.haltAll(f.scene); assert.notEqual(f.scene.flags[MODULE_ID].automationHaltId, firstHalt);
+  assert.deepEqual(Object.keys(f.scene.flags[MODULE_ID]).sort(), ["automationHaltId", "automationHalted"]);
   assert.deepEqual(getRuntimes(f.scene), []); assert.ok(getSignalCatalog(f.scene).signals.every((entry) => entry.builtin));
   const group = await f.editor.createGroup({ name: "Explicit" }), other = await f.editor.createGroup({ name: "Other" });
   assert.equal(group.states.length, 1); assert.equal(getRuntime(f.scene, { groupId: group.groupId }).runId, "");

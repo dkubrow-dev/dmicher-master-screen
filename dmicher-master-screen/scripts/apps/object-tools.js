@@ -1,12 +1,13 @@
 import { text as t } from "../localization.js";
 import { ScreenFormApplication } from "./screen-form.js";
+import { scenePreparationKey } from "./scene-refresh.js";
 import { themedClasses, notifyError } from "../ui.js";
 import { currentScene, getDefinitions, getObjectTags } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
 import { registeredToolIds, toolRegistration } from "../object-binding-model.js";
 import { getInteractionCatalog } from "../scene-assets.js";
-import { SignalCatalog, getSignalCatalog, listSignalEmitters } from "../signal-catalog.js";
-import { MODULE_ID, normalizeConditions } from "../model.js";
+import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
+import { normalizeConditions } from "../model.js";
 import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
 import { buildScriptFields, readScriptFields, bindScriptSorting } from "./script-fields.js";
 import { appendScriptStep, removeScriptStep } from "../script-editing.js";
@@ -52,14 +53,7 @@ class ObjectForm extends ScreenFormApplication {
     return { scene, document, definitions, definition, catalog: getInteractionCatalog(scene) };
   }
   sceneRefreshKey(scene) {
-    const document = getSceneObject(scene, this.descriptor);
-    // Authoring forms depend on preparation and reference labels, not execution
-    // clocks, dialogue sessions or each movement tick. Explicit refresh stays available.
-    return JSON.stringify([scene?.id, scene?.name, game.i18n?.lang,
-      ...["objectBindings", "groupDefinitions", "interactionCatalog", "signalCatalog"].map(key => scene?.getFlag(MODULE_ID, key)),
-      document && [document.id, document.uuid, document.name, document.label, document.actor?.uuid],
-      listSignalEmitters(scene).map(emitter => [emitter.key, emitter.name]),
-      Array.from(game.macros?.values?.() ?? [], macro => [macro.id, macro.name, macro.command, macro.type, macro.canExecute])]);
+    return scenePreparationKey(scene);
   }
   refreshFromScene(scene) {
     if (scene?.id !== this.sceneId || this.persistTask) return;

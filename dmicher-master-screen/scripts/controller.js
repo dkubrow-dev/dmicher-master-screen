@@ -29,6 +29,7 @@ import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
 import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
 import { StateChooserApplication } from "./apps/state-chooser.js";
 import { isSceneAutomationHalted } from "./execution.js";
+import { runDirectorCommand } from "./director-commands.js";
 
 export class ScreenController {
   constructor() {
@@ -179,9 +180,12 @@ export class ScreenController {
   async changeStates(changes) {
     requireGM(); return this.runtime.changeStates(currentScene(), changes);
   }
-  startAll() { return this.runtime.startAll(currentScene()); }
-  haltAll() { return this.runtime.haltAll(currentScene()); }
-  restoreAllInitial() { return this.runtime.restoreAllInitial(currentScene()); }
+  startAll() {
+    const scene = currentScene();
+    return runDirectorCommand(isSceneAutomationHalted(scene) ? "resume-all" : "start-all", scene, () => this.runtime.startAll(scene));
+  }
+  haltAll() { const scene = currentScene(); return runDirectorCommand("stop-all", scene, () => this.runtime.haltAll(scene)); }
+  restoreAllInitial() { const scene = currentScene(); return runDirectorCommand("restore-initial", scene, () => this.runtime.restoreAllInitial(scene)); }
   isAutomationHalted() { return isSceneAutomationHalted(currentScene()); }
   isRestoringInitial() { return this.runtime.isRestoringInitial(currentScene()); }
   restoreObjectInitial(descriptor) { return this.runtime.restoreInitial(currentScene(), descriptor); }
@@ -234,7 +238,7 @@ export class ScreenController {
   }
   resetConditions(conditionKey) { return this.runtime.resetConditions(currentScene(), { conditionKey, groupId: this.getContext().groupId }); }
   setConditionEnabled(conditionKey, enabled) { return this.runtime.setConditionEnabled(currentScene(), conditionKey, enabled); }
-  haltScene() { return this.runtime.haltAll(currentScene()); }
+  haltScene() { return this.haltAll(); }
   haltGroup(groupId = this.getContext().groupId) { return this.runtime.halt(currentScene(), { groupId }); }
   resumeGroup(stateId, groupId = this.getContext().groupId) { return this.runtime.enter(currentScene(), stateId, { force: true, groupId }); }
   emitSignal(emitterKey, name, parameters = {}) {

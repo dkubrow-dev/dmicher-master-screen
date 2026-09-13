@@ -69,12 +69,11 @@ try {
     assert.ok(Math.abs(await page.evaluate(() => document.querySelector('[data-console-scroll]').scrollTop - readingTop)) <= 1);
     assert.equal(await page.evaluate(() => ideRenders), 0);
     assert.equal(await page.evaluate(() => JSON.stringify(scene.flags) === originalFlags), true);
-    // Real signal delivery also requests a controller refresh. That unrelated
-    // full render must retain the same reading anchor and expanded details.
+    // A signal notification must update the journal without replacing the IDE.
     const readingId = await page.evaluate(() => readingRow.dataset.consoleEntry);
     await page.evaluate(async () => { logs.signalTrace('completed', { sceneId: scene.id, signalName: 'refresh-check' }); controller.changed(scene); await controller.editor.refreshTask; await controller.editor.renderPromise; });
     await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 126);
-    assert.ok(await page.evaluate(() => ideRenders > 0), 'the real controller notification triggered a full render');
+    assert.equal(await page.evaluate(() => ideRenders), 0, 'signal notification leaves IDE controls mounted');
     assert.equal(await app.locator(`[data-console-entry="${readingId}"] details`).evaluate(element => element.open), true);
     assert.ok(Math.abs(await page.evaluate(() => document.querySelector('[data-console-scroll]').scrollTop - readingTop)) <= 1);
     assert.ok(Math.abs(await page.evaluate(() => document.querySelector('.ms-console-table thead').getBoundingClientRect().top - document.querySelector('[data-console-scroll]').getBoundingClientRect().top)) <= 1, 'column headers remain visible while scrolling');

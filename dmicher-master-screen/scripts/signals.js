@@ -4,7 +4,7 @@ import { getRuntime, getRuntimeForRun, requireGM, isAuthority } from "./store.js
 import { getSignalCatalog } from "./signal-catalog.js";
 import { validateSignalValues } from "./signal-types.js";
 import { executeSignalMacro, reportMacroError } from "./signal-macros.js";
-import { isExecutionHalted, executionGeneration, onExecutionChange, isSceneAutomationHalted, sceneExecutionGeneration } from "./execution.js";
+import { isExecutionHalted, executionGeneration, createExecutionScope, isSceneAutomationHalted, sceneExecutionGeneration } from "./execution.js";
 import { signalTrace } from "./debug.js";
 
 // Diagnostics keep document identity and returned values, never live Foundry documents.
@@ -90,17 +90,9 @@ export class SceneSignals {
     return receipt.promise;
   }
   async awaitCurrent(scene, current, operation) {
-    let cancel;
-    const cancelled = new Promise((resolve) => { cancel = () => resolve({ stale: true }); });
-    const check = (reason) => { if (reason === "canvas-teardown" || !current()) cancel(); };
-    const dispose = onExecutionChange(scene, check); this.cancelled.add(cancel);
-    try {
-      check();
-      const task = Promise.resolve().then(async () => current() ? { value: await operation() } : { stale: true }).catch((error) => ({ error }));
-      const outcome = await Promise.race([cancelled, task]);
-      if (outcome.error) throw outcome.error;
-      return outcome;
-    } finally { dispose(); this.cancelled.delete(cancel); }
+    const scope = createExecutionScope(scene, { isCurrent: current }); this.cancelled.add(scope.cancel);
+    try { return await scope.run(() => operation(scope.current)); }
+    finally { scope.dispose(); this.cancelled.delete(scope.cancel); }
   }
   async deliver(scene, delivery) {
     const { id, emitter, signal, parameters, context, allowStopped } = delivery;
@@ -147,21 +139,24 @@ export class SceneSignals {
       result.results.push(entry);
       trace("subscriber.accepted");
       try {
-        const macro = await this.resolveMacro(subscription.macroUuid);
-        const scope = {
-          scene, emitter: structuredClone(emitter), subscriber: structuredClone(owner), signal: structuredClone(signal),
-          transition: (groupId, stateId) => {
-            if (!current()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
-            const active = getRuntime(scene, { groupId });
-            return this.runtime.enter(scene, stateId, { groupId, expectedRunId: active.runId, signalContext: { ...context, depth: context.depth + 1 } });
-          },
-          halt: (groupId = owner.groupId) => { if (!current()) throw new Error(localizedMessage("Подписка остановлена.")); return groupId ? this.runtime.halt(scene, { groupId }) : this.runtime.haltAll(scene); },
-          emit: (name, values = {}) => {
-            if (!current()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
-            return this.emit(scene, { emitterKey: owner.key, name, parameters: values, context: { ...context, current, depth: context.depth + 1 } });
-          }
-        };
-        const outcome = await this.awaitCurrent(scene, current, () => executeSignalMacro(macro, signal, parameters, scope));
+        const outcome = await this.awaitCurrent(scene, current, async isCurrent => {
+          const macro = await this.resolveMacro(subscription.macroUuid);
+          if (!isCurrent()) return;
+          const scope = {
+            scene, emitter: structuredClone(emitter), subscriber: structuredClone(owner), signal: structuredClone(signal),
+            transition: (groupId, stateId) => {
+              if (!isCurrent()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
+              const active = getRuntime(scene, { groupId });
+              return this.runtime.enter(scene, stateId, { groupId, expectedRunId: active.runId, signalContext: { ...context, current: isCurrent, depth: context.depth + 1 } });
+            },
+            halt: (groupId = owner.groupId) => { if (!isCurrent()) throw new Error(localizedMessage("Подписка остановлена.")); return groupId ? this.runtime.halt(scene, { groupId }) : this.runtime.haltAll(scene); },
+            emit: (name, values = {}) => {
+              if (!isCurrent()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
+              return this.emit(scene, { emitterKey: owner.key, name, parameters: values, context: { ...context, current: isCurrent, depth: context.depth + 1 } });
+            }
+          };
+          return executeSignalMacro(macro, signal, parameters, scope, { isCurrent });
+        });
         if (outcome.stale) {
           entry.status = "stale"; result.status = "stale"; result.allowed = false;
           trace("subscriber.stale"); break;

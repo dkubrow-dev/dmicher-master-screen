@@ -1,13 +1,14 @@
 import { text as t } from "../localization.js";
-import { EditorApplication } from "./editor.js";
+import { EditorApplication, SCENE_COMMANDS } from "./editor.js";
+import { scenePreparationKey } from "./scene-refresh.js";
 import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
-import { renderSceneTree, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
+import { renderSceneTree, renderSceneControls, syncSceneControls, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
 import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
 import { GroupEditor } from "../group-editor.js";
 import { SignalCatalog } from "../signal-catalog.js";
 import { getDefinitions, getRuntimes } from "../store.js";
-import { randomId, localizedDescription } from "../model.js";
+import { MODULE_ID, randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
 import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
@@ -102,6 +103,32 @@ export class MasterScreenApplication extends EditorApplication {
     return super.refresh();
   }
 
+  sceneRefreshKey(scene, context = this.controller.getContext()) {
+    const runtime = context.runtime;
+    const other = this.mode === "director" && this.layout.preferences.mainTab === "other"
+      && this.layout.preferences.detailTab === "parameters" ? this.otherBlock : null;
+    const visibleRuntime = [context.sceneHalted, context.restoringInitial,
+      Object.entries(scene?.getFlag(MODULE_ID, "groupRuntimes") ?? {})
+        .map(([groupId, { stateId, halted }]) => [groupId, stateId, halted])];
+    if (other === "automation") visibleRuntime.push(runtime?.disabledObjects);
+    if (other === "counts") visibleRuntime.push(runtime?.conditionCounts, runtime?.conditionEnabledOverrides);
+    if (other === "journal") visibleRuntime.push(context.signalLog);
+    return JSON.stringify([scenePreparationKey(scene), visibleRuntime]);
+  }
+
+  refreshFromScene(scene) {
+    const context = this.controller.getContext();
+    syncSceneControls(this.element, context);
+    const key = this.sceneRefreshKey(scene, context);
+    if (key === this.preparedRefreshKey || key === this.requestedRefreshKey) return;
+    this.requestedRefreshKey = key;
+    const task = this.refresh();
+    if (!task) { this.requestedRefreshKey = null; return; }
+    return Promise.resolve(task).finally(() => {
+      if (this.requestedRefreshKey === key) this.requestedRefreshKey = null;
+    });
+  }
+
   captureRefreshDraft() {
     if (!this.dirty) {
       this.refreshDraftSnapshot = { sceneId: this.selectionSceneId, selectionKey: JSON.stringify(this.selection),
@@ -182,6 +209,7 @@ export class MasterScreenApplication extends EditorApplication {
   async _prepareContext(options) {
     this.directorConsole.captureViewState();
     let current = this.controller.getContext();
+    this.preparedRefreshKey = this.sceneRefreshKey(current.scene, current);
     if (this.selectionSceneId && this.selectionSceneId !== current.scene?.id) {
       this.storeTabState();
       this.restoreTabState(this.layout.preferences.mainTab, current.scene?.id);
@@ -194,6 +222,7 @@ export class MasterScreenApplication extends EditorApplication {
     const { preferences } = this.layout;
     const presentation = {
       debugEnabled: debugEnabled(),
+      sceneControlsHTML: renderSceneControls(base.showResumeAll),
       isRight: this.dock.preferences.side === "right", isBottom: this.dock.preferences.side === "bottom",
       presentationIcon: this.layout.presentation === "panel" ? "fa-up-right-from-square" : "fa-table-columns",
       presentationTitle: this.layout.presentation === "panel" ? t("Открыть ширму в отдельном окне", "Open screen in a separate window") : t("Вернуть ширму в панель", "Return screen to panel")
@@ -277,6 +306,7 @@ export class MasterScreenApplication extends EditorApplication {
     await super._onRender(context, options);
     this.refreshDraftSnapshot = null;
     this.layout.bind();
+    syncSceneControls(this.element, this.controller.getContext());
     this.directorConsole.attach(this.mode === "director" ? this.element.querySelector("[data-director-console]") : null, this.selectionSceneId);
     this.controller.refreshConstructorFrame?.();
     updateSceneNavigationBadges(this.controller);
@@ -529,6 +559,8 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async handleAction(action, button, event) {
+    // Dispatch controls synchronously, before asynchronous editor/selection work.
+    if (Object.hasOwn(SCENE_COMMANDS, action)) return super.handleAction(action, button, event);
     if (action === "previewAsset") {
       this.parameterDraft = this.readParameterDraft();
       return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`) });

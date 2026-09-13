@@ -4,6 +4,7 @@ import { themedClasses } from "../ui.js";
 import { validateDialogueAccess } from "../dialogues.js";
 import { objectReferenceKey } from "../object-reference.js";
 import { dialogueSessionIsPresent } from "../interaction-session-model.js";
+import { isExecutionHalted } from "../execution.js";
 import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -82,7 +83,12 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   async _onRender(context, options) {
     await super._onRender(context, options);
     restoreDialogueScroll(this);
-    renderDialogueAudio(this, context.messages);
+    const scene = game.scenes?.get(this.sceneId);
+    renderDialogueAudio(this, context.messages, { scene, isCurrent: () => {
+      if (this.error || this.unavailable || this.view?.status === "interrupted") return false;
+      const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: this.view?.sessionId });
+      return current.runtime?.runId === this.runId && !isExecutionHalted(current.scene, current.runtime);
+    } });
     if (this.view?.status !== "active" || this.error || this.unavailable) { clearInterval(this.leaseTimer); this.leaseTimer = null; return; }
     this.leaseTimer ??= setInterval(() => {
       if (!this.rendered || this.closing || this.view?.status !== "active") return;

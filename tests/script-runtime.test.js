@@ -11,7 +11,7 @@ const clone = structuredClone;
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
 const script = (steps, extra = {}) => ({ name: "Script", enabled: true, repeat: false, steps, ...extra });
 function merge(a, b) { if (!b || typeof b !== "object" || Array.isArray(b)) return clone(b); const result = a && typeof a === "object" ? clone(a) : {}; for (const [key, value] of Object.entries(b)) { if (key.startsWith("-=")) delete result[key.slice(2)]; else result[key] = merge(result[key], value); } return result; }
-async function fixture({ routine, transition, initial, emitSignal, effects: suppliedEffects, combat } = {}) {
+async function fixture({ routine, transition, initial, emitSignal, effects: suppliedEffects, combat, onChange } = {}) {
   let serial = 0, now = 1000;
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   globalThis.game = { user: gm, users: new Map([[gm.id, gm]]), scenes: new Map(), combats: new Map(), modules: new Map(), paused: false };
@@ -25,7 +25,7 @@ async function fixture({ routine, transition, initial, emitSignal, effects: supp
   const make = (id, type) => ({ id, documentName: type, uuid: `Scene.scene.${type}.${id}`, name: id, parent: scene, x: 0, y: 0, width: type === "Token" ? 1 : 100, height: type === "Token" ? 1 : 100, rotation: 0, hidden: false, object: { checkCollision: () => false }, async update(changes) { Object.assign(this, changes); } });
   const npc = make("npc", "Token"), tile = make("tile", "Tile"); scene.tokens.set(npc.id, npc); scene.tiles.set(tile.id, tile); game.scenes.set(scene.id, scene); globalThis.canvas = { scene };
   const calls = [], effects = { cleanupSpeech: async () => {}, sound: async (...args) => calls.push(["sound", ...args]), spawn: async () => [], ...suppliedEffects };
-  const runtime = new GroupRuntime({ effects, emitSignal: emitSignal ?? (async (_scene, signal) => { calls.push(["signal", signal]); return { allowed: true }; }), now: () => now, combat });
+  const runtime = new GroupRuntime({ effects, emitSignal: emitSignal ?? (async (_scene, signal) => { calls.push(["signal", signal]); return { allowed: true }; }), now: () => now, combat, onChange });
   const progress = (slot = "routine", target = { type: "Token", id: "npc" }) => Object.entries(getRuntime(scene).scriptStates).find(([key]) => key.startsWith(`${target.type}:${target.id}:${slot}:`))?.[1];
   return { scene, flags, npc, tile, runtime, calls, progress, now: () => now, async tick(ms = 500) { now += ms; await runtime.tick(); } };
 }
@@ -34,6 +34,133 @@ function recordScriptWrites(runtime) {
   runtime.saveScriptState = async (scene, state) => { writes.push(clone(state)); return save(scene, state); };
   return writes;
 }
+async function settlesWithoutRelease(operation) {
+  let timer;
+  try { return await Promise.race([operation, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Cancellation waited for the old operation")), 1000); })]); }
+  finally { clearTimeout(timer); }
+}
+test("stop releases the scene queue while a native movement update is still unresolved", async () => {
+  const f = await fixture({ routine: script([step(1, "move", { duration: 7, position: { x: 100, y: 0 } }, [2]), step(2, "visibility", { visible: false })]) });
+  f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+  await f.runtime.enter(f.scene, "calm");
+  let begin, release; const began = new Promise(resolve => { begin = resolve; });
+  const nativeUpdate = f.npc.update.bind(f.npc);
+  f.npc.update = async changes => { begin(); await new Promise(resolve => { release = resolve; }); await nativeUpdate(changes); };
+  const ticking = f.tick(); await began;
+  const stop = f.runtime.haltAll(f.scene);
+  try {
+    assert.equal(f.runtime.owns(f.scene, getRuntime(f.scene).runId), false);
+    await settlesWithoutRelease(Promise.all([stop, ticking]));
+    assert.equal(getRuntime(f.scene).halted, true); assert.equal(f.npc.hidden, false);
+    const stoppedState = getRuntime(f.scene);
+    release(); await new Promise(resolve => setImmediate(resolve)); await f.tick();
+    assert.deepEqual(getRuntime(f.scene), stoppedState); assert.equal(f.npc.hidden, false);
+  } finally { release(); }
+});
+test("stop clears timed emotion and speech immediately without consuming their remaining waits", async () => {
+  for (const kind of ["wait", "emotion", "speech"]) {
+    const parameters = kind === "wait" ? { seconds: 15 } : kind === "emotion" ? { emoji: "?", duration: 15, executionMode: "wait" }
+      : { duration: 15, executionMode: "wait", chat: { enabled: false }, bubble: { enabled: true, text: "Waiting" } };
+    const f = await fixture({ routine: script([step(1, kind, parameters, [2]), step(2, "visibility", { visible: false })]) });
+    const displayed = new Map(); f.runtime.visuals = { update: (object, value) => displayed.set(object.id, value) };
+    await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+    await settlesWithoutRelease(f.runtime.haltAll(f.scene));
+    assert.equal(getRuntime(f.scene).halted, true); assert.equal(displayed.get("npc").emoji, ""); assert.equal(displayed.get("npc").bubble, null);
+    for (let i = 0; i < 35; i++) await f.tick();
+    assert.equal(f.npc.hidden, false); assert.equal(f.tile.hidden, false);
+  }
+});
+test("stopping an individual group cancels its explicit initial script", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 10 }, [2]), step(2, "visibility", { visible: false })]) });
+  await f.runtime.enter(f.scene, "calm");
+  const runId = await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" }); await f.tick();
+  await f.runtime.halt(f.scene);
+  assert.equal(f.runtime.owns(f.scene, runId), false); assert.equal(f.runtime.manualRuns.has(runId), false);
+  for (let i = 0; i < 30; i++) await f.tick();
+  assert.equal(f.npc.hidden, false);
+});
+test("manual cancellation during presentation persistence cannot read or restore a vanished run", async () => {
+  for (const idle of [false, true]) {
+    const f = await fixture({ initial: script(idle ? [] : [step(1, "wait", { seconds: 10 })]) });
+    await f.runtime.restoreAllInitial(f.scene);
+    let begin, release; const began = new Promise(resolve => { begin = resolve; });
+    const tickEffects = f.runtime.scripts.tickEffects.bind(f.runtime.scripts);
+    f.runtime.scripts.tickEffects = async (...args) => {
+      if (Boolean(args[4]?.idle) === idle) { begin(); await new Promise(resolve => { release = resolve; }); }
+      return tickEffects(...args);
+    };
+    const ticking = f.tick(); await began;
+    const stopping = f.runtime.haltAll(f.scene); release();
+    await settlesWithoutRelease(Promise.all([stopping, ticking]));
+    assert.equal(f.runtime.manualRuns.size, 0); assert.equal(f.runtime.manualVisuals.size, 0); assert.equal(f.runtime.busy, false);
+    assert.equal(getRuntime(f.scene).halted, true);
+  }
+});
+test("a start pressed before stop persistence finishes reads the committed stopped state", async () => {
+  const f = await fixture(); await f.runtime.enter(f.scene, "calm");
+  let begin, release; const began = new Promise(resolve => { begin = resolve; });
+  const setFlag = f.scene.setFlag.bind(f.scene);
+  f.scene.setFlag = async (...args) => {
+    if (args[1] === "automationHalted" && args[2] === true) { begin(); await new Promise(resolve => { release = resolve; }); }
+    return setFlag(...args);
+  };
+  const stopping = f.runtime.haltAll(f.scene); await began;
+  const starting = f.runtime.startAll(f.scene); release();
+  const [, result] = await Promise.all([stopping, starting]);
+  assert.equal(result.length, 1); assert.equal(result[0].error, ""); assert.equal(getRuntime(f.scene).halted, false);
+});
+test("a delayed expired-chat cleanup neither blocks the clock nor accumulates jobs", async () => {
+  let release, cleanups = 0;
+  const f = await fixture({ routine: script([step(1, "wait", { seconds: 3 })]), effects: {
+    cleanupSpeech: () => { cleanups++; return new Promise(resolve => { release = resolve; }); }
+  } });
+  try {
+    await f.runtime.enter(f.scene, "calm"); await settlesWithoutRelease(f.tick());
+    assert.equal(f.progress().action.remainingMs, 2500);
+    await f.runtime.haltAll(f.scene); await f.runtime.startAll(f.scene);
+    await settlesWithoutRelease(f.tick()); await settlesWithoutRelease(f.tick());
+    assert.equal(f.progress().action.remainingMs, 2000); assert.equal(cleanups, 1); assert.equal(f.runtime.busy, false);
+  } finally { release(); await f.runtime.cleanupTask; }
+});
+test("a replacement Start cannot leave the old batch restarting later groups", async () => {
+  const f = await fixture(); addGroup(f, "east");
+  let begin, release, first = true;
+  const began = new Promise(resolve => { begin = resolve; });
+  f.runtime.onWorkspace = async () => {
+    if (first) { first = false; begin(); await new Promise(resolve => { release = resolve; }); }
+  };
+  const older = f.runtime.startAll(f.scene); await began;
+  const current = f.runtime.startAll(f.scene);
+  try {
+    await settlesWithoutRelease(Promise.all([older, current]));
+    const starts = f.calls.filter(([type, signal]) => type === "signal" && signal.name === "started");
+    assert.equal(starts.filter(([, signal]) => signal.emitterKey === "Group:east").length, 1);
+    const east = getRuntime(f.scene, { groupId: "east" }); release(); await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(getRuntime(f.scene, { groupId: "east" }), east);
+  } finally { release(); }
+});
+test("a failed presentation adapter cannot veto persisting an emergency stop", async t => {
+  let fail = false;
+  const f = await fixture({ onChange: () => { if (fail) throw new Error("Render failed"); } }); await f.runtime.enter(f.scene, "calm"); fail = true;
+  t.mock.method(console, "error", () => {});
+  f.runtime.visuals = { update() { throw new Error("Visual render failed"); } };
+  f.runtime.effects.stop = () => { throw new Error("Audio cleanup failed"); };
+  await f.runtime.haltAll(f.scene);
+  assert.equal(getRuntime(f.scene).halted, true); assert.equal(f.flags.automationHalted, true); assert.ok(f.flags.automationHaltId);
+});
+test("a late dialogue batch cannot become current again after canvas teardown", async () => {
+  const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: ["Scene.scene.Token.npc"] }, [2]), step(2, "visibility", { visible: false })]) });
+  f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+  let begin, release, lateAdmission;
+  const began = new Promise(resolve => { begin = resolve; });
+  f.runtime.startScriptDialogues = async (_input, { isCurrent }) => {
+    begin(); await new Promise(resolve => { release = resolve; }); lateAdmission = isCurrent(); return [];
+  };
+  await f.runtime.enter(f.scene, "calm"); const ticking = f.tick(); await began;
+  notifyExecutionChange(f.scene, "canvas-teardown"); await settlesWithoutRelease(ticking);
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lateAdmission, false); assert.equal(f.npc.hidden, false); assert.equal(f.runtime.scripts.jobs.size, 0);
+});
 test("group transition scripts finish before routines and never replay on refresh", async () => {
   const f = await fixture({ transition: script([step(1, "move", { duration: 0, position: { x: 100, y: 0 } })]), routine: script([step(1, "wait", { seconds: 2 })]) });
   await f.runtime.enter(f.scene, "calm"); await f.tick(); assert.equal(f.npc.x, 100); assert.equal(f.progress("transition").status, "done"); assert.equal(f.progress(), undefined);

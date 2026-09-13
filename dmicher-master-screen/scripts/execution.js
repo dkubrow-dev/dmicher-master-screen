@@ -1,5 +1,6 @@
 import { getRuntime } from "./store.js";
 import { MODULE_ID } from "./model.js";
+import { debugError } from "./debug.js";
 
 // One local cancellation barrier shared by scene effects, triggers and event subscriptions.
 // The persisted halted state remains authoritative after reconnect; the barrier closes
@@ -15,7 +16,42 @@ export function onExecutionChange(scene, listener) {
 }
 export function notifyExecutionChange(scene, reason = "change") {
   if (!scene) return;
-  for (const listener of [...(listeners.get(scene) ?? [])]) listener(reason);
+  for (const listener of [...(listeners.get(scene) ?? [])]) {
+    try { listener(reason); }
+    catch (error) { debugError("runtime", "cancellation.listener.failed", error, { sceneId: scene.id, reason }); }
+  }
+}
+
+/** A local execution lease, never a document transaction. Cancellation releases
+ * the caller immediately; a late external result cannot revive this lease.
+ * Already submitted Foundry writes still settle in their own storage queue. */
+export function createExecutionScope(scene, { isCurrent } = {}) {
+  const controller = new AbortController();
+  let resolveCancelled;
+  const cancelled = new Promise(resolve => { resolveCancelled = resolve; });
+  const cancel = () => {
+    if (controller.signal.aborted) return;
+    controller.abort(); resolveCancelled({ stale: true });
+  };
+  const current = () => {
+    if (!controller.signal.aborted && isCurrent && !isCurrent()) cancel();
+    return !controller.signal.aborted;
+  };
+  const dispose = onExecutionChange(scene, reason => {
+    if (["canvas-teardown", "runtime-disposed"].includes(reason)) cancel(); else current();
+  });
+  return {
+    signal: controller.signal, current, cancel, dispose,
+    async run(operation) {
+      if (!current()) return { stale: true };
+      const task = Promise.resolve().then(async () => {
+        if (!current()) return { stale: true };
+        const value = await operation();
+        return current() ? { value } : { stale: true };
+      });
+      return Promise.race([cancelled, task]);
+    }
+  };
 }
 export const executionGeneration = (scene, groupId = "main") => requests.get(scene)?.get(groupId)?.generation ?? 0;
 export function requestHalt(scene, groupId = "main") {

@@ -2,6 +2,8 @@ import { message as localizedMessage } from "./localization.js";
 import { sceneObjectBounds, sceneObjectCenter, translateRegionShapes } from "./scene-object-geometry.js";
 
 const objectType = (object) => object?.documentName ?? object?.constructor?.documentName;
+/** Stop only Foundry's supported native animation; never rewrite saved positions. */
+export function stopObjectAnimation(object) { object?.object?.stopAnimation?.(); }
 const regionShapeCanMove = (shape) => shape.base ? regionShapeCanMove(shape.base) : Array.isArray(shape.points) || Number.isFinite(shape.x) && Number.isFinite(shape.y);
 /** Native document dimensions: Token uses grid spaces; Tile and Drawing use pixels.
  * Foundry 14 adds Token.depth. Elevation is a position, never a size substitute. */
@@ -59,7 +61,7 @@ export function planScriptMovement(scene, object, parameters) {
 
 /** Rebase each portion on the current document. A GM may move/rotate between turns;
  * the final destination and the remaining planned time stay unchanged. */
-export async function advanceScriptMovement(scene, object, movement, seconds, { isCurrent = () => true, ignoreObstacles = false } = {}) {
+export async function advanceScriptMovement(scene, object, movement, seconds, { isCurrent = () => true, ignoreObstacles = false, signal } = {}) {
   if (!isCurrent()) return { consumed: 0, done: false };
   const spent = Math.min(Math.max(0, seconds * 1000), movement.remainingMs);
   const ratio = movement.remainingMs > 0 ? spent / movement.remainingMs : 1;
@@ -107,7 +109,19 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
     return !Array.isArray(current) || !Array.isArray(value) || current.length !== value.length
       || value.some((entry, index) => !Object.is(entry, current[index]));
   });
-  if (changed) await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
+  const stopAnimation = () => stopObjectAnimation(object);
+  if (changed) {
+    if (signal?.aborted || !isCurrent()) return { consumed: 0, done: false };
+    signal?.addEventListener("abort", stopAnimation, { once: true });
+    try {
+      await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
+      // The update may start a native interpolation after an earlier abort.
+      if (signal?.aborted || !isCurrent()) stopAnimation();
+    } finally { signal?.removeEventListener("abort", stopAnimation); }
+  }
+  // A submitted Foundry document write cannot be recalled. Its completion must
+  // not count as progress in a run which was stopped while the write awaited I/O.
+  if (signal?.aborted || !isCurrent()) return { consumed: 0, done: false };
   movement.remainingMs = Math.max(0, movement.remainingMs - spent);
   return { consumed: spent / 1000, done: movement.remainingMs === 0 };
 }

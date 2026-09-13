@@ -156,10 +156,6 @@ test("chat audience is deduplicated by player, checks tags and zero range is unl
   const scene = { grid: { size: 100, distance: 5 }, tokens: [npc, observer], getFlag: () => ({ bindings: { "Token:pc": { tags: ["hero"] } } }) };
   assert.deepEqual(speechRecipients(scene, npc, { range: 0, allowTags: ["hero"] }), ["p"]); assert.deepEqual(speechRecipients(scene, npc, { range: 30 }), []); assert.deepEqual(speechRecipients(scene, npc, { denyTags: ["hero"] }), []);
 });
-test("sound uses each client's environment audio channel", async () => {
-  let call; globalThis.foundry = { audio: { AudioHelper: { play: (...args) => { call = args; } } } };
-  await createFoundryEffects().sound("ambient.ogg", 0.5); assert.deepEqual(call, [{ src: "ambient.ogg", volume: 0.5, channel: "environment", loop: false }, true]);
-});
 test("unknown external outcome cannot be replayed by a replacement executor", async () => {
   const f = fixture({ steps: [step(1, "sound", { src: "alarm.ogg" })] });
   const pending = await f.executor.tick(f.scene, f.state(), f.object, f.script, 0.5); assert.ok(pending);

@@ -56,7 +56,7 @@ function fields(parameters, context) {
   const attrs = (path, type = "text", extra = "") => `data-script-param="${e(JSON.stringify(path))}" data-param-type="${type}" ${extra}`;
   const value = (path) => path.reduce((parent, key) => parent?.[key], parameters);
   const table = (rows) => `<table class="ms-parameter-table ms-script-parameter-table"><tbody>${rows}</tbody></table>`;
-  const input = (path, label, { type = "text", step = "any", min, unit = "", disabled = false, nullable = false } = {}) => row(label, `<span class="ms-script-value"><input ${attrs(path, type, nullable ? 'data-param-nullable="true"' : "")} aria-label="${e(label)}" type="${type === "number" ? "number" : "text"}" value="${e(value(path))}"${type === "number" ? ` step="${step}"${min === undefined ? "" : ` min="${min}"`}` : ""}${disabled ? " disabled" : ""}>${unit ? `<span class="ms-script-unit">${e(unit)}</span>` : ""}</span>`);
+  const input = (path, label, { type = "text", step = "any", min, unit = "", disabled = false, nullable = false, duration = false } = {}) => row(label, `<span class="ms-script-value"><input ${attrs(path, type, nullable ? 'data-param-nullable="true"' : "")}${duration ? " data-script-duration" : ""} aria-label="${e(label)}" type="${type === "number" ? "number" : "text"}" value="${e(value(path))}"${type === "number" ? ` step="${step}"${min === undefined ? "" : ` min="${min}"`}` : ""}${disabled ? " disabled" : ""}>${unit ? `<span class="ms-script-unit">${e(unit)}</span>` : ""}</span>`, duration && value(path) === 0 ? "ms-script-zero-duration" : "");
   const num = (path, label, options = {}) => input(path, label, { type: "number", ...options, ...(options.step === "1" && typeof value(path) === "number" && !Number.isInteger(value(path)) ? { step: "any" } : {}) });
   const select = (path, label, values, type = "text") => row(label, `<select ${attrs(path, type)} aria-label="${e(label)}">${values.map(([id, text]) => `<option value="${e(id)}"${value(path) === id ? " selected" : ""}>${e(text)}</option>`).join("")}</select>`);
   const check = (path, label) => row(label, `<input type="checkbox" ${attrs(path, "boolean")} aria-label="${e(label)}"${value(path) ? " checked" : ""}>`);
@@ -65,8 +65,11 @@ function fields(parameters, context) {
   const group = (key, label, rows, { enabled, supported = true } = {}) => `<tr><td colspan="2"><details class="ms-script-parameter-group" data-param-group="${e(key)}" open><summary>${e(label)}${enabled === undefined ? "" : `<input type="checkbox" data-script-param-group="${e(key)}" aria-label="${e(t(`Включить: ${label}`, `Enable: ${label}`))}"${enabled ? " checked" : ""}${supported ? "" : " disabled"}>`}</summary>${supported ? table(rows) : `<span class="ms-note">${t("Объект не поддерживает это действие.", "This object does not support this action.")}</span>`}</details></td></tr>`;
   const action = (name, label) => `<button type="button" data-screen-action="${name}" data-step="${context.stepIndex}" data-index="${context.index}">${e(label)}</button>`;
   const sec = { min: 0, unit: t("сек.", "sec.") };
+  // Only an action's duration is highlighted. Optional before/after offsets and
+  // speed fields have different meanings, even when their numeric value is zero.
+  const duration = { ...sec, duration: true };
   const effectTiming = () => select(["executionMode"], t("Режим выполнения", "Execution mode"), [["parallel", t("Вместе со следующим", "Alongside next step")], ["wait", t("До следующего", "Before next step")]])
-    + num(["duration"], t("Длительность", "Duration"), sec);
+    + num(["duration"], t("Длительность", "Duration"), duration);
   const delays = () => num(["before"], t("Перед вызовом", "Before call"), sec) + num(["after"], t("После вызова", "After call"), sec);
   const typedParameters = (values, declarations, path = ["parameters"]) => Object.entries(values ?? {}).map(([key, entry]) => {
     const field = declarations.find((item) => item.name === key), itemPath = [...path, key], label = key;
@@ -81,13 +84,13 @@ function fields(parameters, context) {
   }).join("");
   let rows = "";
   switch (context.kind) {
-    case "wait": rows = num(["seconds"], t("Ожидание", "Wait"), { ...sec, min: 0 }); break;
+    case "wait": rows = num(["seconds"], t("Ожидание", "Wait"), duration); break;
     case "visibility": rows = check(["visible"], t("Показывать объект", "Show object")); break;
     case "move": {
       const capabilities = context.document ? scriptObjectCapabilities(context.document) : { position: true, rotation: true, size: true, sizeZ: false };
       const speed = parameters.timeMode === "speed";
       rows = select(["timeMode"], t("Режим", "Mode"), [["duration", t("Длительность", "Duration")], ["speed", t("Скорость", "Speed")]]);
-      if (!speed) rows += num(["duration"], t("Длительность", "Duration"), sec);
+      if (!speed) rows += num(["duration"], t("Длительность", "Duration"), duration);
       else if (parameters.position) rows += num(["position", "speed"], t("Скорость", "Speed"), { min: 0, unit: t("ед./сек.", "units/sec.") });
       rows += group("position", t("Позиция", "Position"), parameters.position ? num(["position", "x"], "x", { step: "1" }) + num(["position", "y"], "y", { step: "1" }) + row(t("Заполнить по", "Fill from"), `<span class="ms-script-inline-actions">${action("script-current-position", t("Текущее положение", "Current position"))}${action("script-point", t("Точка с карты", "Map point"))}</span>`) : "", { enabled: Boolean(parameters.position), supported: capabilities.position });
       rows += group("rotation", t("Поворот", "Rotation"), parameters.rotation ? select(["rotation", "mode"], t("Отсчёт", "Reference"), [["absolute", t("Абсолютный", "Absolute")], ["relative", t("Относительный", "Relative")]]) + num(["rotation", "angle"], t("Угол", "Angle"), { unit: t("град.", "deg.") }) + (speed ? num(["rotation", "speed"], t("Скорость", "Speed"), { min: 0, unit: t("град./сек.", "deg./sec.") }) : "") : "", { enabled: Boolean(parameters.rotation), supported: capabilities.rotation });
@@ -115,7 +118,7 @@ function fields(parameters, context) {
       rows = input(["targetUuid"], t("Объект (UUID)", "Object (UUID)"))
         + num(["distance"], t("Расстояние", "Distance"), { min: 0, unit: t("ед.", "units") })
         + select(["timeMode"], t("Режим", "Mode"), [["duration", t("Длительность", "Duration")], ["speed", t("Скорость", "Speed")]])
-        + (parameters.timeMode === "speed" ? num(["speed"], t("Скорость", "Speed"), { min: 0, unit: t("ед./сек.", "units/sec.") }) : num(["duration"], t("Длительность", "Duration"), sec));
+        + (parameters.timeMode === "speed" ? num(["speed"], t("Скорость", "Speed"), { min: 0, unit: t("ед./сек.", "units/sec.") }) : num(["duration"], t("Длительность", "Duration"), duration));
       break;
     case "follow":
       rows = input(["targetUuid"], t("Объект (UUID)", "Object (UUID)"))
@@ -165,6 +168,7 @@ export function bindScriptParameters(root, getContext, onChange, options) {
     const target = event.target;
     if (!target.matches("[data-script-param],[data-script-param-group],[data-script-param-null],[data-script-json-value],[data-script-state-group],[data-script-state-value]")) return;
     const state = controls(target); if (!state) return;
+    if (target.matches("[data-script-duration]")) target.closest("tr")?.classList.toggle("ms-script-zero-duration", target.valueAsNumber === 0);
     try {
       let parameters = completeScriptParameters(state.kind, JSON.parse(state.area.value), getContext().document);
       if (target.matches("[data-script-json-value]")) {

@@ -7,6 +7,7 @@ import { dialogueMessages, renderDialogueAudio, disposeDialogueAudio } from "../
 import { renderAssetForm, readAssetForm } from "../dmicher-master-screen/scripts/apps/asset-forms.js";
 import { generics } from "../dmicher-master-screen/scripts/generics.js";
 import { sceneFixture, dialogueData } from "./fixtures/scene.js";
+import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
 
 test("page audio is optional, validated, exported and snapshotted separately from editable pages", async () => {
   const source = dialogueData();
@@ -86,4 +87,20 @@ test("shared replay control follows playback state without rerendering a dialogu
   button.onclick({ preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; } });
   assert.equal(replayed, "speech"); assert.equal(prevented && stopped, true);
   disposeDialogueAudio(application); assert.equal(disposed, true); assert.equal(application.dialogueAudio, null);
+});
+
+test("live dialogue audio stops immediately on execution cancellation and remote invalidation without disabling manual reading", () => {
+  const hooks = new Map(), scene = { id: "scene" }; let stopped = 0, current = true;
+  globalThis.Hooks = { on(name, callback) { hooks.set(name, callback); return callback; }, off(name) { hooks.delete(name); } };
+  const application = { element: { querySelectorAll: () => [] }, dialogueAudio: {
+    sync() {}, stop() { stopped++; }, dispose() {}, replay() {}
+  } };
+  const lifecycle = { scene, isCurrent: () => current };
+  renderDialogueAudio(application, [], lifecycle);
+  notifyExecutionChange(scene, "halt-all"); assert.equal(stopped, 1);
+  current = false; hooks.get("updateScene")(scene); assert.equal(stopped, 2);
+  renderDialogueAudio(application, [], lifecycle); assert.equal(stopped, 3);
+  renderDialogueAudio(application, []); // Manual reading supplies no scene lifetime.
+  notifyExecutionChange(scene, "halt-all"); assert.equal(stopped, 3); assert.equal(hooks.size, 0);
+  disposeDialogueAudio(application); assert.equal(hooks.size, 0);
 });
