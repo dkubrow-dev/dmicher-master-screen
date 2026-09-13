@@ -24,7 +24,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     this.busy = false; this.error = ""; this.closing = false;
   }
   checkedInitialView(view) {
-    const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target);
+    const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: view?.sessionId });
     validateDialogueAccess({ ...current, descriptor: current.dialogue }, this.actorTokenId, game.user, this.runId);
     const session = Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry.sessionId === view?.sessionId);
     if (!session || !dialogueSessionIsLive(session) || !["active", "finished"].includes(session.status)
@@ -56,7 +56,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
         if (this.closing && this.view.sessionId) void this.service.leaveSession({ sceneId: this.sceneId, groupId: this.groupId, sessionId: this.view.sessionId }).catch(() => {});
       } catch (error) { this.error = error.message; }
     }
-    const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target);
+    const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: this.view?.sessionId });
     let unavailable = "";
     try {
       validateDialogueAccess({ ...current, descriptor: current.dialogue }, this.actorTokenId, game.user, this.runId);

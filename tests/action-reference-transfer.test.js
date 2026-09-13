@@ -68,7 +68,7 @@ test("dialogue actions require their own attachment in RU and EN while empty pre
     const action = { steps: [{ id: 1, kind: "dialogue", parameters: { dialogueId: dialogue.id, tokenUuids: [], waitMode: "all" }, next: [] }] };
     const before = clone(f.scene.flags);
     await assert.rejects(f.objects.save(descriptor, { groupId: group.groupId, initialScript: action }), (error) => {
-      assert.equal(error.message, language === "en" ? "A script can start only a dialogue attached to this object." : "Скрипт может запускать только диалог, прикреплённый к этому объекту.");
+      assert.equal(error.message, language === "en" ? "A script can start only a dialogue registered in this object's properties." : "Скрипт может запускать только диалог, зарегистрированный в свойствах этого объекта.");
       return true;
     });
     assert.deepEqual(f.scene.flags, before);
@@ -85,18 +85,18 @@ test("removing a dialogue attachment used by a script is rejected before saving"
   assert.ok(f.scene.flags[MODULE_ID].objectBindings.bindings["Token:npc"].dialogues.length);
 });
 
-test("a state export explains retained-script dialogue dependencies instead of widening availability", async () => {
+test("a state export retains registered script dialogues without widening player availability", async () => {
   for (const language of ["ru", "en"]) {
     const f = await preparation(), other = await f.editor.createState(f.group.groupId, { name: "Other" });
     await f.objects.save(descriptor, { dialogues: [{ dialogueId: f.dialogue.id, stateIds: [other.id] }] });
     game.i18n = { lang: language };
     const before = clone(f.scene.flags);
-    assert.throws(() => f.editor.exportState(f.group.groupId, f.group.entryStateId), (error) => {
-      assert.equal(error.message, language === "en"
-        ? "A script refers to a dialogue not included in the selected state. Export the entire group."
-        : "Скрипт ссылается на диалог, не включённый в выбранное состояние. Экспортируйте всю группу.");
-      return true;
-    });
+    const stateExport = f.editor.exportState(f.group.groupId, f.group.entryStateId);
+    const registration = stateExport.objectBindings.bindings["Token:npc"].dialogues[0];
+    assert.equal(registration.dialogueId, f.dialogue.id);
+    assert.equal(registration.playerAction, false);
+    assert.deepEqual(registration.stateIds, []);
+    assert.equal(stateExport.interactionCatalog.dialogues[0].id, f.dialogue.id);
     const groupExport = f.editor.exportGroup(f.group.groupId);
     assert.deepEqual(groupExport.objectBindings.bindings["Token:npc"].dialogues[0].stateIds, [other.id]);
     assert.deepEqual(f.scene.flags, before);

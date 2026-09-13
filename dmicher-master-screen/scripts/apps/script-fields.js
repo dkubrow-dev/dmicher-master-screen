@@ -3,6 +3,7 @@ import { moveScriptStep } from "../script-editing.js";
 import { escapeHTML as e, formValue } from "./form-fields.js";
 import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
 import { scriptActionOptions } from "../script-action-labels.js";
+import { generics } from "../generics.js";
 
 const kinds = scriptActionOptions;
 
@@ -25,7 +26,7 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
       <button type="button" data-screen-action="add-script-step" data-index="${index}">+ ${t("Шаг", "Step")}</button>
       ${check("repeat", t("Повторять", "Repeat"), script.repeat)}
       ${combatSupported ? `<fieldset class="ms-script-combat"><legend>${t("Использование в бою", "Combat use")}</legend>${check("combat-enabled", t("Использовать", "Use in combat"), combat.enabled)}${check("combat-confirm", t("Подтверждать действие", "Confirm action"), combat.confirm !== false)}<div>${check("combat-warning", t("Предупреждение", "Warning"), combat.notifyWarning !== false)}${check("combat-chat", t("В чате мастеру", "In GM chat"), combat.notifyChat)}${check("combat-end-turn", t("Завершать ход", "End turn"), combat.endTurn)}</div><label>${t("Длительность хода, с", "Turn duration, seconds")}<input type="number" min="0.01" step="any" name="${prefix}-combat-seconds" value="${e(combat.turnSeconds ?? 6)}"></label></fieldset>` : ""}
-      <button type="button" data-screen-action="save">${t("Сохранить", "Save")}</button></details>`;
+      <div class="ms-script-block-actions"><button type="button" data-screen-action="save">${t("Сохранить", "Save")}</button>${generics.components.renderJSONControls({ id: `script-block-${index}`, importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}</div></details>`;
   }).join("");
   return blocks;
 }

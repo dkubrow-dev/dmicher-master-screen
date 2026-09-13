@@ -28,7 +28,7 @@ test("object ownership is exclusive; reassignment clears group controls but pres
   await f.objects.save(descriptor, { groupId: a.groupId, tags: ["merchant"], notes: "Note", scripts: [wait(a.entryStateId)], shops: [{ shopId: shop.id, stateIds: [a.entryStateId] }] });
   await assert.rejects(f.objects.save(descriptor, { groupId: b.groupId })); const revision = f.objects.list().revision;
   await f.objects.save(descriptor, { groupId: b.groupId }, { allowReassign: true, expectedRevision: revision });
-  assert.deepEqual(f.objects.get(descriptor).scripts, []); assert.deepEqual(f.objects.get(descriptor).shops, []); assert.equal(f.objects.get(descriptor).notes, "Note"); assert.deepEqual(getObjectTags(f.scene, descriptor), ["merchant"]);
+  assert.deepEqual(f.objects.get(descriptor).scripts, []); assert.equal(f.objects.get(descriptor).shops[0].shopId, shop.id); assert.equal(f.objects.get(descriptor).shops[0].playerAction, false); assert.equal(f.objects.get(descriptor).notes, "Note"); assert.deepEqual(getObjectTags(f.scene, descriptor), ["merchant"]);
   await assert.rejects(f.objects.save(descriptor, { notes: "Stale" }, { expectedRevision: revision })); await f.objects.remove(descriptor); assert.equal(f.objects.get(descriptor).groupId, null);
 });
 test("an absent native object can be unbound without deleting its shared catalog", async () => {
@@ -46,11 +46,12 @@ test("multiple shops and dialogues are selected by state and may be shared by se
   for (const target of [descriptor, { type: "Tile", id: "counter" }]) await f.objects.save(target, { shops: [], dialogues: [] });
   await f.assets.deleteShop(shops[0].id); await f.assets.deleteDialogue(talk.id);
 });
-test("deleting a restricted state removes its scripts and tool associations without widening availability", async () => {
+test("deleting a restricted state removes scripts and player assignments while retaining registration", async () => {
   const f = sceneFixture(), group = await f.editor.createGroup(), state = await f.editor.createState(group.groupId, { name: "Open" }), shop = await f.assets.saveShop(shopData());
   await f.objects.save(descriptor, { groupId: group.groupId, transitionScripts: { [state.id]: wait() }, scripts: [wait(state.id)], shops: [{ shopId: shop.id, stateIds: [state.id] }] });
   await f.editor.deleteState(group.groupId, state.id); const binding = f.objects.get(descriptor);
-  assert.deepEqual(binding.scripts, []); assert.deepEqual(binding.transitionScripts, {}); assert.deepEqual(binding.shops, []);
+  assert.deepEqual(binding.scripts, []); assert.deepEqual(binding.transitionScripts, {}); assert.equal(binding.shops[0].shopId, shop.id); assert.equal(binding.shops[0].playerAction, false);
+  assert.deepEqual(resolveObjectTools(f.scene, descriptor, { groupId: group.groupId, stateId: group.entryStateId }, "shop"), []);
   await f.editor.deleteGroup(group.groupId); assert.equal(f.objects.get(descriptor).groupId, null); assert.equal(f.assets.getShop(shop.id).id, shop.id);
 });
 test("script signals are owned by the object, typed, and protected against removing used definitions", async () => {

@@ -2,8 +2,7 @@ import { text } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { asArray } from "./store.js";
 import { generics } from "./generics.js";
-import { objectKey, interactionConditionId } from "./interaction-access.js";
-import { getConditionKey, getConditionGate, consumeCondition } from "./interaction-conditions.js";
+import { objectKey } from "./interaction-access.js";
 import { dialogueSessionIsLive } from "./interaction-session-model.js";
 export { scriptDialoguesPending } from "./interaction-session-model.js";
 
@@ -26,8 +25,8 @@ export function scriptDialogueRecipient(token, users) {
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;
 }
 
-/** Validate the complete batch before creating its first real session. The usual
- * command path repeats admission under the Scene lock and remains authoritative. */
+/** Validate the complete batch before creating its first real session. The private
+ * GM command path repeats ownership and execution checks under the Scene lock. */
 export function planScriptDialogues(command, { context, validate, users = game.users }) {
   const current = context(command.sceneId, command.dialogueId, command.groupId, command.target);
   const { scene, runtime, dialogue, target } = current;
@@ -36,13 +35,13 @@ export function planScriptDialogues(command, { context, validate, users = game.u
   }
   if (!command.dialogueId || !dialogue || dialogue.id !== command.dialogueId || !target
     || objectKey(dialogue.target) !== objectKey(command.target)) {
-    fail(text("Скрипт может запускать только диалог собственного объекта, доступный в текущем состоянии.",
-      "A script can start only its own object's dialogue that is available in the current state."));
+    fail(text("Скрипт может запускать только диалог, зарегистрированный у собственного объекта.",
+      "A script can start only a dialogue registered on its own object."));
   }
   if (!Array.isArray(command.tokenUuids) || command.tokenUuids.some((uuid) => typeof uuid !== "string" || !uuid)) {
     fail(text("Укажите UUID токенов участников диалога.", "Specify the token UUIDs of the dialogue participants."));
   }
-  const tokens = asArray(scene.tokens), simulated = structuredClone(runtime), plans = [];
+  const tokens = asArray(scene.tokens), plans = [];
   for (const uuid of new Set(command.tokenUuids)) {
     const token = tokens.find((entry) => (entry.uuid ?? `Scene.${scene.id}.Token.${entry.id}`) === uuid);
     if (!token || token.parent?.id && token.parent.id !== scene.id) {
@@ -50,17 +49,11 @@ export function planScriptDialogues(command, { context, validate, users = game.u
     }
     const user = scriptDialogueRecipient(token, users);
     if (!user) fail(text("У персонажа диалога нет подключённого владельца.", "The dialogue character has no connected owner."));
-    validate({ scene, runtime: simulated, descriptor: dialogue, target }, token.id, user, command.runId);
-    const previous = Object.values(simulated.dialogueSessions ?? {}).find((session) => belongsTo(session, user.id, token.id, dialogue, simulated));
+    validate({ scene, runtime, descriptor: dialogue, target }, token.id, user, command.runId);
+    const previous = Object.values(runtime.dialogueSessions ?? {}).find((session) => belongsTo(session, user.id, token.id, dialogue, runtime));
     if (previous?.status === "processing") fail(text("Ответ участника диалога ещё обрабатывается.", "The dialogue participant's answer is still being processed."));
     if (["active", "interrupted"].includes(previous?.status) && previous.actorId !== token.actor.id) {
       fail(text("Персонаж взаимодействия изменился.", "The interaction character has changed."));
-    }
-    if (!["active", "interrupted"].includes(previous?.status)) {
-      const conditionKey = getConditionKey(simulated, "dialogue", interactionConditionId(dialogue));
-      const gate = getConditionGate(scene, simulated, dialogue.conditions, token, { conditionKey });
-      if (!gate.allowed) throw new Error(gate.reason);
-      consumeCondition(simulated, conditionKey, dialogue.conditions);
     }
     plans.push({ user, command: { kind: "start", sceneId: scene.id, groupId: runtime.groupId,
       runId: runtime.runId, dialogueId: dialogue.id, target: structuredClone(dialogue.target), actorTokenId: token.id } });
@@ -90,11 +83,12 @@ export function createScriptDialogueService({ context, validate, process, author
     const current = context(command?.sceneId, command?.dialogueId, command?.groupId, command?.target);
     if (!command || !view?.sessionId || view.dialogueId !== command.dialogueId || view.actorTokenId !== command.actorTokenId
       || objectKey(view.target) !== objectKey(command.target)) return false;
-    validate({ ...current, descriptor: current.dialogue }, command.actorTokenId, game.user, command.runId);
     const session = Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry.sessionId === view.sessionId);
-    if (!session || !belongsTo(session, game.user.id, command.actorTokenId, current.dialogue, current.runtime)
+    if (!session || session.origin !== "script" || !current.dialogue
+      || !belongsTo(session, game.user.id, command.actorTokenId, current.dialogue, current.runtime)
       || session.actorId !== current.scene?.tokens?.get(command.actorTokenId)?.actor?.id
       || !dialogueSessionIsLive(session) || session.status === "processing" || session.step !== view.step || session.nodeId !== view.nodeId) return false;
+    validate({ ...current, descriptor: current.dialogue }, command.actorTokenId, game.user, command.runId);
     if (typeof openWindow !== "function") fail(text("Окно игрового диалога не подключено.", "The live dialogue window is not connected."));
     shown.add(message.id);
     if (shown.size > 500) shown.delete(shown.values().next().value);

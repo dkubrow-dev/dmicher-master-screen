@@ -15,16 +15,26 @@ export const sceneObject = (scene, value) => {
 };
 export const interactionConditionId = (config) => config?.shopId || config?.dialogueId ? `${objectKey(config.target)}:${config.shopId ?? config.dialogueId}` : config?.id;
 
-/** All callers, including GM previews of player actions, obey the same physical access rules. */
-export function validateObjectAccess({ scene, runtime, descriptor, target, conditionType }, actorTokenId, user, runId, { ignoreQuota = true } = {}) {
+/** Shared identity and execution checks. A GM-authored script does not use the
+ * player's physical admission rules, but never gains another character or run. */
+export function validateInteractionIdentity({ scene, runtime, descriptor, target }, actorTokenId, user, runId) {
   const fail = (text) => { throw new Error(text); };
   if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail(localizedMessage("Сцена или состояние изменились. Откройте взаимодействие заново."));
-  if (isExecutionHalted(scene, runtime) || !descriptor?.enabled || !target || target.hidden
+  if (isExecutionHalted(scene, runtime) || !descriptor || !target
     || getObjectBindings(scene).bindings[objectKey(descriptor?.target)]?.playerCharacter
     || runtime.disabledObjects?.includes(objectKey(descriptor.target))) fail(localizedMessage("Взаимодействие сейчас недоступно."));
   const actorToken = scene.tokens?.get(actorTokenId);
-  if (!user || !actorToken?.actor || actorToken.hidden || (descriptor.target.type === "Token" && actorToken.id === target.id)
+  if (!user || !actorToken?.actor || (descriptor.target.type === "Token" && actorToken.id === target.id)
     || (!user.isGM && !actorToken.actor.testUserPermission?.(user, "OWNER"))) fail(localizedMessage("Нужен принадлежащий вам персонаж на карте."));
+  return actorToken;
+}
+
+/** Player-initiated actions, including GM previews, obey the same physical rules. */
+export function validateObjectAccess({ scene, runtime, descriptor, target, conditionType }, actorTokenId, user, runId, { ignoreQuota = true } = {}) {
+  const actorToken = validateInteractionIdentity({ scene, runtime, descriptor, target }, actorTokenId, user, runId);
+  const fail = (text) => { throw new Error(text); };
+  if (!descriptor.enabled || target.hidden) fail(localizedMessage("Взаимодействие сейчас недоступно."));
+  if (actorToken.hidden) fail(localizedMessage("Нужен принадлежащий вам персонаж на карте."));
   const origin = objectCenter(actorToken, scene), destination = objectCenter(target, scene);
   if (![origin.x, origin.y, destination.x, destination.y].every(Number.isFinite)) fail(localizedMessage("Не удалось определить положение объекта на сцене."));
   if (actorToken.level != null && target.level != null && actorToken.level !== target.level) fail(localizedMessage("Объект находится на другом уровне сцены."));

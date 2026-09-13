@@ -109,7 +109,8 @@ export class EditorApplication extends ScreenFormApplication {
       this.selectDraftContext("unavailable");
       return { ...parent, missing: true, isGM: context.isGM, isConstructor: this.mode === "constructor" };
     }
-    if (!context.definition) return { ...parent, missingGroup: true, sceneName: context.scene.name, isGM: true, isConstructor: this.mode === "constructor", isDirector: this.mode === "director" };
+    const automation = { sceneHalted: context.sceneHalted, restoringInitial: context.restoringInitial, showResumeAll: context.sceneHalted && !context.restoringInitial };
+    if (!context.definition) return { ...parent, ...automation, missingGroup: true, sceneName: context.scene.name, isGM: true, isConstructor: this.mode === "constructor", isDirector: this.mode === "director" };
     const state = context.state ?? context.definition.states[0];
     const key = editorContextKey(context, state?.id);
     this.selectDraftContext(key);
@@ -123,6 +124,7 @@ export class EditorApplication extends ScreenFormApplication {
     const active = context.definition.states.find((entry) => entry.id === context.runtime.stateId);
     return {
       ...parent,
+      ...automation,
       missing: false,
       isConstructor: this.mode === "constructor",
       isDirector: this.mode === "director",
@@ -316,6 +318,8 @@ export class EditorApplication extends ScreenFormApplication {
     if (action === "shops") return this.controller.openShops();
     if (action === "dialogues") return this.controller.openDialogues();
     if (action === "haltScene") return this.controller.haltScene();
+    if (action === "resumeAll") return this.controller.startAll();
+    if (action === "restoreAllInitial") return this.controller.restoreAllInitial();
     if (action === "haltGroup") return this.controller.haltGroup();
     if (action === "resumeGroup") return this.controller.resumeGroup(value(this.element, "resumeState"));
     if (action === "saveObjectTags") {

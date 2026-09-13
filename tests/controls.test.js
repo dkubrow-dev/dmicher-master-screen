@@ -47,6 +47,18 @@ test("players have no visible category and cannot invoke a retained GM action", 
   assert.deepEqual(f.actions, []);
 });
 
+test("stopped controls resume current states or restore initial state, with stop retained during restoration", async () => {
+  const f = fixture(); f.controller.isAutomationHalted = () => true;
+  f.controller.restoreAllInitial = () => f.actions.push("reset");
+  const stopped = buildControls(f.controller);
+  assert.equal(stopped.tools.stop, undefined); assert.ok(stopped.tools.reset);
+  stopped.tools.start.onChange(); stopped.tools.reset.onChange(); await flush();
+  assert.deepEqual(f.actions, ["start", "reset"]);
+  f.controller.isRestoringInitial = () => true;
+  const restoring = buildControls(f.controller);
+  assert.ok(restoring.tools.stop); assert.equal(restoring.tools.reset, undefined);
+});
+
 test("a rejected asynchronous action reports the useful error instead of leaking rejection", async () => {
   const f = fixture();
   f.controller.toggleScreen = async () => { throw new Error("Mode unavailable"); };

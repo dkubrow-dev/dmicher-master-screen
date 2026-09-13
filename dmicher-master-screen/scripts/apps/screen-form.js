@@ -9,11 +9,11 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
   events = null;
 
   refresh() {
-    if (!this.rendered || this.dirty && !this.captureRefreshDraft) return;
     if (this.refreshTask) {
-      if (this.refreshing) this.refreshAgain = true;
+      this.refreshAgain = true;
       return this.refreshTask;
     }
+    if (!this.rendered || this.dirty && !this.captureRefreshDraft) return;
     // External updates share a render. A dirty form still needs fresh reference
     // lists; its capture hook preserves inputs and the original save revision.
     this.refreshTask = Promise.resolve().then(async () => {
@@ -24,7 +24,12 @@ export class ScreenFormApplication extends HandlebarsApplicationMixin(Applicatio
         try { this.captureRefreshDraft?.(); await this.render({ force: true }); }
         finally { this.refreshing = false; }
       } while (this.refreshAgain);
-    }).finally(() => { this.refreshTask = null; });
+    }).finally(() => {
+      this.refreshTask = null;
+      // A change can arrive after the loop exits but before this promise settles.
+      // Drain that last request too; awaiting the old task includes its refresh.
+      if (this.refreshAgain) return this.refresh();
+    });
     return this.refreshTask;
   }
 

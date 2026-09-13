@@ -26,6 +26,7 @@ import { listAvailableInteractions, objectDescriptor } from "./interaction-acces
 import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
 import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
 import { StateChooserApplication } from "./apps/state-chooser.js";
+import { isSceneAutomationHalted } from "./execution.js";
 
 export class ScreenController {
   constructor() {
@@ -61,6 +62,7 @@ export class ScreenController {
     const selectedStateId = definition?.states.some((state) => state.id === candidateStateId) ? candidateStateId : definition?.entryStateId ?? definition?.states[0]?.id;
     const objects = listNativeSceneObjects(scene).map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
     return { scene, definition, runtime, definitions, objects, mode: this.mode, groupId, selectedStateId, signalLog: this.signals.history(scene),
+      sceneHalted: this.isAutomationHalted(), restoringInitial: this.isRestoringInitial(),
       state: definition ? getState(definition, selectedStateId) : null, tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
   }
   getPlayerTokens() {
@@ -169,6 +171,9 @@ export class ScreenController {
   }
   startAll() { return this.runtime.startAll(currentScene()); }
   haltAll() { return this.runtime.haltAll(currentScene()); }
+  restoreAllInitial() { return this.runtime.restoreAllInitial(currentScene()); }
+  isAutomationHalted() { return isSceneAutomationHalted(currentScene()); }
+  isRestoringInitial() { return this.runtime.isRestoringInitial(currentScene()); }
   restoreObjectInitial(descriptor) { return this.runtime.restoreInitial(currentScene(), descriptor); }
   selectGroup(groupId, { render = true } = {}) {
     const scene = currentScene();
@@ -337,8 +342,10 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
+    const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
+    if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
     for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
-      if (app?.rendered) void Promise.resolve().then(() => app.rendered && app.refresh?.()).catch(notifyError);
+      if (app?.rendered || app?.refreshTask) void Promise.resolve().then(() => (app.rendered || app.refreshTask) && app.refresh?.()).catch(notifyError);
     }
     for (const runtime of getRuntimes(scene)) void this.workspace.apply(scene, runtime).catch(notifyError);
   }

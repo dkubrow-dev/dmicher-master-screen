@@ -23,12 +23,13 @@ function fixture(status = "active") {
   const view = { sessionId: session.sessionId, dialogueId: dialogue.id, target, actorTokenId: pc.id,
     nodeId: session.nodeId, step: session.step, status, text: "Delivered text", responses: status === "active" ? [{ id: "answer", label: "Answer" }] : [] };
   const calls = [];
-  const service = { getContext: () => ({ scene, runtime, dialogue, target: npc }),
+  const service = { getContext: (_sceneId, _dialogueId, _groupId, _target, { sessionId } = {}) => ({ scene, runtime, dialogue, target: npc,
+    ...(sessionId === session.sessionId ? { session } : {}) }),
     requestStart: async (command) => { calls.push(command); return view; }, leaveSession: async () => {} };
   globalThis.game = { user, users: new Map([[user.id, user]]), settings: { get: () => "dark" } };
   globalThis.canvas = { scene };
   const selection = { sceneId: scene.id, groupId: "group", runId: "run", dialogueId: dialogue.id, target, actorTokenId: pc.id, initialView: view };
-  return { service, calls, selection, runtime, session, view, pc };
+  return { service, calls, selection, runtime, session, view, pc, npc, dialogue };
 }
 
 test("delivered active and final dialogue pages use the admitted session without starting it again", async () => {
@@ -40,6 +41,23 @@ test("delivered active and final dialogue pages use the admitted session without
     await app._prepareContext({}); assert.equal(f.calls.length, 0);
     assert.notEqual(app.view, f.view, "delivery data is copied instead of retaining the mutable envelope");
   }
+});
+
+test("a delivered script dialogue renders outside player conditions using the stored session origin", async () => {
+  const f = fixture(); f.session.origin = "script";
+  f.dialogue.enabled = false; f.dialogue.conditions = { enabled: false };
+  f.npc.hidden = true; f.npc.x = 100000; f.pc.object.checkCollision = () => true;
+  const app = new DialogueApplication(f.service, f.selection);
+  const current = await app._prepareContext({});
+  assert.equal(current.error, ""); assert.equal(current.responses.length, 1); assert.equal(f.calls.length, 0);
+  f.runtime.halted = true;
+  assert.ok((await app._prepareContext({})).error);
+});
+
+test("a forged view origin does not bypass player conditions", async () => {
+  const f = fixture(); f.selection.initialView.origin = "script"; f.npc.hidden = true;
+  const current = await new DialogueApplication(f.service, f.selection)._prepareContext({});
+  assert.ok(current.error); assert.equal(current.missing, true); assert.equal(f.calls.length, 0);
 });
 
 test("an invalid or stale delivered session fails closed instead of falling back to a new start", async () => {

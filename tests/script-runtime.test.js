@@ -48,6 +48,96 @@ test("explicit initial restoration pauses regular automation and works after gro
   await f.tick(); await f.tick(); assert.equal(f.npc.x, 0); await f.tick(); assert.equal(f.runtime.manualRuns.has(id), false);
   await f.runtime.haltAll(f.scene); f.npc.x = 50; await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" }); await f.tick(); await f.tick(); assert.equal(f.npc.x, 0); assert.equal(getRuntime(f.scene).halted, true);
 });
+test("scene restoration runs only prepared object initials, selects entry states and preserves resources while stopped", async () => {
+  const f = await fixture({ initial: script([step(1, "move", { duration: 1, position: { x: 0, y: 0 } })]),
+    transition: script([step(1, "visibility", { visible: false })]) });
+  addGroup(f, "east"); f.flags.objectBindings.bindings["Tile:tile"].initialScript = script([step(1, "visibility", { visible: false })]);
+  await f.runtime.enter(f.scene, "tension"); await f.runtime.enter(f.scene, "tension", { groupId: "east" });
+  const old = getRuntime(f.scene); old.shops = { stock: { items: ["kept"] } }; old.tradeRequests = { receipt: "kept" }; old.disabledObjects = ["Token:npc"]; await saveRuntime(f.scene, old);
+  f.npc.x = 200; f.calls.length = 0;
+  const ids = await f.runtime.restoreAllInitial(f.scene); assert.equal(ids.length, 2);
+  assert.equal(f.runtime.isRestoringInitial(f.scene), true); assert.equal(f.flags.automationHalted, true);
+  await f.tick(); assert.equal(f.npc.x, 100); await f.tick(); await f.tick();
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.npc.x, 0); assert.equal(f.tile.hidden, true); assert.equal(f.npc.hidden, false);
+  for (const groupId of ["main", "east"]) { const run = getRuntime(f.scene, { groupId }); assert.equal(run.stateId, "calm"); assert.equal(run.halted, true); assert.equal(run.runId, ""); }
+  assert.deepEqual(getRuntime(f.scene).shops, old.shops); assert.deepEqual(getRuntime(f.scene).tradeRequests, old.tradeRequests); assert.deepEqual(getRuntime(f.scene).disabledObjects, old.disabledObjects);
+  assert.deepEqual(f.calls, []); assert.equal(f.flags.automationHalted, true);
+});
+test("scene restoration returns to group entries after state actions in initial scripts without starting groups", async () => {
+  const f = await fixture({ initial: script([step(1, "state", { transitions: [{ groupId: "main", stateId: "tension" }] }, [2]), step(2, "visibility", { visible: false })]) });
+  await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.tick();
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(getRuntime(f.scene).stateId, "calm");
+  assert.equal(getRuntime(f.scene).halted, true); assert.equal(f.flags.automationHalted, true); assert.equal(f.npc.hidden, false);
+});
+test("a repeated stop cancels remaining initial steps and a late external action cannot continue them", async () => {
+  let started, release; const pending = new Promise(resolve => { started = resolve; });
+  const f = await fixture({ initial: script([step(1, "macro", { macroUuid: "Macro.slow" }, [2]), step(2, "visibility", { visible: false })]),
+    effects: { macro: async () => { started(); await new Promise(resolve => { release = resolve; }); } } });
+  f.runtime.isObjectMacroAttached = () => true;
+  await f.runtime.restoreAllInitial(f.scene); const ticking = f.tick(); await pending; await f.runtime.haltAll(f.scene); await ticking;
+  release(); await new Promise(resolve => setImmediate(resolve)); await f.tick();
+  assert.equal(f.runtime.manualRuns.size, 0); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.npc.hidden, false); assert.equal(getRuntime(f.scene).halted, true);
+});
+test("manual state selection and a new start cancel unfinished scene restoration", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 5 }, [2]), step(2, "visibility", { visible: false })]) });
+  await f.runtime.restoreAllInitial(f.scene); await f.tick();
+  await f.runtime.changeStates(f.scene, [{ groupId: "main", stateId: "tension" }]);
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(getRuntime(f.scene).stateId, "tension");
+  await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.runtime.startAll(f.scene);
+  assert.equal(f.runtime.manualRuns.size, 0); assert.equal(f.flags.automationHalted, false); assert.equal(getRuntime(f.scene).halted, false);
+  for (let i = 0; i < 12; i++) await f.tick(); assert.equal(f.npc.hidden, false);
+});
+test("scene reset skips absent and player objects and an empty scene stays stopped without creating groups", async () => {
+  const f = await fixture({ initial: script([step(1, "visibility", { visible: false })]) });
+  f.flags.objectBindings.bindings["Token:npc"].playerCharacter = true;
+  f.flags.objectBindings.bindings["Token:missing"] = { ...f.flags.objectBindings.bindings["Token:npc"], id: "missing", playerCharacter: false };
+  assert.deepEqual(await f.runtime.restoreAllInitial(f.scene), []); assert.equal(f.npc.hidden, false); assert.equal(f.runtime.isRestoringInitial(f.scene), false);
+  f.flags.groupDefinitions = {}; f.flags.objectBindings = { bindings: {} }; f.flags.groupRuntimes = {};
+  assert.deepEqual(await f.runtime.restoreAllInitial(f.scene), []); assert.deepEqual(f.flags.groupDefinitions, {}); assert.deepEqual(f.flags.groupRuntimes, {}); assert.equal(f.flags.automationHalted, true);
+});
+test("a deleted object or replaced group during restoration cannot leave a stuck batch", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 5 }, [2]), step(2, "visibility", { visible: false })]) });
+  await f.runtime.restoreAllInitial(f.scene); f.scene.tokens.delete("npc"); await f.tick();
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false);
+  f.scene.tokens.set("npc", f.npc); await f.runtime.restoreAllInitial(f.scene);
+  f.flags.groupDefinitions.other = { ...f.flags.groupDefinitions.main, groupId: "other" }; delete f.flags.groupDefinitions.main;
+  await f.tick(); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.runtime.manualRuns.size, 0);
+});
+test("an old restoration callback cannot cancel its replacement and ungrouped prepared objects can restore", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 1 }, [2]), step(2, "visibility", { visible: false })]) });
+  f.flags.objectBindings.bindings["Token:npc"].groupId = null;
+  await f.runtime.restoreAllInitial(f.scene); const old = f.runtime.sceneRestoration;
+  await f.runtime.restoreAllInitial(f.scene); const replacement = f.runtime.sceneRestoration;
+  assert.notEqual(replacement.id, old.id); assert.equal(await f.runtime.selectInitialStates(f.scene, old), false); assert.equal(f.runtime.sceneRestoration, replacement);
+  await f.tick(); await f.tick(); await f.tick(); await f.tick();
+  assert.equal(f.npc.hidden, true); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.flags.automationHalted, true);
+});
+test("a failed initial dialogue leaves the scene stopped and does not prevent other objects from restoring", async () => {
+  const f = await fixture({ initial: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: ["Scene.scene.Token.npc"] })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].initialScript = script([step(1, "visibility", { visible: false })]);
+  const errors = [], original = globalThis.ui; globalThis.ui = { notifications: { error: message => errors.push(message) } };
+  try { await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.tick(); }
+  finally { globalThis.ui = original; }
+  assert.equal(errors.length, 1); assert.equal(f.tile.hidden, true); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.flags.automationHalted, true); assert.equal(getRuntime(f.scene).stateId, "calm");
+});
+test("empty initial and transition scripts finish without blocking reset or the routine", async () => {
+  const f = await fixture({ initial: script([]), transition: script([]), routine: script([step(1, "visibility", { visible: false })]) });
+  await f.runtime.restoreAllInitial(f.scene); await f.tick();
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.runtime.manualRuns.size, 0);
+  await f.runtime.startAll(f.scene); await f.tick(); assert.equal(f.npc.hidden, true);
+});
+test("resume all restarts current selected states and respects a stop while validating an earlier group", async () => {
+  const f = await fixture(); addGroup(f, "east");
+  await f.runtime.enter(f.scene, "tension"); await f.runtime.enter(f.scene, "calm", { groupId: "east" });
+  const ids = [getRuntime(f.scene).runId, getRuntime(f.scene, { groupId: "east" }).runId]; await f.runtime.haltAll(f.scene);
+  await f.runtime.startAll(f.scene); assert.equal(getRuntime(f.scene).stateId, "tension"); assert.equal(getRuntime(f.scene, { groupId: "east" }).stateId, "calm");
+  assert.notEqual(getRuntime(f.scene).runId, ids[0]); assert.notEqual(getRuntime(f.scene, { groupId: "east" }).runId, ids[1]);
+  await f.runtime.haltAll(f.scene); let starts = 0;
+  f.runtime.emitSignal = async () => { starts++; await f.runtime.haltAll(f.scene); return { allowed: true }; };
+  const original = console.error; console.error = () => {};
+  try { await f.runtime.startAll(f.scene); } finally { console.error = original; }
+  assert.equal(starts, 1); assert.equal(f.flags.automationHalted, true); assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, true);
+});
 test("validation rejection leaves group state and world untouched", async () => {
   const f = await fixture({ emitSignal: async (_scene, signal) => signal.name === "validateStart" ? { allowed: false, messages: ["Rejected"] } : { allowed: true }, transition: script([step(1, "visibility", { visible: false })]) });
   const old = console.error; console.error = () => {};

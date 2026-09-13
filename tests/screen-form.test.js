@@ -57,7 +57,8 @@ test("rebinding a form does not duplicate actions and leaves native submits unto
 test("external refreshes coalesce and refresh again only after an update during rendering", async () => {
   const { app } = fixture(); app.rendered = true;
   const releases = []; let renders = 0;
-  app.render = () => { renders++; return new Promise((resolve) => releases.push(resolve)); };
+  // ApplicationV2.rendered is false while native template rendering is pending.
+  app.render = () => { renders++; app.rendered = false; return new Promise((resolve) => releases.push(() => { app.rendered = true; resolve(); })); };
   const task = app.refresh();
   assert.equal(app.refresh(), task);
   await Promise.resolve(); assert.equal(renders, 1);
@@ -66,6 +67,27 @@ test("external refreshes coalesce and refresh again only after an update during 
   await new Promise(setImmediate); assert.equal(renders, 2);
   releases.shift()(); await task;
   assert.equal(app.refreshTask, null);
+});
+
+test("a refresh requested during rendering does not reopen a form which has closed", async () => {
+  const { app } = fixture(); app.rendered = true;
+  let release, renders = 0;
+  app.render = () => { renders++; app.rendered = false; return new Promise(resolve => { release = resolve; }); };
+  const task = app.refresh(); await Promise.resolve(); assert.equal(app.refresh(), task);
+  release(); await task;
+  assert.equal(renders, 1); assert.equal(app.refreshTask, null); assert.equal(app.rendered, false);
+});
+
+test("an update in the gap after rendering and before queue cleanup is not lost", async () => {
+  const { app } = fixture(); app.rendered = true;
+  let rendering = false, renders = 0, lateRequest;
+  Object.defineProperty(app, "refreshing", { get: () => rendering, set: value => {
+    rendering = value;
+    if (!value && renders === 1) queueMicrotask(() => { lateRequest = app.refresh(); });
+  } });
+  app.render = async () => { renders++; };
+  await app.refresh(); await lateRequest;
+  assert.equal(renders, 2); assert.equal(app.refreshTask, null);
 });
 
 test("typing before a queued refresh captures the dirty form before rendering", async () => {

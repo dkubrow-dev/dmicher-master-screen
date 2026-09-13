@@ -41,8 +41,15 @@
 .dmicher-master-screen .ms-state-script-table { table-layout: fixed; width: 100%; }
 .dmicher-master-screen .ms-state-script-table td { vertical-align: top; padding: 5px; }
 .dmicher-master-screen .ms-state-script-table td:first-child { width: 32%; }
-.dmicher-master-screen .ms-state-script-table td:last-child button { display: inline-flex; width: auto; min-height: 24px; margin: 2px 4px; }
+.dmicher-master-screen :is(.ms-state-script-table, .ms-object-registration) td:last-child button { display: inline-flex; width: auto; min-height: 24px; margin: 2px 4px; }
+.dmicher-master-screen .ms-object-registration { width: 100%; }
+.dmicher-master-screen .ms-object-registration td:last-child { width: 1%; white-space: nowrap; }
+.dmicher-master-screen .ms-object-registration-add { display: flex; align-items: center; gap: 5px; }
+.dmicher-master-screen .ms-object-registration-add > select { flex: 1; min-width: 0; }
+.dmicher-master-screen .ms-object-registration-add > button { flex: 0 0 auto; width: auto; margin: 0; }
 .dmicher-master-screen .ms-script-block > summary { cursor: pointer; font-weight: bold; padding: 5px; }
+.dmicher-master-screen .ms-script-block-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.dmicher-master-screen .ms-script-block-actions > button { flex: 0 0 auto; width: auto; margin: 0; }
 .dmicher-master-screen .ms-script-combat { margin: 8px 0; }
 .dmicher-master-screen .ms-initial-script-actions { display: flex; align-items: center; gap: 5px; overflow-x: auto; }
 .dmicher-master-screen .ms-initial-script-actions > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

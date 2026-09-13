@@ -49,6 +49,28 @@ test("a synchronous refresh failure is reported without preventing other open wi
   } finally { console.error = originalError; await f.dispose(); }
 });
 
+test("scene changes reach an in-flight form refresh even while Foundry reports rendered false", async () => {
+  const f = fixture(14), controller = new ScreenController(), updates = [];
+  try {
+    controller.editor = { rendered: false, refreshTask: Promise.resolve(), refresh() { updates.push("rendering"); } };
+    controller.actor = { rendered: false, refresh() { updates.push("closed"); } };
+    controller.changed(f.scene); await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(updates, ["rendering"]); assert.deepEqual(f.scene.updates, []);
+  } finally { await f.dispose(); }
+});
+
+test("closing the viewed scene can refresh controls and open windows without a scene reference", async () => {
+  const f = fixture(14), controller = new ScreenController(), updates = [];
+  try {
+    canvas.scene = null;
+    controller.editor = { rendered: true, refresh() { updates.push("editor"); } };
+    assert.doesNotThrow(() => controller.changed(null));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(updates, ["editor"]);
+    assert.deepEqual(f.scene.updates, []);
+  } finally { await f.dispose(); }
+});
+
 function createHooks() {
   let next = 0;
   const entries = new Map();

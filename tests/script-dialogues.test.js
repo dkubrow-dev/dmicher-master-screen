@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDialogueService, validateDialogueAccess } from "../dmicher-master-screen/scripts/dialogues.js";
+import { createDialogueService, validateScriptDialogueAccess } from "../dmicher-master-screen/scripts/dialogues.js";
 import { planScriptDialogues, scriptDialogueRecipient, scriptDialoguesPending } from "../dmicher-master-screen/scripts/script-dialogues.js";
 import { createGroupDefinition } from "../dmicher-master-screen/scripts/model.js";
 import { isInteractionPaused, beginInteractionPause } from "../dmicher-master-screen/scripts/interaction-pause.js";
 
 const MODULE_ID = "dmicher-master-screen", clone = (value) => structuredClone(value);
-function fixture({ onSignal = () => {} } = {}) {
+function fixture({ onSignal = () => {}, realContext = false } = {}) {
   let serial = 0, runtime, locked = false, queue = Promise.resolve();
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   const player = { id: "player", isGM: false, role: 1, active: true, character: "actor-pc" };
@@ -17,12 +17,14 @@ function fixture({ onSignal = () => {} } = {}) {
   const second = { ...pc, id: "second", actor: { id: "actor-second", ownership: { other: 3 }, testUserPermission: (user) => user.id === other.id } };
   const npc = { id: "npc", documentName: "Token", name: "Speaker", x: 100, y: 0, width: 1, height: 1 };
   const scene = { id: "scene", grid: { size: 100, distance: 5 }, tokens: new Map([pc, second, npc].map((entry) => [entry.id, entry])),
-    getFlag: (_module, key) => key === "groupDefinitions" ? { main: definition } : key === "groupRuntimes" ? { main: runtime } : undefined };
+    getFlag: (_module, key) => key === "groupDefinitions" ? { main: definition } : key === "groupRuntimes" ? { main: runtime }
+      : key === "objectBindings" ? { bindings: { "Token:npc": binding } } : key === "interactionCatalog" ? { dialogues: [dialogue] } : undefined };
   for (const token of scene.tokens.values()) { token.parent = scene; token.uuid = `Scene.scene.Token.${token.id}`; }
   const definition = createGroupDefinition(); definition.states[0].id = "calm"; definition.entryStateId = "calm";
   const dialogue = { id: "talk", name: "Conversation", enabled: true, target: { type: "Token", id: "npc" }, range: 5,
     conditions: { repeat: "always" }, startPageId: "start", pages: [{ id: "start", text: "Welcome", art: "",
       responses: [{ id: "finish", label: "Done", nextPageId: "", signalId: "" }] }] };
+  const binding = { type: "Token", id: "npc", groupId: "main", dialogues: [{ dialogueId: "talk", stateIds: [], conditions: { repeat: "always" } }] };
   runtime = { schemaVersion: 1, runId: "run", groupId: "main", stateId: "calm", disabledObjects: [], dialogueSessions: {}, dialogueCommands: {}, state: { ...definition.states[0], dialogues: [dialogue] } };
   globalThis.game = { user: gm, users: new Map([gm, player, other].map((user) => [user.id, user])), scenes: new Map([[scene.id, scene]]), messages: new Map() };
   globalThis.canvas = { scene };
@@ -41,12 +43,18 @@ function fixture({ onSignal = () => {} } = {}) {
     const result = queue.then(async () => { locked = true; try { return await task(); } finally { locked = false; } });
     queue = result.catch(() => {}); return result;
   };
-  const service = createDialogueService({ context, runtimeOf: () => clone(runtime), save: async (_scene, state) => { runtime = clone(state); }, lock,
+  const service = createDialogueService({ ...(realContext ? {} : { context, scriptContext: context }), runtimeOf: () => clone(runtime), save: async (_scene, state) => { runtime = clone(state); }, lock,
     authority: () => game.user.id === gm.id, messageService: chat,
     openScriptWindow: async (command, view) => { windows.push({ command, view }); },
     emitSignal: async (_scene, signal) => { assert.equal(locked, false); signals.push(signal); await onSignal(signal); return { status: "done", allowed: true }; } });
   const command = { sceneId: scene.id, groupId: "main", runId: "run", target: { type: "Token", id: npc.id }, dialogueId: dialogue.id, tokenUuids: [pc.uuid] };
-  return { gm, player, other, pc, second, npc, scene, dialogue, service, command, context, messages, windows, signals,
+  const send = async (command, user = player) => {
+    let result;
+    const message = { id: `request-${++serial}`, author: user, whisper: [gm.id], getFlag: () => command,
+      update: async (value) => { result = value[`flags.${MODULE_ID}.dialogueResult`]; }, delete: async () => {} };
+    await service.processCommand(message, user.id); return result;
+  };
+  return { gm, player, other, pc, second, npc, scene, dialogue, binding, service, send, command, context, messages, windows, signals,
     runtime: () => runtime, setRuntime: (value) => { runtime = value; } };
 }
 
@@ -69,15 +77,15 @@ test("script dialogue creates real owner sessions and delivers each only to its 
   assert.equal(f.signals.length, 2, "delivery and repeat delivery never start the dialogue again");
 });
 
-test("script dialogue batch rejects insufficient quota before opening or signaling anything", async () => {
+test("script dialogue batch neither checks nor spends player interaction quota", async () => {
   const f = fixture(); f.dialogue.conditions = { repeat: "count", limit: 1 };
-  await assert.rejects(f.service.startScriptDialogues({ ...f.command, tokenUuids: [f.pc.uuid, f.second.uuid] }));
-  assert.deepEqual(f.runtime().dialogueSessions, {});
-  assert.equal(f.signals.length, 0); assert.equal(f.messages.length, 0);
-  const result = await f.service.startScriptDialogues(f.command);
-  assert.equal(result.length, 1);
+  f.runtime().conditionCounts = { "main:calm:dialogue:talk": 1 };
+  const before = clone(f.runtime().conditionCounts);
+  const result = await f.service.startScriptDialogues({ ...f.command, tokenUuids: [f.pc.uuid, f.second.uuid] });
+  assert.equal(result.length, 2); assert.equal(f.signals.length, 2);
   await f.service.startScriptDialogues(f.command);
-  assert.equal(f.signals.length, 1, "reopening the same session consumes no second allowance");
+  assert.equal(f.signals.length, 2, "reopening the same session does not replay its opening");
+  assert.deepEqual(f.runtime().conditionCounts, before);
 });
 
 test("script dialogue requires a currently attached dialogue and exact current-scene token UUIDs", async () => {
@@ -90,9 +98,79 @@ test("script dialogue requires a currently attached dialogue and exact current-s
     await assert.rejects(f.service.startScriptDialogues({ ...f.command, ...change }));
     assert.equal(f.messages.length, 0); assert.equal(f.signals.length, 0);
   }
-  const f = fixture(); f.npc.hidden = true;
+});
+
+test("GM script ignores every player condition while delivery, renewal and answers keep their admitted origin", async () => {
+  const f = fixture();
+  f.dialogue.enabled = false; f.dialogue.range = 0;
+  f.dialogue.conditions = { enabled: false, groupIds: ["elsewhere"], stateIds: ["later"], allowTags: ["missing"], denyTags: ["present"], repeat: "count", limit: 1 };
+  f.npc.hidden = true; f.npc.x = 100000; f.npc.level = "upstairs";
+  f.pc.hidden = true; f.pc.level = "downstairs"; f.pc.object.checkCollision = () => true;
+  const [reference] = await f.service.startScriptDialogues(f.command);
+  const session = Object.values(f.runtime().dialogueSessions)[0];
+  assert.equal(session.origin, "script");
+  game.user = f.player;
+  assert.equal(await f.service.processScriptInvitation(f.messages[0], f.gm.id), true);
+  const current = f.service.getContext(f.scene.id, f.dialogue.id, "main", f.command.target, { sessionId: session.sessionId });
+  assert.equal(current.session.origin, "script");
+  game.user = f.gm;
+  const renewed = await f.send({ kind: "renew", sceneId: f.scene.id, groupId: "main", sessionId: reference.sessionId });
+  assert.equal(renewed.status, "active");
+  const answered = await f.send({ kind: "answer", sceneId: f.scene.id, groupId: "main", sessionId: reference.sessionId, nodeId: "start", step: 0, responseId: "finish" });
+  assert.equal(answered.status, "finished"); assert.deepEqual(f.runtime().conditionCounts ?? {}, {});
+});
+
+test("registration without a player action is sufficient for a script and remains unavailable to player starts", async () => {
+  const f = fixture({ realContext: true });
+  f.binding.dialogues = [{ dialogueId: "talk", playerAction: false, stateIds: ["later"], conditions: { enabled: false } }];
+  assert.equal(f.service.getContext("scene", "talk", "main", f.command.target).dialogue, null);
+  const [reference] = await f.service.startScriptDialogues(f.command);
+  assert.ok(reference.sessionId);
+  const current = f.service.getContext("scene", "talk", "main", f.command.target, { sessionId: reference.sessionId });
+  assert.equal(current.dialogue.id, "talk"); assert.equal(current.session.origin, "script");
+  const result = await f.send({ ...f.command, kind: "start", actorTokenId: "pc", origin: "script", scriptStart: true });
+  assert.ok(result.failure); assert.equal(f.signals.length, 1);
+  const renewed = await f.send({ kind: "renew", sceneId: "scene", groupId: "main", sessionId: reference.sessionId });
+  assert.equal(renewed.status, "active");
+});
+
+test("unregistered or reassigned dialogues cannot be started or continued by a script", async () => {
+  const f = fixture({ realContext: true });
+  f.binding.dialogues = [];
   await assert.rejects(f.service.startScriptDialogues(f.command));
-  assert.deepEqual(f.runtime().dialogueSessions, {});
+  f.binding.dialogues = [{ dialogueId: "talk", playerAction: false }];
+  const [reference] = await f.service.startScriptDialogues(f.command);
+  f.binding.groupId = "another";
+  const result = await f.send({ kind: "renew", sceneId: "scene", groupId: "main", sessionId: reference.sessionId });
+  assert.ok(result.failure);
+});
+
+test("player commands cannot forge script provenance on a new or existing player session", async () => {
+  const f = fixture();
+  const start = { ...f.command, kind: "start", actorTokenId: f.pc.id, origin: "script", scriptStart: true };
+  f.dialogue.enabled = false;
+  assert.ok((await f.send(start)).failure); assert.deepEqual(f.runtime().dialogueSessions, {});
+  f.dialogue.enabled = true;
+  const opened = await f.send(start);
+  assert.equal(Object.values(f.runtime().dialogueSessions)[0].origin, "player");
+  f.npc.hidden = true;
+  assert.ok((await f.send({ kind: "renew", sceneId: "scene", groupId: "main", sessionId: opened.sessionId, origin: "script", scriptStart: true })).failure);
+  assert.equal(Object.values(f.runtime().dialogueSessions)[0].origin, "player");
+});
+
+test("script sessions retain ownership, current run, emergency halt and source automation barriers", async () => {
+  for (const change of [
+    (f) => { f.runtime().halted = true; },
+    (f) => { f.runtime().disabledObjects = ["Token:npc"]; },
+    (f) => { f.binding.playerCharacter = true; },
+    (f) => { f.runtime().runId = "new-run"; },
+    (f) => { f.scene.tokens.delete("pc"); },
+    (f) => { f.pc.actor.testUserPermission = () => false; }
+  ]) {
+    const f = fixture(), [reference] = await f.service.startScriptDialogues(f.command);
+    change(f);
+    assert.ok((await f.send({ kind: "renew", sceneId: "scene", groupId: "main", sessionId: reference.sessionId })).failure);
+  }
 });
 
 test("recipient choice ignores technical and offline users and never uses implicit GM ownership", () => {
@@ -187,7 +265,7 @@ test("script wait modes leave other participants open after any first close", as
 
 test("read-only script planning never mutates saved quota or sessions", () => {
   const f = fixture(), before = clone(f.runtime());
-  const plan = planScriptDialogues(f.command, { context: f.context, validate: validateDialogueAccess });
+  const plan = planScriptDialogues(f.command, { context: f.context, validate: validateScriptDialogueAccess });
   assert.equal(plan.length, 1); assert.deepEqual(f.runtime(), before);
 });
 
@@ -244,7 +322,7 @@ test("a long delivery pause renews only the admitted lease without replaying quo
       assert.ok(Object.values(f.runtime().dialogueSessions)[0].expiresAt > now);
     }
     assert.equal(f.messages.length, 0); assert.equal(f.signals.length, 1);
-    assert.deepEqual(Object.values(f.runtime().conditionCounts), [1]);
+    assert.deepEqual(f.runtime().conditionCounts ?? {}, {});
     gate.resume(); const refs = await task;
     assert.equal(refs[0].sessionId, originalId); assert.equal(f.messages.length, 1); assert.equal(timers.size, 0);
   } finally { gate.stop(); Date.now = originalNow; globalThis.setInterval = originalSet; globalThis.clearInterval = originalClear; }

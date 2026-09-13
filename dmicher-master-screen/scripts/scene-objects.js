@@ -1,10 +1,10 @@
-import { message as localizedMessage, text } from "./localization.js";
+import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { getInteractionCatalog, mergeInteractionAssets } from "./scene-assets.js";
 import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./signal-catalog.js";
 import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences } from "./configuration-transfer.js";
-import { normalizeObjectBinding, normalizeObjectBindings, objectKey, bindingScriptSteps, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
+import { normalizeObjectBinding, normalizeObjectBindings, objectKey, registeredToolIds, toolRegistration, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
 import { interactionType } from "./interaction-model.js";
 import { replacementFlagData } from "./scene-flags.js";
 export { normalizeObjectBinding, normalizeObjectBindings, objectKey } from "./object-binding-model.js";
@@ -53,7 +53,10 @@ export class SceneObjects {
       if (previous?.groupId !== next.groupId) {
         if (previous?.groupId && !allowReassign) fail(localizedMessage("Подтвердите изменение владельца объекта."));
         if (getRuntimes(this.scene).some((run) => [previous?.groupId, next.groupId].includes(run.groupId) && run.runId && !run.halted)) fail(localizedMessage("Перед сменой владельца остановите затронутые группы."));
-        if (previous?.groupId) for (const [field, value] of Object.entries({ scripts: [], shops: [], dialogues: [], transitionScripts: {} })) if (!Object.hasOwn(patch, field)) next[field] = value;
+        if (previous?.groupId) {
+          const cleared = clearGroupContent(clone(next));
+          for (const field of ["scripts", "shops", "dialogues", "transitionScripts"]) if (!Object.hasOwn(patch, field)) next[field] = cleared[field];
+        }
       }
       if (!next.groupId) clearGroupContent(next);
       validateObjectBinding(this.scene, next);
@@ -76,6 +79,13 @@ export function resolveObjectTools(scene, target, context, kind) {
 }
 export const resolveObjectShop = (scene, target, context, id) => resolveObjectTools(scene, target, context, "shop").find((entry) => id ? entry.asset.id === id : true) ?? null;
 export const resolveObjectDialogue = (scene, target, context, id) => resolveObjectTools(scene, target, context, "dialogue").find((entry) => id ? entry.asset.id === id : true) ?? null;
+/** Script ownership is independent of a player's state, tag or range policy. */
+export function resolveRegisteredObjectDialogue(scene, target, { groupId }, id) {
+  const binding = getObjectBindings(scene).bindings[objectKey(target)];
+  if (!binding?.groupId || binding.groupId !== groupId || binding.playerCharacter || !registeredToolIds(binding, "dialogue").includes(id)) return null;
+  const asset = getInteractionCatalog(scene).dialogues.find((entry) => entry.id === id);
+  return asset ? { binding, asset, config: { ...clone(asset), enabled: true, dialogueId: asset.id, target: { type: binding.type, id: binding.id } } } : null;
+}
 /** Read catalogs once so every object in the runtime snapshot uses the same preparation. */
 export function materializeState(scene, definition, source) {
   return materializeStateDefinition(getObjectBindings(scene).bindings, getInteractionCatalog(scene), definition, source);
@@ -87,14 +97,13 @@ export function exportObjectConfiguration(scene, groupId, { stateId } = {}) {
   if (stateId) for (const binding of bindings) {
     binding.transitionScripts = binding.transitionScripts[stateId] ? { [stateId]: binding.transitionScripts[stateId] } : {};
     binding.scripts = binding.scripts.filter((script) => script.stateId === stateId);
-    for (const kind of ["shops", "dialogues"]) binding[kind] = binding[kind].filter((ref) => !ref.stateIds.length || ref.stateIds.includes(stateId)).map((ref) => ({ ...ref, stateIds: [stateId] }));
-    // Do not broaden a dialogue's state availability just to package a script.
-    // The full group is the transferable unit when a retained script depends on
-    // an attachment scoped to a state outside this export.
-    const missingDialogue = bindingScriptSteps(binding).some((step) => step.kind === "dialogue" && step.parameters.dialogueId
-      && !binding.dialogues.some((reference) => reference.dialogueId === step.parameters.dialogueId));
-    if (missingDialogue) fail(text("Скрипт ссылается на диалог, не включённый в выбранное состояние. Экспортируйте всю группу.",
-      "A script refers to a dialogue not included in the selected state. Export the entire group."));
+    // Registration is object-wide; only player assignments are scoped to the
+    // exported state. Scripts retain their tools without broadening player access.
+    for (const kind of ["shop", "dialogue"]) {
+      const registered = registeredToolIds(binding, kind);
+      binding[`${kind}s`] = binding[`${kind}s`].filter((ref) => ref.playerAction !== false && (!ref.stateIds.length || ref.stateIds.includes(stateId))).map((ref) => ({ ...ref, stateIds: [stateId] }));
+      for (const id of registered) if (!registeredToolIds(binding, kind).includes(id)) binding[`${kind}s`].push(toolRegistration(kind, id));
+    }
   }
   const assets = getInteractionCatalog(scene), keys = new Set(bindings.map(objectKey));
   const interactionCatalog = { schemaVersion: 1, revision: 0, shops: assets.shops.filter((asset) => bindings.some((b) => b.shops.some((ref) => ref.shopId === asset.id))),

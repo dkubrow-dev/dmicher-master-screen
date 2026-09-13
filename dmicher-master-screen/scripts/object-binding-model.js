@@ -17,12 +17,17 @@ export function objectKey({ type, id }) { if (!Object.hasOwn(collections, type) 
 function references(raw, kind) {
   if (!Array.isArray(raw ?? []) || (raw?.length ?? 0) > 100) fail(localizedMessage("Слишком много инструментов объекта."));
   return (raw ?? []).map((entry) => {
+    if (entry.playerAction !== undefined && typeof entry.playerAction !== "boolean") fail(text("Доступ игрока должен быть логическим значением.", "Player access must be a boolean."));
     const range = entry.range ?? 5;
     if (!validId(entry[`${kind}Id`])) fail(localizedMessage("Выберите инструмент из каталога."));
     if (!Number.isFinite(range) || range < 0 || range > 100000) fail(localizedMessage("Дальность должна быть неотрицательным числом."));
-    return { [`${kind}Id`]: entry[`${kind}Id`], stateIds: ids(entry.stateIds), range, conditions: normalizeConditions(entry.conditions) };
+    return { [`${kind}Id`]: entry[`${kind}Id`], ...(entry.playerAction === false ? { playerAction: false } : {}), stateIds: ids(entry.stateIds), range, conditions: normalizeConditions(entry.conditions) };
   });
 }
+/** A player assignment also registers its tool. A registration-only entry never
+ * admits player interaction, regardless of its condition values. */
+export const registeredToolIds = (binding, kind) => [...new Set((binding?.[`${kind}s`] ?? []).map((entry) => entry[`${kind}Id`]))];
+export const toolRegistration = (kind, id) => ({ [`${kind}Id`]: id, playerAction: false, stateIds: [], range: 5, conditions: normalizeConditions({ enabled: false }) });
 export function normalizeObjectBinding(raw) {
   objectKey(raw);
   if (raw.groupId != null && !validId(raw.groupId)) fail(localizedMessage("Неверный ID группы объекта."));
@@ -58,7 +63,7 @@ export function bindingScriptSteps(binding) {
 export function validateBindingReferences(binding, { definitions, signals, macros, assets }) {
   const group = definitions.find((entry) => entry.groupId === binding.groupId), stateIds = new Set(group?.states.map((state) => state.id) ?? []);
   if (binding.groupId && !group) fail(localizedMessage("Назначенная группа больше не существует."));
-  if (!group && (binding.scripts.length || Object.keys(binding.transitionScripts).length || binding.shops.length || binding.dialogues.length)) fail(localizedMessage("Сначала назначьте объект группе."));
+  if (!group && (binding.scripts.length || Object.keys(binding.transitionScripts).length || [...binding.shops, ...binding.dialogues].some((entry) => entry.playerAction !== false))) fail(localizedMessage("Сначала назначьте объект группе."));
   if (binding.playerCharacter && binding.type !== "Token") fail(localizedMessage("Персонажем игрока может быть только токен."));
   const checkStates = (values) => { if (values.some((id) => !stateIds.has(id))) fail(localizedMessage("Настройка ссылается на отсутствующее состояние группы.")); };
   checkStates(Object.keys(binding.transitionScripts)); checkStates(binding.scripts.map((script) => script.stateId));
@@ -79,20 +84,23 @@ export function validateBindingReferences(binding, { definitions, signals, macro
     }
     if (step.kind === "dialogue" && step.parameters.dialogueId) {
       const id = step.parameters.dialogueId;
-      if (!binding.dialogues.some((reference) => reference.dialogueId === id) || !assets.dialogues.some((dialogue) => dialogue.id === id)) {
-        fail(text("Скрипт может запускать только диалог, прикреплённый к этому объекту.", "A script can start only a dialogue attached to this object."));
+      if (!registeredToolIds(binding, "dialogue").includes(id) || !assets.dialogues.some((dialogue) => dialogue.id === id)) {
+        fail(text("Скрипт может запускать только диалог, зарегистрированный в свойствах этого объекта.", "A script can start only a dialogue registered in this object's properties."));
       }
     }
     if (step.kind === "macro" && !macros.some((macro) => macro.ownerKey === ownerKey && macro.uuid === step.parameters.macroUuid)) fail(localizedMessage("Скрипт может вызвать только макрос своего объекта."));
   }
   for (const kind of ["shop", "dialogue"]) for (const reference of binding[`${kind}s`]) {
     if (!assets[`${kind}s`].some((asset) => asset.id === reference[`${kind}Id`])) fail(localizedMessage("Инструмент больше не существует."));
+    if (reference.playerAction === false) continue;
     checkStates(reference.stateIds); checkStates(reference.conditions.stateIds);
     if (reference.conditions.groupIds.some((id) => id !== binding.groupId)) fail(localizedMessage("Условия объекта не могут ссылаться на чужую группу."));
   }
 }
 
-export const clearGroupContent = (binding) => Object.assign(binding, { transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
+export const clearGroupContent = (binding) => Object.assign(binding, { transitionScripts: {}, scripts: [],
+  shops: registeredToolIds(binding, "shop").map((id) => toolRegistration("shop", id)),
+  dialogues: registeredToolIds(binding, "dialogue").map((id) => toolRegistration("dialogue", id)) });
 export function reconcileBindingGroups(raw, previous, definitions) {
   const next = clone(raw); let changed = false;
   for (const binding of Object.values(next.bindings)) {
@@ -104,10 +112,14 @@ export function reconcileBindingGroups(raw, previous, definitions) {
     changed = true;
     for (const id of removed) delete binding.transitionScripts[id];
     binding.scripts = binding.scripts.filter((script) => !removed.includes(script.stateId));
-    for (const kind of ["shops", "dialogues"]) binding[kind] = binding[kind].filter((ref) => !ref.stateIds.length || !ref.stateIds.every((id) => removed.includes(id))).map((ref) => ({ ...ref,
+    for (const kind of ["shops", "dialogues"]) {
+      const registered = registeredToolIds(binding, kind.slice(0, -1));
+      binding[kind] = binding[kind].filter((ref) => ref.playerAction === false || !ref.stateIds.length || !ref.stateIds.every((id) => removed.includes(id))).map((ref) => ({ ...ref,
       stateIds: ref.stateIds.filter((id) => !removed.includes(id)), conditions: { ...ref.conditions,
         enabled: ref.conditions.enabled && !(ref.conditions.stateIds.length && ref.conditions.stateIds.every((id) => removed.includes(id))),
         stateIds: ref.conditions.stateIds.filter((id) => !removed.includes(id)) } }));
+      for (const id of registered) if (!registeredToolIds(binding, kind.slice(0, -1)).includes(id)) binding[kind].push(toolRegistration(kind.slice(0, -1), id));
+    }
   }
   if (!changed) return null;
   next.revision++; return next;
@@ -117,7 +129,7 @@ export function resolveBindingTools(binding, catalog, context, kind) {
   if (!binding?.groupId || binding.playerCharacter || binding.groupId !== context.groupId) return [];
   const { collection, referenceId } = interactionType(kind), assets = catalog[collection];
   const seen = new Set();
-  return binding[collection].filter((ref) => !ref.stateIds.length || ref.stateIds.includes(context.stateId)).flatMap((reference) => {
+  return binding[collection].filter((ref) => ref.playerAction !== false && (!ref.stateIds.length || ref.stateIds.includes(context.stateId))).flatMap((reference) => {
     const asset = assets.find((entry) => entry.id === reference[referenceId]);
     if (!asset || seen.has(asset.id)) return [];
     seen.add(asset.id);

@@ -3,6 +3,7 @@ import { ScreenFormApplication } from "./screen-form.js";
 import { themedClasses, notifyError } from "../ui.js";
 import { currentScene, getDefinitions, getObjectTags } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
+import { registeredToolIds, toolRegistration } from "../object-binding-model.js";
 import { getInteractionCatalog } from "../scene-assets.js";
 import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
 import { normalizeConditions } from "../model.js";
@@ -11,6 +12,8 @@ import { buildScriptFields, readScriptFields, bindScriptSorting } from "./script
 import { appendScriptStep, removeScriptStep } from "../script-editing.js";
 import { escapeHTML as e, formValue as value, actionButton as button, textInput as input, selectOptions } from "./form-fields.js";
 import { completeScriptParameters, bindScriptParameters } from "./script-parameters.js";
+import { exportScriptBlock, importScriptBlock } from "../script-transfer.js";
+import { generics } from "../generics.js";
 import { readObjectGeometry } from "../script-movement.js";
 import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 
@@ -19,6 +22,8 @@ const options = (items, current, empty = t("Не выбрано", "Not selected"
 const section = (title, body) => `<section class="ms-object-feature"><h3>${e(title)}</h3>${body}</section>`;
 const layout = (body, nav = "") => nav + `<div class="ms-object-scroll">${body}</div><footer>${button("cancel", t("Закрыть", "Close"))}${button("save", t("Сохранить", "Save"))}</footer>`;
 const newScript = (name, stateId) => ({ ...(stateId ? { stateId } : {}), name, enabled: true, repeat: false, steps: [] });
+const toolKinds = ["shop", "dialogue"];
+const toolTitle = (kind) => kind === "shop" ? t("Магазины", "Shops") : t("Диалоги", "Dialogues");
 const fieldKey = (input) => {
   if (input?.name) return JSON.stringify([input.name, input.type]);
   const step = input?.closest?.("[data-script-step]"), data = input?.dataset ?? {};
@@ -70,7 +75,7 @@ class ObjectForm extends ScreenFormApplication {
   }
   refresh() {
     if (this.persistTask) return;
-    if (this.rendered && !this.dirty) this.reloadRequested = true;
+    if ((this.rendered || this.refreshTask) && !this.dirty) this.reloadRequested = true;
     return super.refresh();
   }
   captureRefreshDraft() {
@@ -141,10 +146,10 @@ export class ObjectInfoApplication extends ObjectForm {
 
 export class ObjectBehaviorApplication extends ObjectForm {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-behavior"), position: { width: 790, height: 740 }, window: { resizable: true } };
-  tab = "transitions"; selectedScript = null; selectedFeature = null; signalDraft = null; subscriptionDraft = null; validation = null;
+  tab = "properties"; selectedScript = null; selectedFeature = null; signalDraft = null; subscriptionDraft = null; validation = null;
   get title() { return t("Поведение объекта", "Object behavior"); }
   scriptParameterContext(context = this.context()) {
-    const ownDialogues = new Set((this.draft.dialogues ?? []).map((entry) => entry.dialogueId));
+    const ownDialogues = new Set(registeredToolIds(this.draft, "dialogue"));
     return { ownerKey: this.ownerKey, document: context.document, definitions: context.definitions,
       dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
       catalog: getSignalCatalog(context.scene) };
@@ -154,7 +159,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   reconcileSelection(previous) {
     if (this.selectedFeature) {
       const { kind, index } = this.selectedFeature, reference = previous?.[`${kind}s`]?.[index];
-      const key = (entry) => JSON.stringify([entry[`${kind}Id`], [...(entry.stateIds ?? [])].sort()]);
+      const key = (entry) => JSON.stringify([entry[`${kind}Id`], entry.playerAction !== false, [...(entry.stateIds ?? [])].sort()]);
       const next = reference ? this.draft[`${kind}s`].findIndex((entry) => key(entry) === key(reference)) : -1;
       this.selectedFeature = next < 0 ? null : { kind, index: next };
     }
@@ -169,14 +174,14 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   async _prepareContext() {
     const context = this.context({ reload: true }), { definition } = context;
-    const nav = `<nav class="ms-object-tabs">${[["transitions", t("Переходы", "Transitions")], ["features", t("Особенности", "Features")], ["routine", t("Рутина", "Routine")], ["automation", t("Автоматизация", "Automation")]].map(([tab, name]) => button("tab", name, `data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")}</nav>`;
+    const nav = `<nav class="ms-object-tabs">${[["properties", t("Свойства", "Properties")], ["transitions", t("Переходы", "Transitions")], ["player-actions", t("Действия игроков", "Player actions")], ["routine", t("Рутина", "Routine")]].map(([tab, name]) => button("tab", name, `data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")}</nav>`;
     let body;
-    if (this.tab === "automation") {
+    if (this.tab === "properties") {
       const catalog = getSignalCatalog(context.scene);
       this.macroValidation = new Map(await Promise.all(catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey).map(async (macro) => [macro.uuid, await macroValidationSummary(catalog, macro)])));
-      body = this.automationFields(context);
+      body = this.propertyFields(context);
     }
-    else if (this.tab === "features") body = this.featureFields(context);
+    else if (this.tab === "player-actions") body = this.playerActionFields(context);
     else {
       body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p><div class="ms-initial-script-actions">${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}</div>`) : "";
       body += definition ? this.stateScriptTable(definition, this.tab === "transitions" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
@@ -187,33 +192,106 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   scriptEntry(script, kind, stateId = "") { const attrs = `data-kind="${kind}" data-state-id="${e(stateId)}"`; return `<span>${e(script?.name || "—")}</span>${button("edit-script", script ? t("Править", "Edit") : t("Создать", "Create"), attrs)}${script ? button("delete-script", "×", attrs) : ""}`; }
   stateScriptTable(group, kind) { return section(t("Состояния", "States"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Скрипт", "Script")}</th></tr></thead><tbody>${group.states.map((state) => `<tr><td>${e(state.name)}</td><td>${this.scriptEntry(kind === "transition" ? this.draft.transitionScripts?.[state.id] : this.draft.scripts?.find((script) => script.stateId === state.id), kind, state.id)}</td></tr>`).join("")}</tbody></table>`); }
-  featureFields({ definition, catalog }) {
+  registeredTools(kind, catalog) {
+    const ids = new Set(registeredToolIds(this.draft, kind));
+    return catalog[`${kind}s`].filter((asset) => ids.has(asset.id));
+  }
+  registrationFields(catalog) {
+    return toolKinds.map((kind) => {
+      const ids = registeredToolIds(this.draft, kind), available = catalog[`${kind}s`].filter((asset) => !ids.includes(asset.id));
+      const rows = ids.map((id) => {
+        const asset = catalog[`${kind}s`].find((entry) => entry.id === id), attrs = `data-kind="${kind}" data-id="${e(id)}"`;
+        return `<tr><td>${e(asset?.name ?? id)}${asset ? "" : ` · ${t("Недоступно", "Unavailable")}`}</td><td>${asset ? button("open-registered-tool", t("Открыть", "Open"), attrs) : ""}${button("unregister-tool", "×", `${attrs} aria-label="${e(t("Убрать из свойств", "Remove from properties"))}"`)}</td></tr>`;
+      }).join("");
+      return section(toolTitle(kind), `<table class="ms-object-registration"><tbody>${rows}</tbody></table><div class="ms-object-registration-add"><select name="register-${kind}" aria-label="${e(toolTitle(kind))}"${available.length ? "" : " disabled"}>${options(available, available[0]?.id)}</select>${button("register-tool", t("Добавить", "Add"), `data-kind="${kind}"${available.length ? "" : " disabled"}`)}</div>`);
+    }).join("");
+  }
+  playerActionFields({ definition, catalog }) {
     if (!definition) return `<p>${t("Назначьте объекту группу.", "Assign the object to a group.")}</p>`;
-    let html = ["shop", "dialogue"].map((kind) => section(kind === "shop" ? t("Магазины", "Shops") : t("Диалоги", "Dialogues"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Инструменты", "Tools")}</th></tr></thead><tbody>${definition.states.map((state) => `<tr><td>${e(state.name)}</td><td>${(this.draft[`${kind}s`] ?? []).map((entry, index) => ({ entry, index })).filter(({ entry }) => !entry.stateIds?.length || entry.stateIds.includes(state.id)).map(({ entry, index }) => `<div>${e(catalog[`${kind}s`].find((asset) => asset.id === entry[`${kind}Id`])?.name ?? entry[`${kind}Id`])}${button("edit-feature", t("Править", "Edit"), `data-kind="${kind}" data-index="${index}"`)}${button("remove-feature", "×", `data-kind="${kind}" data-index="${index}"`)}</div>`).join("")}${button("add-feature", "+", `data-kind="${kind}" data-state-id="${e(state.id)}"`)}</td></tr>`).join("")}</tbody></table>`)).join("");
-    const ref = this.selectedFeature, binding = ref && this.draft[`${ref.kind}s`]?.[ref.index];
-    if (binding) html += section(t("Настройка взаимодействия", "Interaction settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(catalog[`${ref.kind}s`], binding[`${ref.kind}Id`])}</select></label>${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
+    let html = toolKinds.map((kind) => {
+      const registered = this.registeredTools(kind, catalog);
+      const rows = definition.states.map((state) => {
+        const assignments = (this.draft[`${kind}s`] ?? []).map((entry, index) => ({ entry, index }))
+          .filter(({ entry }) => entry.playerAction !== false && (!entry.stateIds?.length || entry.stateIds.includes(state.id)))
+          .map(({ entry, index }) => `<div>${e(catalog[`${kind}s`].find((asset) => asset.id === entry[`${kind}Id`])?.name ?? entry[`${kind}Id`])}${button("edit-feature", t("Править", "Edit"), `data-kind="${kind}" data-index="${index}"`)}${button("remove-feature", "×", `data-kind="${kind}" data-index="${index}"`)}</div>`).join("");
+        return `<tr><td>${e(state.name)}</td><td>${assignments}${button("add-feature", "+", `data-kind="${kind}" data-state-id="${e(state.id)}"${registered.length ? "" : " disabled"}`)}</td></tr>`;
+      }).join("");
+      const hint = registered.length ? "" : `<p class="ms-note">${t("Сначала добавьте инструмент в «Свойствах» объекта.", "First add a tool in the object's Properties.")}</p>`;
+      return section(toolTitle(kind), `${hint}<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Инструменты", "Tools")}</th></tr></thead><tbody>${rows}</tbody></table>`);
+    }).join("");
+    const ref = this.selectedFeature, binding = this.activeFeature();
+    if (binding && binding.playerAction !== false) html += section(t("Настройка действия игрока", "Player action settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(this.registeredTools(ref.kind, catalog), binding[`${ref.kind}Id`])}</select></label>${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
     return html;
   }
-  automationFields({ scene }) {
+  propertyFields({ scene, catalog: assets }) {
     const catalog = getSignalCatalog(scene), signals = catalog.signals.filter((signal) => signal.emitterKey === this.ownerKey), macros = catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey);
     const scripts = [this.draft.initialScript, ...Object.values(this.draft.transitionScripts ?? {}), ...(this.draft.scripts ?? [])].filter(Boolean);
-    let html = section(t("Сигналы объекта", "Object signals"), `<table><tbody>${signals.map((signal) => `<tr><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
-    if (this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
+    let html = this.registrationFields(assets);
     html += section(t("Макросы объекта", "Object macros"), `<div data-object-macro-drop><table><tbody>${macros.map((macro) => `<tr><td>${e(macroName(macro.uuid))}<small>${e(scripts.filter((script) => script.steps.some((step) => step.kind === "macro" && step.parameters.macroUuid === macro.uuid)).map((script) => script.name).join(", "))}</small></td><td>${e(this.macroValidation?.get(macro.uuid)?.text ?? "")}</td><td>${button("edit-object-macro", t("Править", "Edit"), `data-uuid="${e(macro.uuid)}"`)}${button("remove-object-macro", "×", `data-uuid="${e(macro.uuid)}"`)}</td></tr>`).join("")}</tbody></table><p class="ms-note">${t("Перетащите макрос Foundry сюда. Подписки проверяются при сохранении.", "Drop a Foundry macro here. Subscriptions are validated when saved.")}</p>${button("create-object-macro", `+ ${t("Макрос", "Macro")}`)}</div>`);
     html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog));
     if (this.subscriptionDraft) html += renderSubscriptionFields(this.subscriptionDraft, catalog, { fixedOwner: this.ownerKey });
+    html += section(t("Сигналы объекта", "Object signals"), `<table><tbody>${signals.map((signal) => `<tr><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
+    if (this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
     return html + renderMacroValidation(this.validation);
   }
   capture() {
     if (!this.draft || !this.element) return;
     if (["routine", "transitions"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
-    if (this.tab === "features" && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) { const ref = this.selectedFeature, conditions = readConditionFields(this.element, "feature-conditions"); this.draft[`${ref.kind}s`][ref.index] = { ...this.activeFeature(), [`${ref.kind}Id`]: value(this.element, "feature-asset"), stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions }; }
-    if (this.tab === "automation") { if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
+    if (this.tab === "player-actions" && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) {
+      const ref = this.selectedFeature, previous = this.activeFeature(), key = `${ref.kind}Id`, id = value(this.element, "feature-asset") || previous[key];
+      if (!registeredToolIds(this.draft, ref.kind).includes(id)) throw new Error(t("Сначала добавьте инструмент в «Свойствах» объекта.", "First add a tool in the object's Properties."));
+      const conditions = readConditionFields(this.element, "feature-conditions"), next = { ...previous, [key]: id, playerAction: true, stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions };
+      this.draft[`${ref.kind}s`][ref.index] = next;
+      // Keep row indexes stable until this DOM is replaced: another action may
+      // already refer to a row in the same form. Registrations are deduplicated by ID.
+      this.keepRegistration(ref.kind, previous[key]);
+    }
+    if (this.tab === "properties") { if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
+  }
+  keepRegistration(kind, id) {
+    if (!registeredToolIds(this.draft, kind).includes(id)) (this.draft[`${kind}s`] ??= []).push(toolRegistration(kind, id));
+  }
+  onDraftInput(event) { return event.target?.type !== "file"; }
+  createScriptTransfer() {
+    const selected = clone(this.selectedScript), script = this.activeScript(), eventSignal = this.events?.signal;
+    const target = { stateId: selected?.kind === "routine" ? selected.stateId : undefined };
+    const references = () => {
+      this.assertCurrentScene();
+      if (!game.user?.isGM) throw new Error(t("Изменять скрипты может только мастер.", "Only a GM can edit scripts."));
+      if (!script || this.activeScript() !== script || JSON.stringify(this.selectedScript) !== JSON.stringify(selected)
+        || this.events?.signal !== eventSignal || eventSignal?.aborted || this.persistTask) {
+        throw new Error(t("Блок скрипта изменился. Повторите импорт или экспорт.", "The script block changed. Repeat the import or export."));
+      }
+      const current = this.context(), catalog = getSignalCatalog(current.scene);
+      return { binding: this.draft, definitions: current.definitions, signals: catalog.signals, macros: catalog.macros, assets: current.catalog };
+    };
+    return generics.components.createJSONTransfer({
+      filename: () => `master-screen-script-${script?.name || selected?.kind || "block"}.json`,
+      validate: (envelope) => { const refs = references(); return exportScriptBlock(importScriptBlock(envelope, target, refs), refs); },
+      exportValue: () => exportScriptBlock(readScriptFields(this.element, [script])[0], references()),
+      importValue: async (envelope) => {
+        const replacement = importScriptBlock(envelope, target, references());
+        const accepted = await foundry.applications.api.DialogV2.confirm({
+          window: { title: t("Импорт блока скрипта", "Import script block") },
+          content: `<p>${t("Заменить выбранный блок содержимым JSON? Другие блоки останутся без изменений. Импорт потребуется сохранить.", "Replace the selected block with this JSON? Other blocks stay unchanged. Save to apply the import.")}</p>`, rejectClose: false
+        });
+        if (!accepted) return;
+        // Refreshes and reference changes while the confirmation was open must
+        // be checked again; importing never promotes the form's saved revision.
+        importScriptBlock(envelope, target, references());
+        this.setActiveScript(replacement); this.dirty = true;
+        await this.render({ force: true });
+      }, onError: notifyError
+    });
   }
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = { signal: this.events.signal };
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
     bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
+    if (this.activeScript() && this.element.querySelector('[data-dmicher-json-id="script-block-0"]')) {
+      const dispose = this.createScriptTransfer().bind(this.element, "script-block-0");
+      this.events.signal.addEventListener("abort", dispose, { once: true });
+    }
     const disposeSignalFields = bindSignalFields(this.element, { getSignal: () => this.signalDraft, onChange: () => { this.capture(); this.dirty = true; }, onError: notifyError });
     this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
     this.element.addEventListener("change", (event) => { const target = event.target; try {
@@ -251,14 +329,33 @@ export class ObjectBehaviorApplication extends ObjectForm {
       } else { const Picker = foundry.applications.apps?.FilePicker?.implementation ?? globalThis.FilePicker; new Picker({ type: "audio", current: step.parameters.src ?? "", callback: (src) => { step.parameters.src = src; this.dirty = true; void this.render({ force: true }); } }).browse(); return; }
       this.dirty = true;
     }
+    else if (["register-tool", "unregister-tool", "open-registered-tool"].includes(action)) {
+      const kind = target.dataset.kind;
+      if (!toolKinds.includes(kind)) return;
+      const id = action === "register-tool" ? value(this.element, `register-${kind}`) : target.dataset.id;
+      if (action === "unregister-tool") {
+        this.draft[`${kind}s`] = (this.draft[`${kind}s`] ?? []).filter((entry) => entry[`${kind}Id`] !== id);
+        this.selectedFeature = null; this.dirty = true;
+      } else if (!context.catalog[`${kind}s`].some((asset) => asset.id === id)) return this.render({ force: true });
+      else if (action === "open-registered-tool") {
+        if (registeredToolIds(this.draft, kind).includes(id)) return this.controller.openAsset(kind, id);
+      } else { this.keepRegistration(kind, id); this.dirty = true; }
+    }
     else if (["add-feature", "edit-feature", "remove-feature"].includes(action)) {
-      const kind = target.dataset.kind, entries = this.draft[`${kind}s`] ??= [], index = Number(target.dataset.index);
+      const kind = target.dataset.kind;
+      if (!toolKinds.includes(kind)) return;
+      const entries = this.draft[`${kind}s`] ??= [], index = Number(target.dataset.index);
       if (action === "add-feature") {
         if (!context.definition?.states.some((state) => state.id === target.dataset.stateId)) return this.render({ force: true });
-        entries.push({ [`${kind}Id`]: context.catalog[`${kind}s`][0]?.id ?? "", stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) }); this.selectedFeature = { kind, index: entries.length - 1 }; this.dirty = true;
-      } else if (!entries[index]) { this.selectedFeature = null; return this.render({ force: true }); }
+        const id = this.registeredTools(kind, context.catalog)[0]?.id;
+        if (!id) return this.render({ force: true });
+        const next = { [`${kind}Id`]: id, playerAction: true, stateIds: [target.dataset.stateId], range: 5, conditions: normalizeConditions({ repeat: "always", stateIds: [target.dataset.stateId] }) };
+        const registration = entries.findIndex((entry) => entry[`${kind}Id`] === id && entry.playerAction === false);
+        if (registration < 0) entries.push(next); else entries[registration] = next;
+        this.selectedFeature = { kind, index: entries.indexOf(next) }; this.dirty = true;
+      } else if (!entries[index] || entries[index].playerAction === false) { this.selectedFeature = null; return this.render({ force: true }); }
       else if (action === "edit-feature") this.selectedFeature = { kind, index };
-      else { entries.splice(index, 1); this.selectedFeature = null; this.dirty = true; }
+      else { const [removed] = entries.splice(index, 1); this.keepRegistration(kind, removed[`${kind}Id`]); this.selectedFeature = null; this.dirty = true; }
     }
     else if (action === "open-asset") {
       const ref = this.selectedFeature, binding = this.activeFeature(), id = ref && binding?.[`${ref.kind}Id`];
