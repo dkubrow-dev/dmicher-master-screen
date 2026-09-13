@@ -67,6 +67,51 @@ test("movement combines position, rotation and resize with a shared duration and
   f.object.x = 10; f.object.rotation = 0; await f.tick(3); assert.equal(f.object.x, 55); assert.equal(f.object.rotation, 45);
   await f.tick(3); assert.equal(f.object.x, 100); assert.equal(f.object.rotation, 90); assert.equal(f.object.height, 3);
 });
+function laggingNativeToken(scene, data = {}) {
+  const source = { x: 0, y: 0, width: 1, height: 1, rotation: 0, ...data };
+  const writes = [], collisions = [];
+  const object = { ...source, _source: source, documentName: "Token", parent: scene,
+    object: { checkCollision(destination, options) { collisions.push({ destination, ...options }); return false; } },
+    async update(changes, options) {
+      writes.push({ from: { ...this._source }, changes: clone(changes), options: clone(options) });
+      // As in Foundry's animateFrame, the prepared document can still show the
+      // previous portion while its source already stores the new endpoint.
+      Object.assign(this, this._source); Object.assign(this._source, changes);
+    } };
+  return { object, writes, collisions };
+}
+test("speed movement retains uniform speed through a short final slice despite native animation lag", async () => {
+  const scene = { grid: { size: 100, distance: 5 } }, { object, writes, collisions } = laggingNativeToken(scene);
+  const movement = planScriptMovement(scene, object, { timeMode: "speed", position: { x: 105, y: 0, speed: 5 } });
+  for (const seconds of [0.1, 0.3, 0.6, 0.05]) await advanceScriptMovement(scene, object, movement, seconds);
+  assert.equal(object._source.x, 105); assert.equal(movement.remainingMs, 0);
+  assert.deepEqual(writes.map(({ from, changes, options }) => (changes.x - from.x) / options.animation.duration * 1000), [100, 100, 100, 100]);
+  assert.deepEqual(writes.map(({ options }) => options.animation.duration), [100, 300, 600, 50]);
+  assert.deepEqual(collisions.map(({ origin }) => origin.x), [50, 60, 90, 150]);
+});
+test("coarse movement carries fractional coordinates instead of accumulating rounding into the last slice", async () => {
+  const scene = { grid: { size: 100, distance: 5 } }, { object, writes } = laggingNativeToken(scene);
+  let movement = planScriptMovement(scene, object, { timeMode: "speed", position: { x: 5, y: 0, speed: 0.125 } });
+  for (let portion = 1; portion <= 16; portion++) {
+    await advanceScriptMovement(scene, object, movement, 0.125);
+    assert.ok(Math.abs(object._source.x - 5 * portion / 16) <= 0.5);
+    movement = structuredClone(movement);
+  }
+  assert.equal(object._source.x, 5); assert.equal(movement.remainingMs, 0);
+  assert.equal(writes.length, 5);
+});
+test("movement accepts saved manual changes without rebasing onto transient animated coordinates", async () => {
+  const scene = { grid: { size: 100, distance: 5 } }, { object } = laggingNativeToken(scene);
+  const movement = planScriptMovement(scene, object, { timeMode: "duration", duration: 10,
+    position: { x: 100, y: 0, speed: 5 }, rotation: { mode: "absolute", angle: 90, speed: 90 }, size: { x: 2, y: 3, speed: 1 } });
+  await advanceScriptMovement(scene, object, movement, 4);
+  Object.assign(object._source, { x: 10, rotation: 0, width: 1 });
+  Object.assign(object, { x: 999, rotation: 222, width: 9 });
+  await advanceScriptMovement(scene, object, movement, 3);
+  assert.equal(object._source.x, 55); assert.equal(object._source.rotation, 45); assert.equal(object._source.width, 1.5);
+  await advanceScriptMovement(scene, object, movement, 3);
+  assert.equal(object._source.x, 100); assert.equal(object._source.rotation, 90); assert.equal(object._source.width, 2);
+});
 test("movement already at its full target keeps its duration without native document writes", async () => {
   const f = fixture({ steps: [step(1, "move", { duration: 1, position: { x: 0, y: 0 }, rotation: { mode: "absolute", angle: 0 }, size: { x: 1, y: 1 } })] });
   let writes = 0; f.object.update = async () => { writes++; };

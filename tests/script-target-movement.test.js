@@ -75,6 +75,21 @@ test("approach speed uses scene distance and invalid or own targets perform no m
   }
   assert.equal(f.npc.x, 0);
 });
+test("approach and follow use saved boundaries while both tokens have in-flight native animations", async () => {
+  const f = fixture();
+  for (const object of [f.npc, f.target]) {
+    object._source = { x: object.x, y: object.y, width: object.width, height: object.height, rotation: object.rotation };
+    object.x = 999; object.width = 20;
+    object.update = async function(changes) { Object.assign(this._source, changes); };
+  }
+  const approach = planScriptApproach(f.scene, f.npc, parameters("approach", { timeMode: "speed", speed: 10 }));
+  assert.ok(Math.abs(approach.target.x - 400) < 0.000001); assert.ok(Math.abs(approach.durationMs - 2000) < 0.000001);
+  const p = parameters("follow", { mode: "direct", minDistance: 1, maxDistance: 5 }), follow = planScriptFollow(f.scene, f.npc, p);
+  assert.deepEqual(follow.lastTarget, { x: 550, y: 50 });
+  for (let i = 0; i < 3; i++) assert.equal((await advanceScriptFollow(f.scene, f.npc, follow, p, 1)).done, false);
+  assert.equal((await advanceScriptFollow(f.scene, f.npc, follow, p, 1)).done, true);
+  assert.equal(f.npc._source.x, 380);
+});
 test("follow catches up by speed to the minimum boundary gap and supports both arrival and continuous modes", async () => {
   const f = fixture(), p = parameters("follow", { mode: "direct", minDistance: 1, maxDistance: 5 });
   const progress = planScriptFollow(f.scene, f.npc, p);

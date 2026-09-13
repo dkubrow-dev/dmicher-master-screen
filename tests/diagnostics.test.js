@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { debugTrace, debugError, signalTrace } from "../dmicher-master-screen/scripts/debug.js";
-import { getDiagnosticEntries, clearDiagnostics, subscribeDiagnostics, diagnosticSnapshot, DIAGNOSTIC_LIMIT } from "../dmicher-master-screen/scripts/diagnostics.js";
+import { getDiagnosticEntries, getDiagnosticUpdate, clearDiagnostics, subscribeDiagnostics, diagnosticSnapshot, DIAGNOSTIC_LIMIT } from "../dmicher-master-screen/scripts/diagnostics.js";
 
 function fixture(t, enabled = false) {
   globalThis.game = { user: { isGM: true }, settings: { get: () => enabled } };
@@ -91,4 +91,32 @@ test("non-Error exceptions and failing error getters still produce readable reco
   assert.doesNotThrow(() => debugError("script", "failed", error));
   debugError("script", "failed", null); debugError("script", "failed", undefined);
   assert.deepEqual(getDiagnosticEntries().map(entry => entry.error.message), ["[Unavailable]", "null", "undefined"]);
+});
+
+test("incremental reads clone only new entries and retain an eviction cursor across filters and clears", (t) => {
+  const f = fixture(t, true);
+  signalTrace("emitted", { sceneId: "a", parameters: { value: 1 } });
+  let update = getDiagnosticUpdate({ sceneId: "a" });
+  const firstId = update.firstId;
+  assert.equal(update.entries.length, 1);
+  update.entries[0].context.parameters.value = 5;
+  assert.equal(getDiagnosticUpdate({ sceneId: "a" }).entries[0].context.parameters.value, 1);
+  const priorCursor = update.cursor;
+  debugTrace("script", "hidden", { sceneId: "a" });
+  signalTrace("emitted", { sceneId: "b" });
+  update = getDiagnosticUpdate({ sceneId: "a", afterId: update.cursor });
+  assert.equal(update.entries.length, 0);
+  assert.ok(update.cursor > priorCursor, "hidden entries still advance the cursor");
+  assert.equal(getDiagnosticUpdate({ sceneId: "a", includeDebug: true }).entries.length, 2);
+  f.setDebug(false);
+  for (let i = 0; i < DIAGNOSTIC_LIMIT; i++) signalTrace("emitted", { sceneId: "b" });
+  update = getDiagnosticUpdate({ sceneId: "a", afterId: update.cursor });
+  assert.equal(update.entries.length, 0);
+  assert.ok(update.firstId > firstId, "another scene's traffic can expire visible rows");
+  clearDiagnostics();
+  update = getDiagnosticUpdate();
+  assert.equal(update.entries.length, 0);
+  assert.equal(update.firstId, update.cursor + 1);
+  game.user.isGM = false;
+  assert.deepEqual(getDiagnosticUpdate({ includeDebug: true }), { entries: [], cursor: 0, firstId: Infinity });
 });

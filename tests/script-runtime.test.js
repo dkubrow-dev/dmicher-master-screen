@@ -272,9 +272,9 @@ test("a deleted object or replaced group during restoration cannot leave a stuck
 test("an old restoration callback cannot cancel its replacement and ungrouped prepared objects can restore", async () => {
   const f = await fixture({ initial: script([step(1, "wait", { seconds: 1 }, [2]), step(2, "visibility", { visible: false })]) });
   f.flags.objectBindings.bindings["Token:npc"].groupId = null;
-  await f.runtime.restoreAllInitial(f.scene); const old = f.runtime.sceneRestoration;
-  await f.runtime.restoreAllInitial(f.scene); const replacement = f.runtime.sceneRestoration;
-  assert.notEqual(replacement.id, old.id); assert.equal(await f.runtime.selectInitialStates(f.scene, old), false); assert.equal(f.runtime.sceneRestoration, replacement);
+  await f.runtime.restoreAllInitial(f.scene); const old = [...f.runtime.restorations.values()][0];
+  await f.runtime.restoreAllInitial(f.scene); const replacement = [...f.runtime.restorations.values()][0];
+  assert.notEqual(replacement.id, old.id); assert.equal(await f.runtime.selectInitialStates(f.scene, old), false); assert.equal(f.runtime.restorations.get(replacement.id), replacement);
   await f.tick(); await f.tick(); await f.tick(); await f.tick();
   assert.equal(f.npc.hidden, true); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.flags.automationHalted, true);
 });
@@ -342,6 +342,88 @@ test("canvas refresh restores the saved emotion size and selects it with the lat
   assert.equal(rendered.get("npc").emoji, "");
 });
 const addGroup = (f, groupId) => { f.flags.groupDefinitions[groupId] = { ...defaultDefinition(), groupId, groupName: groupId }; };
+
+test("group start, stop and restore leave another group's lifetime and routine running", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 1 }, [2]), step(2, "move", { duration: 0, position: { x: 0, y: 0 } })]),
+    routine: script([step(1, "wait", { seconds: 2 }, [2]), step(2, "visibility", { visible: false })]) });
+  addGroup(f, "east"); f.flags.objectBindings.bindings["Tile:tile"].groupId = "east";
+  await f.runtime.startGroup(f.scene, "main", "tension"); await f.runtime.startGroup(f.scene, "east");
+  const eastId = getRuntime(f.scene, { groupId: "east" }).runId;
+  await f.runtime.halt(f.scene, { groupId: "main" });
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, false);
+  f.npc.x = 200;
+  const ids = await f.runtime.restoreGroupInitial(f.scene, "main");
+  assert.equal(ids.length, 1); assert.equal(f.runtime.isRestoringInitial(f.scene, "main"), true);
+  assert.equal(f.runtime.isRestoringInitial(f.scene, "east"), false);
+  for (let index = 0; index < 7; index++) await f.tick();
+  assert.equal(f.npc.x, 0); assert.equal(f.tile.hidden, true, "other group's routine completed while the first group restored");
+  assert.equal(getRuntime(f.scene).stateId, "calm"); assert.equal(getRuntime(f.scene).halted, true);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).runId, eastId);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, false);
+  assert.equal(f.flags.automationHalted, false);
+  await f.runtime.startGroup(f.scene, "main");
+  assert.equal(getRuntime(f.scene).halted, false); assert.equal(getRuntime(f.scene, { groupId: "east" }).runId, eastId);
+});
+
+test("two group restorations can run concurrently and stopping one leaves the other alive", async () => {
+  const initial = script([step(1, "wait", { seconds: 1 }, [2]), step(2, "visibility", { visible: false })]);
+  const f = await fixture({ initial }); addGroup(f, "east");
+  Object.assign(f.flags.objectBindings.bindings["Tile:tile"], { groupId: "east", initialScript: initial });
+  await f.runtime.startAll(f.scene);
+  const mainIds = await f.runtime.restoreGroupInitial(f.scene, "main"), eastIds = await f.runtime.restoreGroupInitial(f.scene, "east");
+  assert.equal(f.runtime.restorations.size, 2);
+  await f.runtime.halt(f.scene, { groupId: "main" });
+  assert.equal(f.runtime.owns(f.scene, mainIds[0]), false);
+  assert.equal(f.runtime.owns(f.scene, eastIds[0]), true);
+  await f.runtime.startGroup(f.scene, "main", "tension");
+  assert.equal(f.runtime.owns(f.scene, eastIds[0]), true, "starting a different group preserves restoration ownership");
+  for (let index = 0; index < 5; index++) await f.tick();
+  assert.equal(f.npc.hidden, false); assert.equal(f.tile.hidden, true);
+  assert.equal(getRuntime(f.scene).halted, false); assert.equal(getRuntime(f.scene).stateId, "tension");
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, true);
+  assert.equal(f.runtime.restorations.size, 0);
+});
+
+test("full stop cancels every group restoration and a group start releases only its own stopped state", async () => {
+  const initial = script([step(1, "wait", { seconds: 5 }, [2]), step(2, "visibility", { visible: false })]);
+  const f = await fixture({ initial }); addGroup(f, "east");
+  Object.assign(f.flags.objectBindings.bindings["Tile:tile"], { groupId: "east", initialScript: initial });
+  await f.runtime.restoreGroupInitial(f.scene, "main"); await f.runtime.restoreGroupInitial(f.scene, "east");
+  await f.tick(); await f.runtime.haltAll(f.scene);
+  assert.equal(f.runtime.restorations.size, 0); assert.equal(f.runtime.manualRuns.size, 0);
+  await f.runtime.startGroup(f.scene, "main");
+  assert.equal(f.flags.automationHalted, false); assert.equal(getRuntime(f.scene).halted, false);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, true);
+  for (let index = 0; index < 12; index++) await f.tick();
+  assert.equal(f.npc.hidden, false); assert.equal(f.tile.hidden, false);
+});
+
+test("starting another group after full Stop does not invalidate a scoped restoration", async () => {
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 1 }, [2]), step(2, "visibility", { visible: false })]) });
+  addGroup(f, "east"); await f.runtime.haltAll(f.scene);
+  const [id] = await f.runtime.restoreGroupInitial(f.scene, "main");
+  assert.equal(f.flags.automationHalted, true);
+  await f.runtime.startGroup(f.scene, "east");
+  assert.equal(f.flags.automationHalted, false); assert.equal(f.runtime.owns(f.scene, id), true);
+  for (let index = 0; index < 5; index++) await f.tick();
+  assert.equal(f.npc.hidden, true); assert.equal(getRuntime(f.scene).halted, true);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, false);
+});
+
+test("a slow group validation is independent of another group and is cancelled by its own Stop", async () => {
+  const f = await fixture(); addGroup(f, "east");
+  let begin, release; const began = new Promise(resolve => { begin = resolve; });
+  f.runtime.emitSignal = async (_scene, signal) => {
+    if (signal.emitterKey === "Group:main" && signal.name === "validateStart") { begin(); await new Promise(resolve => { release = resolve; }); }
+    return { allowed: true };
+  };
+  const starting = f.runtime.startGroup(f.scene, "main"); await began;
+  await f.runtime.startGroup(f.scene, "east");
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, false);
+  await f.runtime.halt(f.scene, { groupId: "main" }); release();
+  assert.equal(await starting, null); assert.equal(getRuntime(f.scene).halted, true);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, false);
+});
 test("a state step transitions selected groups, preserves stopped status and retires its own run last", async () => {
   const transitions = [{ groupId: "main", stateId: "tension" }, { groupId: "east", stateId: "tension" }, { groupId: "west", stateId: "tension" }];
   const f = await fixture({ routine: script([step(1, "state", { transitions }, [2]), step(2, "visibility", { visible: false })]) });
@@ -455,6 +537,12 @@ test("native update hooks capture rapid follow turns and release on dispose", as
     f.tile.y = 300; update(f.tile); f.tile.x = 800; update(f.tile);
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(f.progress().action.follow.points.slice(-2), [{ x: 550, y: 350 }, { x: 850, y: 350 }]);
+    // Native animation may still expose a previous frame through x/y when the
+    // document-update hook fires. Record the committed turn, not that frame.
+    f.tile._source = { x: 900, y: 600, width: 100, height: 100 };
+    update(f.tile);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(f.progress().action.follow.points.at(-1), { x: 950, y: 650 });
   } finally { f.runtime.dispose(); }
   assert.equal(hooks.size, 0);
 });

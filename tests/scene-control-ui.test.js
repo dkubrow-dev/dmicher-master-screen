@@ -13,6 +13,7 @@ globalThis.foundry = { applications: { api: { ApplicationV2: ApplicationStub,
 const { MasterScreenApplication } = await import("../dmicher-master-screen/scripts/apps/ide.js");
 const { EditorApplication } = await import("../dmicher-master-screen/scripts/apps/editor.js");
 const { scenePreparationKey } = await import("../dmicher-master-screen/scripts/apps/scene-refresh.js");
+const { renderSceneTree } = await import("../dmicher-master-screen/scripts/apps/ide-view.js");
 
 const deferred = () => { let resolve; return { promise: new Promise((done) => { resolve = done; }), get resolve() { return resolve; } }; };
 function fixture(Application = MasterScreenApplication) {
@@ -47,6 +48,29 @@ test("scene controls dispatch immediately despite a stale draft and a pending re
     assert.equal(f.app.contextKey, "old-scene:removed-state");
     rendering.resolve();
   }
+});
+
+test("group controls address their row before stale draft validation and unrelated render promises", async () => {
+  for (const Application of [EditorApplication, MasterScreenApplication]) {
+    const f = fixture(Application), pending = deferred();
+    f.app.contextKey = "removed:state"; f.app.refreshTask = pending.promise;
+    f.app.signalAction = () => { throw new Error("Group commands must not enter the signal editor"); };
+    f.app.selection = { groupId: "other" };
+    for (const method of ["startGroup", "haltGroup", "restoreGroupInitial"]) f.app.controller[method] = groupId => f.calls.push([method, groupId]);
+    const tasks = ["startGroup", "haltGroup", "restoreGroupInitial"].map(action => f.app.handleAction(action, { dataset: { groupId: "row-group" } }));
+    assert.deepEqual(f.calls, [["startGroup", "row-group"], ["haltGroup", "row-group"], ["restoreGroupInitial", "row-group"]]);
+    assert.equal(f.app.disableActionWhilePending("haltGroup"), false);
+    assert.equal(f.app.disableActionWhilePending("restoreGroupInitial"), true);
+    await Promise.all(tasks); pending.resolve();
+  }
+});
+
+test("every Director group exposes three stable controls; Constructor has none", () => {
+  const f = fixture(), other = { ...f.definition, groupId: "east", groupName: "East" };
+  const rendered = renderSceneTree([f.definition, other], [f.runtime], {}, "director", [{ groupId: "main", halted: true, restoring: true }]);
+  for (const action of ["startGroup", "haltGroup", "restoreGroupInitial"]) assert.equal((rendered.match(new RegExp(`data-screen-action="${action}"`, "g")) ?? []).length, 2);
+  assert.match(rendered, /Restoring/);
+  assert.doesNotMatch(renderSceneTree([f.definition], [f.runtime], {}, "constructor"), /data-screen-action="(?:startGroup|haltGroup|restoreGroupInitial)"/);
 });
 
 test("execution steps, movement and signals leave Director controls mounted", async () => {

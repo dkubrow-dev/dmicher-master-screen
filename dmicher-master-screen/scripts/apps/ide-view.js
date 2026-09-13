@@ -38,27 +38,45 @@ export function renderSceneControls(showResumeAll) {
 }
 
 /** Update state visibility without replacing controls being clicked. */
-export function syncSceneControls(root, { sceneHalted, restoringInitial } = {}) {
+export function syncSceneControls(root, { sceneHalted, restoringInitial, groupControls = [] } = {}) {
   const showResumeAll = sceneHalted && !restoringInitial;
   for (const control of root?.querySelectorAll?.("[data-scene-control]") ?? []) {
     control.hidden = control.dataset.sceneControl === "stop" ? showResumeAll : !showResumeAll;
   }
+  const groups = new Map(groupControls.map(group => [group.groupId, group]));
+  for (const label of root?.querySelectorAll?.("[data-group-control-status]") ?? []) {
+    const group = groups.get(label.dataset.groupControlStatus);
+    if (group) label.textContent = groupStatus(group);
+  }
 }
 
-export function renderSceneTree(definitions, runtimes, selection, mode) {
+const groupStatus = ({ restoring, halted, started }) => restoring ? t("Восстановление", "Restoring")
+  : halted ? t("Остановлена", "Stopped") : started ? t("Работает", "Running") : t("Не запущена", "Not started");
+function renderGroupControls(groupId, state) {
+  const titles = [
+    ["startGroup", "▶", t("Запустить группу", "Start group"), t("Заново запустить текущее состояние только этой группы; для нового запуска используется состояние входа", "Restart only this group in its current state; a first start uses its entry state")],
+    ["haltGroup", "■", t("Остановить группу", "Stop group"), t("Немедленно остановить автоматизацию только этой группы", "Immediately stop only this group's automation")],
+    ["restoreGroupInitial", "↶", t("Вернуть группу в исходное состояние", "Restore group initial state"), t("Восстановить исходные скрипты объектов этой группы, выбрать состояние входа и оставить группу остановленной", "Run this group's object initial scripts, select its entry state and leave the group stopped")]
+  ];
+  return `<span class="ms-note ms-group-control-label" data-group-control-status="${esc(groupId)}">${groupStatus(state)}</span><span class="ms-group-commands" role="group" aria-label="${t("Управление группой", "Group controls")}">${titles.map(([action, symbol, label, hint]) => button(action, symbol, `data-group-id="${esc(groupId)}" aria-label="${esc(label)}" title="${esc(`${label}. ${hint}`)}"`)).join("")}</span>`;
+}
+
+export function renderSceneTree(definitions, runtimes, selection, mode, groupControls = []) {
   const rows = [];
   for (const definition of definitions) {
     const active = runtimes.find((runtime) => runtime.groupId === definition.groupId);
+    const controls = groupControls.find(group => group.groupId === definition.groupId)
+      ?? { halted: active?.halted, started: Boolean(active?.runId) };
     const selected = selection.kind === "group" && selection.id === definition.groupId;
     rows.push(`<tr role="row" aria-level="1" ${selectableTreeAttributes("group", definition.groupId, selected, esc)} class="${selected ? "is-selected" : ""}" data-ide-kind="group" data-ide-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}">
       <td><button type="button" class="ms-tree-toggle" data-screen-action="foldGroup" data-group-id="${esc(definition.groupId)}" aria-label="${t("Свернуть или раскрыть группу", "Collapse or expand group")}" aria-expanded="true">▾</button><button type="button" class="ms-tree-name" data-screen-action="selectNode" data-kind="group" data-id="${esc(definition.groupId)}" data-group-id="${esc(definition.groupId)}"><span class="ms-color-swatch" style="${colorStyle(definition)}">${esc(definition.symbol ?? "🎬")}</span>${esc(definition.groupName)}</button></td>
-      <td>${mode === "director" ? `<span class="ms-note">${active?.halted ? t("Остановлена", "Stopped") : active?.stateId ? t("Работает", "Running") : t("Не запущена", "Not started")}</span>` : `${definition.states.length}`}</td></tr>`);
+      <td>${mode === "director" ? renderGroupControls(definition.groupId, controls) : `${definition.states.length}`}</td></tr>`);
     for (const state of definition.states) {
       const chosen = selection.kind === "state" && selection.id === state.id && selection.groupId === definition.groupId;
       rows.push(`<tr role="row" aria-level="2" aria-selected="${chosen}" class="${chosen ? "is-selected" : ""} ${active?.stateId === state.id ? "is-active" : ""}" data-select-kind="state" data-select-id="${esc(state.id)}" data-ide-kind="state" data-ide-id="${esc(state.id)}" data-group-id="${esc(definition.groupId)}" draggable="${mode === "constructor"}"><td><button type="button" class="ms-tree-name ms-tree-child" data-screen-action="selectNode" data-kind="state" data-id="${esc(state.id)}" data-group-id="${esc(definition.groupId)}"><span class="ms-color-swatch" style="${colorStyle(state)}">${active?.stateId === state.id ? "●" : "○"}</span>${esc(state.name)}</button></td><td>${mode === "director" ? button("enterNode", active?.stateId === state.id ? t("Заново", "Re-enter") : t("Войти", "Enter"), `data-group-id="${esc(definition.groupId)}" data-id="${esc(state.id)}" title="${t("Явный вход в состояние", "Explicit state entry")}"`) : ""}</td></tr>`);
     }
   }
-  return `<table class="ms-ide-tree" role="treegrid" aria-label="${t("Группы и состояния", "Groups and states")}"><tbody>${rows.join("")}</tbody></table>`;
+  return `<table class="ms-ide-tree ${mode === "director" ? "ms-director-groups" : ""}" role="treegrid" aria-label="${t("Группы и состояния", "Groups and states")}"><tbody>${rows.join("")}</tbody></table>`;
 }
 
 export function signalTreeCategories(catalog) {
@@ -118,7 +136,8 @@ export function renderParameters({ selection, draft, catalog, definitions, runti
       html = `<h3 style="${colorStyle(draft)}" class="ms-node-heading">${esc(isGroup ? draft.groupName : draft.name)}</h3><p class="ms-note">${t("Мастер может выбрать любое состояние. Реакции на сигналы задаются подписками.", "The GM can choose any state. Signal responses are configured through subscriptions.")}</p>`;
       if (isGroup) {
         const runtime = runtimes.find((entry) => entry.groupId === selection.groupId), started = Boolean(runtime?.stateId);
-        html += select("resumeState", started ? t("Возобновить с состояния", "Resume from state") : t("Состояние запуска", "Starting state"), definition?.states ?? [], definition?.entryStateId, t("Выберите состояние", "Choose a state")) + button("resumeSelectedGroup", started ? t("Возобновить", "Resume") : t("Запустить", "Start")) + button("haltSelectedGroup", t("Остановить группу", "Stop group"));
+        html += select("resumeState", started ? t("Возобновить с состояния", "Resume from state") : t("Состояние запуска", "Starting state"), definition?.states ?? [], runtime?.stateId ?? definition?.entryStateId, t("Выберите состояние", "Choose a state")) + button("resumeSelectedGroup", started ? t("Возобновить", "Resume") : t("Запустить", "Start")) + button("haltSelectedGroup", t("Остановить группу", "Stop group"))
+          + button("restoreSelectedGroupInitial", t("Вернуть группу в исходное состояние", "Restore group initial state"));
       }
       else html += button("enterSelectedState", t("Перейти в это состояние", "Enter this state")) + button("haltSelectedGroup", t("Остановить группу", "Stop group"));
       return html + `<p class="ms-note">${esc(localizedDescription(draft.description))}</p>`;

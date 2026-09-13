@@ -57,6 +57,7 @@ try {
       for (let index = 0; index < 110; index++) logs.signalTrace('subscriber.completed', { sceneId: scene.id, signalName: `signal-${index}`, emitterName: 'Guard', subscriberName: 'Door' });
     });
     await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 115);
+    assert.equal(await app.locator('[data-console-details][data-loaded]').count(), 0, 'payload JSON stays lazy until a row is expanded');
     await page.evaluate(() => {
       const scroll = document.querySelector('[data-console-scroll]'); scroll.scrollTop = 300;
       const row = [...document.querySelectorAll('[data-console-entry]')].find(entry => entry.getBoundingClientRect().top >= scroll.getBoundingClientRect().top);
@@ -66,6 +67,7 @@ try {
     });
     await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 125);
     assert.equal(await page.evaluate(() => readingRow.isConnected && readingRow.querySelector('details').open), true);
+    assert.ok(await page.evaluate(() => readingRow.querySelector('[data-console-details]').textContent.includes('sceneId')), 'expansion fills the detached payload as text');
     assert.ok(Math.abs(await page.evaluate(() => document.querySelector('[data-console-scroll]').scrollTop - readingTop)) <= 1);
     assert.equal(await page.evaluate(() => ideRenders), 0);
     assert.equal(await page.evaluate(() => JSON.stringify(scene.flags) === originalFlags), true);
@@ -80,6 +82,22 @@ try {
     await page.screenshot({ path: path.join(output, `${version}-${language}.png`) });
     await page.evaluate(() => { for (let index = 0; index < 510; index++) logs.signalTrace('emitted', { sceneId: scene.id, signalName: `bounded-${index}` }); });
     await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 500);
+    // Expiring the oldest row must retain an expanded row under the reader.
+    await page.evaluate(() => {
+      const scroll = document.querySelector('[data-console-scroll]'); scroll.scrollTop = scroll.scrollHeight / 2;
+      const row = [...document.querySelectorAll('[data-console-entry]')].find(entry => entry.getBoundingClientRect().top >= scroll.getBoundingClientRect().top);
+      row.querySelector('details').open = true;
+      globalThis.retainedRow = row;
+    });
+    await page.waitForFunction(() => retainedRow.querySelector('[data-console-details]').dataset.loaded);
+    await page.evaluate(() => { globalThis.retainedTop = retainedRow.getBoundingClientRect().top; logs.signalTrace('emitted', { sceneId: scene.id, signalName: 'expire-prefix' }); });
+    await page.waitForFunction(() => document.querySelector('[data-console-entries]').lastElementChild.textContent.includes('expire-prefix'));
+    assert.equal(await page.evaluate(() => retainedRow.isConnected && retainedRow.querySelector('details').open), true);
+    assert.ok(Math.abs(await page.evaluate(() => retainedRow.getBoundingClientRect().top - retainedTop)) <= 1, 'eviction retains the visible row offset');
+    await page.evaluate(() => { game.user.isGM = false; controller.editor.directorConsole.refresh(); });
+    assert.equal(await app.locator('[data-console-entry]').count(), 0, 'losing GM access clears existing rows');
+    await page.evaluate(() => { game.user.isGM = true; controller.editor.directorConsole.refresh(); });
+    assert.equal(await app.locator('[data-console-entry]').count(), 500, 'restored GM access reads retained history');
     await app.locator('[data-console-clear]').click();
     await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 0);
     await app.locator('[data-screen-action="tabSettings"][data-zone="detail"]').click();
@@ -112,7 +130,7 @@ try {
     await page.evaluate(async () => { globalThis.closedConsole = controller.editor.directorConsole; await controller.editor.close(); logs.signalTrace('emitted', { sceneId: scene.id, signalName: 'closed-window' }); });
     assert.equal(await page.evaluate(() => closedConsole.unsubscribe === null && closedConsole.root === null && closedConsole.timer === undefined), true);
     assert.deepEqual(errors, []);
-    reports.push({ version, language, checks: 'mode-only navigation, debug filtering, signal/errors without debug, scene isolation, safe text, bounded DOM, sticky headers, scroll/details retention including a real controller refresh, no log-induced editor renders or flag writes, unsaved form retention, tab visibility settings, detached browser window, hidden/closed subscription disposal', errors });
+    reports.push({ version, language, checks: 'mode-only navigation, debug filtering, signal/errors without debug, scene isolation, safe text, lazy JSON, bounded DOM, sticky headers, scroll/details retention including eviction and a real controller refresh, live GM access loss/recovery, no log-induced editor renders or flag writes, unsaved form retention, tab visibility settings, detached browser window, hidden/closed subscription disposal', errors });
     await context.close();
   }
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(reports, null, 2));

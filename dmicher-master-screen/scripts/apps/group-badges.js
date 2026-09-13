@@ -4,6 +4,7 @@ import { generics } from "../generics.js";
 
 const esc = generics.utilities.escapeHTML;
 const color = (value, fallback) => /^#[0-9a-f]{6}$/i.test(value ?? "") ? value : fallback;
+const renderedBadges = new WeakMap();
 
 /** A badge reports the saved run, never the state merely selected for editing. */
 export function groupBadges(definitions, runtimes) {
@@ -25,15 +26,24 @@ export function renderGroupBadges(definitions, runtimes) {
 
 export function updateSceneNavigationBadges(controller, root = globalThis.document) {
   if (!root?.querySelectorAll) return;
-  for (const badge of root.querySelectorAll(".ms-navigation-badges")) badge.remove();
-  if (!globalThis.game?.user?.isGM || !controller.editor?.rendered || !controller.mode) return;
+  if (!globalThis.game?.user?.isGM || !controller.editor?.rendered || !controller.mode) {
+    for (const badge of root.querySelectorAll(".ms-navigation-badges")) badge.remove();
+    return;
+  }
   for (const row of root.querySelectorAll('#scene-navigation [data-scene-id][data-action="viewScene"]')) {
     const scene = game.scenes?.get(row.dataset.sceneId);
     if (!scene) continue;
     const html = renderGroupBadges(getDefinitions(scene), getRuntimes(scene));
-    if (!html) continue;
-    const container = row.ownerDocument.createElement("span");
-    container.className = "ms-navigation-badges"; container.innerHTML = html;
-    row.append(container);
+    let container = row.querySelector(".ms-navigation-badges");
+    if (!html) { container?.remove(); continue; }
+    // Script clocks also update Scene flags. Preserve badges and their native
+    // tooltip/hover state while the visible group state remains unchanged.
+    if (container && renderedBadges.get(container) === html) continue;
+    if (!container) {
+      container = row.ownerDocument.createElement("span");
+      container.className = "ms-navigation-badges";
+      row.append(container);
+    }
+    container.innerHTML = html; renderedBadges.set(container, html);
   }
 }

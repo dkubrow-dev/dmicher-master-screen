@@ -28,7 +28,7 @@ import { listAvailableInteractions, objectDescriptor } from "./interaction-acces
 import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
 import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
 import { StateChooserApplication } from "./apps/state-chooser.js";
-import { isSceneAutomationHalted } from "./execution.js";
+import { isSceneAutomationHalted, isExecutionHalted } from "./execution.js";
 import { runDirectorCommand } from "./director-commands.js";
 
 export class ScreenController {
@@ -58,6 +58,7 @@ export class ScreenController {
   getContext({ groupId } = {}) {
     const scene = currentScene();
     const definitions = getDefinitions(scene);
+    const storedRuntimes = scene?.getFlag(MODULE_ID, "groupRuntimes") ?? {};
     const explicitGroup = groupId !== undefined;
     groupId ??= this.selectedGroups.get(scene?.id) ?? definitions[0]?.groupId ?? null;
     if (!definitions.some((definition) => definition.groupId === groupId)) groupId = explicitGroup ? null : definitions[0]?.groupId ?? null;
@@ -67,6 +68,11 @@ export class ScreenController {
     const objects = listNativeSceneObjects(scene).map((object) => ({ ...object, tags: getObjectTags(scene, object) }));
     return { scene, definition, runtime, definitions, objects, mode: this.mode, groupId, selectedStateId, signalLog: this.signals.history(scene),
       sceneHalted: this.isAutomationHalted(), restoringInitial: this.isRestoringInitial(),
+      groupControls: definitions.map(group => {
+        const run = storedRuntimes[group.groupId] ?? { groupId: group.groupId };
+        return { groupId: group.groupId, halted: isExecutionHalted(scene, run), started: Boolean(run.runId),
+          restoring: this.runtime.isRestoringInitial(scene, group.groupId) };
+      }),
       state: definition ? getState(definition, selectedStateId) : null, tokens: asArray(scene?.tokens), isGM: game.user?.isGM === true };
   }
   getPlayerTokens() {
@@ -239,8 +245,14 @@ export class ScreenController {
   resetConditions(conditionKey) { return this.runtime.resetConditions(currentScene(), { conditionKey, groupId: this.getContext().groupId }); }
   setConditionEnabled(conditionKey, enabled) { return this.runtime.setConditionEnabled(currentScene(), conditionKey, enabled); }
   haltScene() { return this.haltAll(); }
-  haltGroup(groupId = this.getContext().groupId) { return this.runtime.halt(currentScene(), { groupId }); }
-  resumeGroup(stateId, groupId = this.getContext().groupId) { return this.runtime.enter(currentScene(), stateId, { force: true, groupId }); }
+  groupCommand(command, groupId, operation) {
+    const scene = currentScene(), group = getDefinition(scene, { groupId });
+    return runDirectorCommand(command, scene, () => operation(scene), { groupId, groupName: group.groupName });
+  }
+  haltGroup(groupId = this.getContext().groupId) { return this.groupCommand("stop-group", groupId, scene => this.runtime.halt(scene, { groupId })); }
+  startGroup(groupId = this.getContext().groupId, stateId) { return this.groupCommand("start-group", groupId, scene => this.runtime.startGroup(scene, groupId, stateId)); }
+  resumeGroup(stateId, groupId = this.getContext().groupId) { return this.startGroup(groupId, stateId); }
+  restoreGroupInitial(groupId = this.getContext().groupId) { return this.groupCommand("restore-group-initial", groupId, scene => this.runtime.restoreGroupInitial(scene, groupId)); }
   emitSignal(emitterKey, name, parameters = {}) {
     requireGM();
     return this.signals.emit(currentScene(), { emitterKey, name, parameters });

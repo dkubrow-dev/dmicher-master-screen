@@ -67,3 +67,26 @@ test("Initial scripts are logged as scheduled rather than completed on the runti
   await runDirectorCommand("restore-initial", f.scene, () => []);
   assert.equal(f.entries().at(-1).event, "completed");
 });
+
+test("group commands supersede only overlapping scopes and include the addressed group", async () => {
+  const f = fixture(); let finishWest, finishEast;
+  const west = runDirectorCommand("start-group", f.scene, () => new Promise(resolve => { finishWest = resolve; }), { groupId: "west", groupName: "West hall" });
+  const east = runDirectorCommand("start-group", f.scene, () => new Promise(resolve => { finishEast = resolve; }), { groupId: "east", groupName: "East hall" });
+  await runDirectorCommand("stop-group", f.scene, () => ({}), { groupId: "west", groupName: "West hall" });
+  assert.deepEqual(f.entries().filter(entry => entry.event === "cancelled").map(entry => entry.context.groupId), ["west"]);
+  finishWest({}); finishEast({}); await Promise.all([west, east]);
+  assert.equal(f.entries().at(-1).context.groupName, "East hall");
+  assert.equal(f.entries().at(-1).event, "completed");
+  await runDirectorCommand("restore-group-initial", f.scene, () => ["manual"], { groupId: "west" });
+  assert.equal(f.entries().at(-1).event, "scheduled");
+});
+
+test("a group named scene is not the global command scope", async () => {
+  const f = fixture(); let finish;
+  const pending = runDirectorCommand("start-group", f.scene, () => new Promise(resolve => { finish = resolve; }), { groupId: "scene" });
+  await runDirectorCommand("stop-group", f.scene, () => ({}), { groupId: "east" });
+  assert.equal(f.entries().some(entry => entry.event === "cancelled"), false);
+  await runDirectorCommand("stop-all", f.scene, () => []);
+  assert.equal(f.entries().filter(entry => entry.event === "cancelled").length, 1);
+  finish({}); await pending;
+});

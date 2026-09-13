@@ -67,6 +67,22 @@ export function getDiagnosticEntries({ sceneId, includeDebug = false } = {}) {
   return structuredClone(entries.filter(entry => relevant(entry, sceneId) && (includeDebug || entry.level !== "debug")));
 }
 
+/** The Console consumes only new snapshots. A global cursor advances even for
+ * hidden/other-scene entries; firstId lets the view discard expired rows without
+ * cloning or scanning the retained history on every update. Reset after clear or
+ * a filter change by omitting afterId. Returned snapshots remain detached. */
+export function getDiagnosticUpdate({ sceneId, includeDebug = false, afterId = 0 } = {}) {
+  // Losing GM access must also expire rows already displayed by this client.
+  if (!isGM()) return { entries: [], cursor: 0, firstId: Infinity };
+  const added = [];
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index];
+    if (entry.id <= afterId) break;
+    if (relevant(entry, sceneId) && (includeDebug || entry.level !== "debug")) added.push(entry);
+  }
+  return { entries: structuredClone(added.reverse()), cursor: sequence, firstId: entries[0]?.id ?? sequence + 1 };
+}
+
 export function clearDiagnostics(sceneId) {
   if (!isGM()) return;
   for (let index = entries.length - 1; index >= 0; index--) if (relevant(entries[index], sceneId)) entries.splice(index, 1);

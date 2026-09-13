@@ -118,3 +118,23 @@ test("refresh and cleanup tolerate children already destroyed by the native canv
   decorations.remove(document); decorations.clear();
   assert.equal(created.length, 4);
 });
+
+test("frame refresh reuses prepared content and does no geometry work for empty objects", () => {
+  const { created, placeable } = canvasFixture();
+  let reads = 0;
+  const document = { documentName: "Token", get x() { reads++; return 100; }, y: 200, width: 1, height: 1,
+    parent: { grid: { size: 100 } }, object: placeable(100, 200) };
+  const decorations = createObjectDecorations();
+  for (let i = 0; i < 600; i++) decorations.refresh(document);
+  assert.equal(reads, 0); assert.equal(created.length, 0);
+  decorations.update(document, { emoji: "!", emojiSize: 24 });
+  document.width = 2;
+  decorations.refresh(document);
+  assert.equal(created.length, 1); assert.equal(created[0].position.x, 100);
+  created[0].destroy();
+  decorations.refresh(document);
+  assert.equal(created.length, 2); assert.equal(created[1].text, "!");
+  decorations.remove(document); reads = 0;
+  for (let i = 0; i < 600; i++) decorations.refresh(document);
+  assert.equal(reads, 0); assert.equal(created.length, 2);
+});

@@ -1,13 +1,12 @@
 import { text } from "./localization.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
-import { sceneObjectBounds } from "./scene-object-geometry.js";
-import { readObjectGeometry, planScriptMovement, advanceScriptMovement } from "./script-movement.js";
+import { readObjectGeometry, scriptObjectBounds, planScriptMovement, advanceScriptMovement } from "./script-movement.js";
 
 export const MAX_FOLLOW_WAYPOINTS = 512;
 const pixelScale = scene => Number(scene?.grid?.size || 100) / Number(scene?.grid?.distance || 1);
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const center = bounds => ({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
-const nativeCenter = (document, scene) => center(sceneObjectBounds(document, scene, { useRendered: false }));
+const nativeCenter = (document, scene) => center(scriptObjectBounds(document, scene));
 const shifted = (bounds, dx, dy) => ({ ...bounds, x: bounds.x + dx, y: bounds.y + dy });
 
 /** Resolve only a native document in this scene; arbitrary UUID namespaces are not targets. */
@@ -17,7 +16,7 @@ export function resolveMovementTarget(scene, object, targetUuid) {
   const [type, id, extra] = targetUuid.slice(prefix.length).split(".");
   const target = !extra && Object.hasOwn(SCENE_OBJECT_COLLECTIONS, type) ? scene[SCENE_OBJECT_COLLECTIONS[type]]?.get?.(id) : null;
   if (!target || target === object || target.documentName === object.documentName && target.id === object.id) throw new Error(text("Выберите существующий объект цели, отличный от исполнителя.", "Select an existing target object other than the performer."));
-  if (!sceneObjectBounds(target, scene, { useRendered: false })) throw new Error(text("У цели нет доступного положения на карте.", "The target has no available map position."));
+  if (!scriptObjectBounds(target, scene)) throw new Error(text("У цели нет доступного положения на карте.", "The target has no available map position."));
   return target;
 }
 
@@ -27,7 +26,7 @@ export function boundsGap(first, second) {
     Math.max(first.y - second.y - second.height, second.y - first.y - first.height, 0));
 }
 export function approachPosition(scene, object, target, spacing = 0) {
-  const from = sceneObjectBounds(object, scene, { useRendered: false }), to = sceneObjectBounds(target, scene, { useRendered: false });
+  const from = scriptObjectBounds(object, scene), to = scriptObjectBounds(target, scene);
   const geometry = readObjectGeometry(object, scene);
   if (!from || !to || !geometry.position) throw new Error(text("Этот объект не поддерживает перемещение к цели.", "This object does not support movement toward a target."));
   const gap = spacing * pixelScale(scene);
@@ -95,7 +94,7 @@ export async function advanceScriptFollow(scene, object, follow, parameters, sec
   if (!isCurrent()) return { consumed: 0, done: false };
   const target = resolveMovementTarget(scene, object, follow.targetUuid), scale = pixelScale(scene);
   appendFollowWaypoint(follow, nativeCenter(target, scene));
-  const gap = () => boundsGap(sceneObjectBounds(object, scene, { useRendered: false }), sceneObjectBounds(target, scene, { useRendered: false }));
+  const gap = () => boundsGap(scriptObjectBounds(object, scene), scriptObjectBounds(target, scene));
   if (!follow.catchingUp && gap() > parameters.maxDistance * scale + 0.000001) follow.catchingUp = true;
   const arrived = () => {
     follow.catchingUp = false; follow.distanceBudget = 0; follow.points = follow.mode === "trajectory" ? [{ ...follow.lastTarget }] : [];

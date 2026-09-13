@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diagnosticSummary, renderDiagnosticEntry } from "../dmicher-master-screen/scripts/apps/director-console.js";
+import { diagnosticSummary, diagnosticDetails, renderDiagnosticEntry } from "../dmicher-master-screen/scripts/apps/director-console.js";
 import { renderMenu, renderMenuSettings } from "../dmicher-master-screen/scripts/apps/ide-view.js";
 import { normalizeIDEPreferences, ScreenLayout } from "../dmicher-master-screen/scripts/apps/screen-layout.js";
 
@@ -37,7 +37,9 @@ test("Diagnostic entries render names and parameter/error snapshots as inert dat
   assert.match(html, /Subscriber failed/);
   assert.ok(html.includes("&lt;script&gt;"));
   assert.ok(!html.includes("<script>") && !html.includes("<img src=x"));
-  assert.ok(html.includes("trace") && html.includes("safe"));
+  assert.ok(!html.includes("trace"), "collapsed rows do not eagerly format their payload");
+  const details = diagnosticDetails(entry);
+  assert.ok(details.includes("trace") && details.includes("safe"));
 });
 
 test("A completed method visibly reports rejection and stale/failed delivery outcomes", () => {
@@ -57,6 +59,6 @@ test("Director control events name the command, initiator and scene in RU and EN
     const html = renderDiagnosticEntry(entry);
     assert.ok(html.includes(action)); assert.ok(html.includes(stage));
     assert.ok(html.includes("Master &lt;GM&gt;")); assert.ok(html.includes("Hall"));
-    assert.ok(html.includes("director-1"));
+    assert.ok(diagnosticDetails(entry).includes("director-1"));
   }
 });

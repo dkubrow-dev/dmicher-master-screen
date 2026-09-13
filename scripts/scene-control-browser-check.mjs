@@ -44,6 +44,34 @@ try {
     await page.waitForFunction(() => sceneCommands.length === 1);
     assert.deepEqual(await page.evaluate(() => sceneCommands), ["stop"]);
 
+    // Group controls retain the same dispatch contract and carry their own row
+    // ID even when another group or a stale preparation draft is selected.
+    await page.evaluate(() => {
+      globalThis.groupCommands = [];
+      for (const method of ['startGroup', 'haltGroup', 'restoreGroupInitial']) controller[method] = groupId => groupCommands.push([method, groupId]);
+      globalThis.groupStopButton = controller.editor.element.querySelector('[data-screen-action="haltGroup"][data-group-id="main"]');
+    });
+    const groupStop = app.locator('[data-screen-action="haltGroup"][data-group-id="main"]');
+    const groupBounds = await groupStop.boundingBox();
+    assert.ok(groupBounds, 'group stop is visible in the main scene tree');
+    await page.mouse.move(groupBounds.x + groupBounds.width / 2, groupBounds.y + groupBounds.height / 2);
+    await page.mouse.down();
+    await page.evaluate(async () => { runtimeUpdates(); await Promise.resolve(); });
+    assert.equal(await page.evaluate(() => groupStopButton.isConnected && renderCalls === 0), true);
+    await page.mouse.up();
+    await page.waitForFunction(() => groupCommands.length === 1);
+    assert.deepEqual(await page.evaluate(() => groupCommands), [['haltGroup', 'main']]);
+    await app.locator('[data-screen-action="startGroup"][data-group-id="main"]').click();
+    await app.locator('[data-screen-action="restoreGroupInitial"][data-group-id="main"]').click();
+    assert.deepEqual(await page.evaluate(() => groupCommands), [['haltGroup', 'main'], ['startGroup', 'main'], ['restoreGroupInitial', 'main']]);
+    const groupGeometry = await groupStop.evaluate(element => {
+      const cell = element.closest('td'), row = element.closest('tr');
+      return { overflow: cell.scrollWidth - cell.clientWidth, rowHeight: row.getBoundingClientRect().height,
+        width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height };
+    });
+    assert.ok(groupGeometry.overflow <= 1, 'group controls do not overflow their table cell');
+    assert.ok(groupGeometry.width >= 24 && groupGeometry.height >= 24, 'group controls remain practical pointer targets');
+
     // An emergency command must remain clickable while the previous stop is
     // still waiting for its persistent update. Use real DOM click dispatch.
     await page.evaluate(() => {
@@ -67,6 +95,8 @@ try {
       controller.changed(scene);
     });
     await page.waitForFunction(() => globalThis.releasePrepare);
+    await groupStop.click();
+    assert.deepEqual(await page.evaluate(() => groupCommands.at(-1)), ['haltGroup', 'main']);
     await app.locator('[data-screen-action="haltScene"]').click();
     assert.deepEqual(await page.evaluate(() => sceneCommands), ["stop", "stop"]);
     await page.evaluate(() => {

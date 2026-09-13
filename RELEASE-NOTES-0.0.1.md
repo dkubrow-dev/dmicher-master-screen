@@ -1,5 +1,10 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Оптимизирована заполненная Консоль: добавляются только новые записи, JSON раскрывается по запросу. Кадровое обновление токенов больше не разбирает состояние всех групп; неизменённые значки сохраняют DOM. Исправлено ускорение последнего участка движения по скорости.
+- Full Console updates now process only new entries and format JSON on demand. Token animation frames no longer parse every group's runtime; unchanged badges retain their DOM. Speed-based movement no longer accelerates on its final segment.
+- В Режиссёре каждая группа получила отдельные команды запуска, остановки и восстановления исходного состояния. Восстановление оставляет группу остановленной в состоянии входа и не прерывает другие группы. Все команды видны в Консоли.
+- Director provides individual start, stop and initial-state restore commands for each group. Restoration leaves that group stopped at its entry state without interrupting other groups. All commands appear in the Console.
+
 - Аварийные команды Режиссёра работают независимо от черновика и рендера. Остановка отменяет ожидания и эффекты без ожидания их завершения; поздние ответы не продолжают скрипт. Исполнительные тики не перерисовывают всю Ширму. Полные остановка, запуск и восстановление регистрируются в Консоли без отладки; нулевая длительность выделяется красным в таблице параметров.
 - Director emergency controls work independently of drafts and rendering. Stop cancels waits and effects without waiting for completion; late results cannot continue the script. Runtime ticks no longer rerender the entire screen. Global stop, start and restore commands appear in the Console without Debug; zero durations are highlighted red in parameter tables.
 - В дополнительной зоне Режиссёра появилась «Консоль»: без отладки видны отправка сигналов, принятие и результат каждого подписчика, отказы и ошибки; с отладкой — также шаги скриптов и остальные подробные записи. Локальный журнал ограничен 500 записями, фильтруется по сцене и обновляется без перерисовки форм. Содержимое строк раскрывается; прокрутка при чтении сохраняется.

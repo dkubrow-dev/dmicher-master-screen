@@ -1,5 +1,5 @@
 import { text as t } from "../localization.js";
-import { EditorApplication, SCENE_COMMANDS } from "./editor.js";
+import { EditorApplication, SCENE_COMMANDS, GROUP_COMMANDS } from "./editor.js";
 import { scenePreparationKey } from "./scene-refresh.js";
 import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
 import { renderSceneTree, renderSceneControls, syncSceneControls, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
@@ -107,7 +107,7 @@ export class MasterScreenApplication extends EditorApplication {
     const runtime = context.runtime;
     const other = this.mode === "director" && this.layout.preferences.mainTab === "other"
       && this.layout.preferences.detailTab === "parameters" ? this.otherBlock : null;
-    const visibleRuntime = [context.sceneHalted, context.restoringInitial,
+    const visibleRuntime = [context.sceneHalted, context.restoringInitial, context.groupControls,
       Object.entries(scene?.getFlag(MODULE_ID, "groupRuntimes") ?? {})
         .map(([groupId, { stateId, halted }]) => [groupId, stateId, halted])];
     if (other === "automation") visibleRuntime.push(runtime?.disabledObjects);
@@ -252,7 +252,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.toolRows = [];
     let mainHTML = "", detailHTML = "", nodeActions = "";
     if (activeMain === "scene") {
-      mainHTML = renderSceneTree(definitions, runtimes, this.selection, this.mode);
+      mainHTML = renderSceneTree(definitions, runtimes, this.selection, this.mode, current.groupControls);
       if (!definitions.length) mainHTML = `<p class="ms-note">${t("В этой сцене пока нет групп. Создайте группу — в ней появится первое состояние.", "This scene has no groups yet. Create a group to add its first state.")}</p>`;
       if (this.mode === "constructor") nodeActions = actionButton("addGroup", t("Создать группу", "Create group")) + (definitions.length ? actionButton("addSceneState", t("+ Состояние", "+ State")) + actionButton("editSelected", t("Править", "Edit")) + actionButton("deleteSelected", t("Удалить", "Delete")) : "") + generics.components.renderJSONControls({ id: "group-list", importLabel: t("Импорт группы", "Import group"), exportLabel: t("Экспорт группы", "Export group") });
     }
@@ -560,7 +560,7 @@ export class MasterScreenApplication extends EditorApplication {
 
   async handleAction(action, button, event) {
     // Dispatch controls synchronously, before asynchronous editor/selection work.
-    if (Object.hasOwn(SCENE_COMMANDS, action)) return super.handleAction(action, button, event);
+    if (Object.hasOwn(SCENE_COMMANDS, action) || Object.hasOwn(GROUP_COMMANDS, action) || ["resumeGroup", "resumeSelectedGroup"].includes(action)) return super.handleAction(action, button, event);
     if (action === "previewAsset") {
       this.parameterDraft = this.readParameterDraft();
       return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`) });
@@ -652,8 +652,6 @@ export class MasterScreenApplication extends EditorApplication {
     if (await this.signalAction(action, button)) return;
     if (action === "enterNode") return this.controller.transition(button.dataset.id, { groupId: button.dataset.groupId });
     if (action === "enterSelectedState") return this.controller.transition(this.selection.id, { groupId: this.selection.groupId });
-    if (action === "haltSelectedGroup") return this.controller.haltGroup(this.selection.groupId);
-    if (action === "resumeSelectedGroup") return this.controller.resumeGroup(fieldValue(this.element, "resumeState"), this.selection.groupId);
     if (action === "editMacro") {
       const macro = await fromUuid(button.dataset.uuid ?? this.selection.id);
       if (!macro || macro.documentName !== "Macro") throw new Error(t("Макрос недоступен. Проверьте каталог Foundry.", "The macro is unavailable. Check the Foundry directory."));

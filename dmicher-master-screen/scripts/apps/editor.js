@@ -14,6 +14,8 @@ const clone = (value) => foundry.utils.deepClone(value);
 const number = (root, name, label, options) => requireNumber(value(root, name), label, options);
 const editorContextKey = (context, id) => `${context.scene?.id}:${context.definition?.groupId && context.definition.groupId !== "main" ? `${context.definition.groupId}:` : ""}${id}`;
 export const SCENE_COMMANDS = Object.freeze({ haltScene: "haltScene", resumeAll: "startAll", restoreAllInitial: "restoreAllInitial" });
+export const GROUP_COMMANDS = Object.freeze({ startGroup: "startGroup", haltGroup: "haltGroup", restoreGroupInitial: "restoreGroupInitial",
+  haltSelectedGroup: "haltGroup", restoreSelectedGroupInitial: "restoreGroupInitial", stop: "haltGroup" });
 
 export class EditorApplication extends ScreenFormApplication {
   static DEFAULT_OPTIONS = {
@@ -43,7 +45,7 @@ export class EditorApplication extends ScreenFormApplication {
 
   // A previous stop may still be persisting while a newer command starts work.
   // Keep emergency cancellation available; ordinary form commands stay locked.
-  disableActionWhilePending(action) { return action !== "haltScene"; }
+  disableActionWhilePending(action) { return action !== "haltScene" && GROUP_COMMANDS[action] !== "haltGroup"; }
 
   _insertElement(element) {
     super._insertElement(element);
@@ -279,6 +281,8 @@ export class EditorApplication extends ScreenFormApplication {
     // Scene commands do not edit the displayed draft. In particular, a stale
     // state or an unfinished render must never prevent an emergency stop.
     if (Object.hasOwn(SCENE_COMMANDS, action)) return this.controller[SCENE_COMMANDS[action]]();
+    if (Object.hasOwn(GROUP_COMMANDS, action)) return this.controller[GROUP_COMMANDS[action]](button?.dataset?.groupId ?? this.selection?.groupId ?? this.controller.getContext().groupId);
+    if (["resumeGroup", "resumeSelectedGroup"].includes(action)) return this.controller.resumeGroup(value(this.element, "resumeState"), button?.dataset?.groupId ?? this.selection?.groupId ?? this.controller.getContext().groupId);
     if (action === "token") return this.controller.openObjectBehavior({ type: "Token", id: button.dataset.tokenId });
     const context = this.controller.getContext();
     const currentKey = editorContextKey(context, context.state?.id ?? context.definition?.states?.[0]?.id);
@@ -320,13 +324,10 @@ export class EditorApplication extends ScreenFormApplication {
       return;
     }
     if (action === "transition") return this.controller.transition(value(this.element, "targetState"));
-    if (action === "stop") return this.controller.haltGroup(this.controller.getContext().groupId);
     if (action === "automation") return this.controller.setAutomation(button.dataset.tokenId, button.dataset.enable === "true");
     if (action === "combat") return this.controller.startCombat();
     if (action === "shops") return this.controller.openShops();
     if (action === "dialogues") return this.controller.openDialogues();
-    if (action === "haltGroup") return this.controller.haltGroup();
-    if (action === "resumeGroup") return this.controller.resumeGroup(value(this.element, "resumeState"));
     if (action === "saveObjectTags") {
       const row = button.closest("[data-object-tags]");
       const key = `${row.dataset.sceneId}:${row.dataset.objectType}:${row.dataset.objectId}`;

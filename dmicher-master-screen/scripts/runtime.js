@@ -1,5 +1,5 @@
 import { message as localizedMessage, text } from "./localization.js";
-import { objectCenter, crossesRectangle, sceneObjectBounds } from "./scene-object-geometry.js";
+import { objectCenter, crossesRectangle } from "./scene-object-geometry.js";
 import { MODULE_ID, getState, emptyRuntime } from "./model.js";
 import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
 import { createFoundryEffects } from "./effects.js";
@@ -14,7 +14,7 @@ import { getSignalCatalog } from "./signal-catalog.js";
 import { SCENE_OBJECT_TYPES, SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { DEFAULT_EMOTION_SIZE, normalizeStateTransitions } from "./script-model.js";
 import { appendFollowWaypoint } from "./script-target-movement.js";
-import { stopObjectAnimation } from "./script-movement.js";
+import { stopObjectAnimation, scriptObjectBounds } from "./script-movement.js";
 import { writeSceneFlags } from "./scene-flags.js";
 import { debugTrace, debugError } from "./debug.js";
 
@@ -36,9 +36,10 @@ export class GroupRuntime {
     this.visuals = visuals;
     this.effects = effects ?? createFoundryEffects(chat);
     this.chat = chat; this.hooks = []; this.previousPositions = new Map(); this.tickTimes = new Map();
-    this.manualRuns = new Map(); this.manualVisuals = new Map(); this.sceneRestoration = null; this.busy = false; this.disposed = false;
+    this.manualRuns = new Map(); this.manualVisuals = new Map(); this.restorations = new Map(); this.busy = false; this.disposed = false;
     this.presentedRuns = new Map();
     this.startCommands = new WeakMap();
+    this.groupStartCommands = new WeakMap();
     this.combat = combat ?? createCombatAdapter({ chat, emitSignal: (scene, name, parameters) => this.emitSignal(scene, { emitterKey: `Combat:${scene.id}`, name, parameters }) });
     this.scripts = new ObjectScriptRuntime(this);
   }
@@ -48,7 +49,7 @@ export class GroupRuntime {
     if (!runId) return true;
     if (this.manualRuns.has(runId)) {
       const run = this.manualRuns.get(runId);
-      return run.sceneId === scene.id && (!run.restorationId || this.sceneRestoration?.id === run.restorationId && this.restorationCurrent(scene));
+      return run.sceneId === scene.id && (!run.restorationId || this.restorationCurrent(scene, this.restorations.get(run.restorationId)));
     }
     const run = getRuntimeForRun(scene, runId);
     return Boolean(run?.state && !isExecutionHalted(scene, run));
@@ -62,11 +63,13 @@ export class GroupRuntime {
     this.disposed = false;
     const on = (name, fn) => this.hooks.push([name, Hooks.on(name, fn)]);
     on("canvasReady", () => { this.tickTimes.clear(); this.refresh(canvas.scene); });
-    on("canvasTearDown", () => { this.sceneRestoration = null; this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
+    on("canvasTearDown", () => { this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
     on("updateUser", () => notifyExecutionChange(globalThis.canvas?.scene));
     on("updateScene", (scene, changes) => { if (changes.flags?.[MODULE_ID] || Object.keys(changes).some((key) => key.startsWith(`flags.${MODULE_ID}`))) this.refresh(scene); });
     for (const type of SCENE_OBJECT_TYPES) {
-      on(`refresh${type}`, (object) => this.refreshObject(object.document));
+      // Native refresh hooks run during animation frames. They only reposition
+      // existing decorations; reading group/script data belongs to Scene updates.
+      on(`refresh${type}`, (object) => this.visuals?.refresh?.(object.document));
       on(`delete${type}`, (document) => this.visuals?.remove(document));
       on(`update${type}`, (document) => { void this.recordFollowTarget(document).catch(error => this.report(error)); });
     }
@@ -83,7 +86,7 @@ export class GroupRuntime {
   }
   dispose() {
     this.disposed = true; notifyExecutionChange(globalThis.canvas?.scene, "runtime-disposed"); clearInterval(this.interval); this.interval = null;
-    this.sceneRestoration = null; this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); this.effects.dispose?.(); this.visuals?.clear(); this.presentedRuns.clear();
+    this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); this.effects.dispose?.(); this.visuals?.clear(); this.presentedRuns.clear();
     for (const [name, id] of this.hooks) Hooks.off(name, id); this.hooks = []; this.tickTimes.clear();
   }
   scriptState(scene, runId) { return this.manualRuns.has(runId) ? clone(this.manualRuns.get(runId)) : getRuntimeForRun(scene, runId); }
@@ -114,7 +117,7 @@ export class GroupRuntime {
   async recordFollowTarget(document) {
     const scene = document?.parent;
     if (!scene || !this.owns(scene) || scene.id !== globalThis.canvas?.scene?.id) return;
-    const bounds = sceneObjectBounds(document, scene, { useRendered: false });
+    const bounds = scriptObjectBounds(document, scene);
     if (!bounds) return;
     const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
     const targetUuid = document.uuid ?? `${scene.uuid ?? `Scene.${scene.id}`}.${document.documentName}.${document.id}`;
@@ -132,11 +135,11 @@ export class GroupRuntime {
       }
     });
   }
-  refreshObject(object) {
+  refreshObject(object, runtimes) {
     if (!object) return;
     const scene = object.parent ?? globalThis.canvas?.scene;
     const target = { type: object.documentName ?? (scene?.tokens?.get(object.id) === object ? "Token" : "Tile"), id: object.id };
-    const runs = [...getRuntimes(scene).filter((run) => !isExecutionHalted(scene, run) && !run.disabledObjects.includes(objectKey(target))),
+    const runs = [...(runtimes ?? getRuntimes(scene)).filter((run) => !isExecutionHalted(scene, run) && !run.disabledObjects.includes(objectKey(target))),
       ...[...this.manualRuns.values(), ...this.manualVisuals.values()].filter((run) => run.sceneId === scene?.id)];
     const prefix = `${objectKey(target)}:`, progress = runs.flatMap((run) => Object.entries(run.scriptStates ?? {}).filter(([key]) => key.startsWith(prefix)).map(([, value]) => value)).filter(Boolean);
     const latest = (field) => progress.reduce((selected, entry) => Number(entry[`${field}At`] ?? 0) > Number(selected?.[`${field}At`] ?? 0) ? entry : selected, null);
@@ -145,15 +148,15 @@ export class GroupRuntime {
   }
   refresh(scene) {
     if (scene?.id !== globalThis.canvas?.scene?.id) return;
-    const presented = new Map();
-    for (const run of getRuntimes(scene)) {
+    const presented = new Map(), runtimes = getRuntimes(scene);
+    for (const run of runtimes) {
       const key = `${scene.id}:${run.groupId}`, halted = isExecutionHalted(scene, run), signature = `${run.runId}:${halted}`;
       if (halted && run.runId && this.presentedRuns.get(key) !== signature) this.stopPresentation(scene, [run]);
       presented.set(key, signature);
     }
     this.presentedRuns = presented;
     for (const collection of Object.values(SCENE_OBJECT_COLLECTIONS)) for (const object of asArray(scene[collection])) {
-      try { this.refreshObject(object); }
+      try { this.refreshObject(object, runtimes); }
       catch (error) { this.report(error, { category: "interface", event: "object.refresh.failed", context: { sceneId: scene.id, objectId: object.id } }); }
     }
     this.onChange(scene);
@@ -225,7 +228,7 @@ export class GroupRuntime {
           reason: text("Переход повторяется: рутина начнётся только после завершения переходного скрипта. Проверьте «Повторять».",
             "The transition repeats: the routine can start only after its transition script finishes. Check Repeat.") }));
       }
-      if (this.sceneRestoration?.runIds.has(plan.signalContext?.originRunId)) this.sceneRestoration.states.set(groupId, this.restorationState(scene, groupId));
+      for (const restoration of this.restorations.values()) if (restoration.runIds.has(plan.signalContext?.originRunId) && restoration.states.has(groupId)) restoration.states.set(groupId, this.restorationState(scene, groupId));
       if (!preserveStatus) { await scene.setFlag(MODULE_ID, "automationHalted", false); finishSceneHalt(scene, sceneGeneration); }
       finishHalt(scene, generation, groupId); notifyExecutionChange(scene);
       this.tickTimes.set(`${scene.id}:${groupId}`, this.now()); return next;
@@ -253,7 +256,7 @@ export class GroupRuntime {
   }
   async enter(scene, stateId, options = {}) {
     this.requireAuthority(scene);
-    this.cancelRestoration(scene);
+    this.cancelRestorations(scene, { groupIds: [options.groupId ?? "main"] });
     const admitted = () => {
       if (options.isCurrent && !options.isCurrent()) {
         const error = new Error(text("Команда запуска заменена или остановлена.", "The start command was replaced or stopped."));
@@ -276,7 +279,8 @@ export class GroupRuntime {
    * stops the remainder but cannot undo transitions which have already completed. */
   async changeStates(scene, transitions, { originRunId, admitted = () => {}, signalContext } = {}) {
     this.requireAuthority(scene);
-    if (!this.sceneRestoration?.runIds.has(originRunId)) this.cancelRestoration(scene);
+    const pairs = normalizeStateTransitions(transitions);
+    this.cancelRestorations(scene, { groupIds: pairs.map(pair => pair.groupId), exceptRunId: originRunId });
     const requireOrigin = admitted, applied = [];
     const requireApplied = () => {
       for (const { run, generation, sceneGeneration } of applied) {
@@ -292,7 +296,7 @@ export class GroupRuntime {
       requireOrigin(); requireApplied();
     };
     this.requireAuthority(scene); admitted();
-    const pairs = normalizeStateTransitions(transitions), originGroupId = originRunId ? this.scriptState(scene, originRunId)?.groupId : null;
+    const originGroupId = originRunId ? this.scriptState(scene, originRunId)?.groupId : null;
     const plans = pairs.map(({ groupId, stateId }) => this.prepareStateChange(scene, stateId, { groupId, force: true, preserveStatus: true, signalContext }))
       .filter((plan) => plan.previous.stateId !== plan.stateId)
       .sort((a, b) => Number(a.groupId === originGroupId) - Number(b.groupId === originGroupId));
@@ -322,8 +326,8 @@ export class GroupRuntime {
   }
   async halt(scene, { groupId = "main", all = false } = {}) {
     this.requireAuthority(scene);
-    this.cancelRestoration(scene);
     const ids = all ? getDefinitions(scene).map((entry) => entry.groupId) : [getDefinition(scene, { groupId }).groupId];
+    this.cancelRestorations(scene, { groupIds: all ? undefined : ids });
     const sceneGeneration = all ? requestSceneHalt(scene) : null;
     const generations = new Map(ids.map((id) => [id, requestHalt(scene, id)]));
     this.stopPresentation(scene, [...getRuntimes(scene).filter(run => ids.includes(run.groupId)), ...[...this.manualRuns.values()].filter(run => all || ids.includes(run.groupId))]);
@@ -343,7 +347,7 @@ export class GroupRuntime {
   }
   haltAll(scene) { return this.halt(scene, { all: true }); }
   async startAll(scene) {
-    this.requireAuthority(scene); this.cancelRestoration(scene);
+    this.requireAuthority(scene); this.cancelRestorations(scene); this.groupStartCommands.delete(scene);
     const command = {}; this.startCommands.set(scene, command); notifyExecutionChange(scene, "start-command");
     const result = [], generation = sceneExecutionGeneration(scene);
     const groups = getDefinitions(scene), generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
@@ -360,11 +364,32 @@ export class GroupRuntime {
     }
     return result;
   }
+  /** Restart only the addressed group; a pending command for another group owns
+   * its own admission token and is not superseded by this one. */
+  async startGroup(scene, groupId, stateId) {
+    this.requireAuthority(scene);
+    const group = getDefinition(scene, { groupId });
+    this.cancelRestorations(scene, { groupIds: [group.groupId] });
+    this.startCommands.delete(scene);
+    let commands = this.groupStartCommands.get(scene);
+    if (!commands) this.groupStartCommands.set(scene, commands = new Map());
+    const command = {}; commands.set(group.groupId, command);
+    const generation = executionGeneration(scene, group.groupId), sceneGeneration = sceneExecutionGeneration(scene);
+    const isCurrent = () => this.groupStartCommands.get(scene)?.get(group.groupId) === command
+      && executionGeneration(scene, group.groupId) === generation && sceneExecutionGeneration(scene) === sceneGeneration;
+    notifyExecutionChange(scene, "start-command");
+    await withSceneLock(scene, () => {});
+    if (!isCurrent()) return null;
+    try {
+      return await this.enter(scene, stateId ?? getRuntime(scene, { groupId }).stateId ?? group.entryStateId,
+        { groupId, force: true, restart: true, isCurrent });
+    } catch (error) { if (!isCurrent() || error.code === "execution-cancelled") return null; throw error; }
+  }
   async restoreInitial(scene, target) {
     this.requireAuthority(scene);
-    this.cancelRestoration(scene);
     const binding = getObjectBindings(scene).bindings[objectKey(target)];
     if (!binding?.initialScript?.enabled) throw new Error(localizedMessage("Исходное состояние объекта не настроено."));
+    this.cancelRestorations(scene, { groupIds: [binding.groupId] });
     return this.queueInitialRestoration(scene, target, binding);
   }
   queueInitialRestoration(scene, target, binding, restoration = null) {
@@ -377,18 +402,26 @@ export class GroupRuntime {
     const run = getRuntime(scene, { groupId });
     return JSON.stringify([run.runId, run.stateId, run.halted, executionGeneration(scene, groupId)]);
   }
-  restorationCurrent(scene) {
-    const restoration = this.sceneRestoration;
-    if (!restoration || restoration.sceneId !== scene?.id) return false;
+  restorationCurrent(scene, restoration) {
+    if (!restoration || this.restorations.get(restoration.id) !== restoration || restoration.sceneId !== scene?.id) return false;
     const groups = getDefinitions(scene);
-    return Boolean(isSceneAutomationHalted(scene) && sceneExecutionGeneration(scene) === restoration.generation
-      && groups.length === restoration.groups.length && restoration.groups.every(group => groups.find(current => current.groupId === group.groupId)?.revision === group.revision
+    return Boolean((!restoration.all || isSceneAutomationHalted(scene)) && sceneExecutionGeneration(scene) === restoration.generation
+      && (!restoration.all || groups.length === restoration.groups.length) && restoration.groups.every(group => groups.find(current => current.groupId === group.groupId)?.revision === group.revision
         && this.restorationState(scene, group.groupId) === restoration.states.get(group.groupId)));
   }
-  isRestoringInitial(scene) { return Boolean(this.sceneRestoration && this.sceneRestoration.sceneId === scene?.id); }
-  cancelRestoration(scene, restoration = this.sceneRestoration) {
-    if (!restoration || this.sceneRestoration !== restoration || restoration.sceneId !== scene?.id) return;
-    this.sceneRestoration = null;
+  isRestoringInitial(scene, groupId) {
+    return [...this.restorations.values()].some(restoration => restoration.sceneId === scene?.id
+      && (groupId === undefined || restoration.groups.some(group => group.groupId === groupId)));
+  }
+  cancelRestorations(scene, { groupIds, exceptRunId } = {}) {
+    for (const restoration of this.restorations.values()) {
+      if (restoration.runIds.has(exceptRunId)) continue;
+      if (!groupIds || restoration.all || restoration.groups.some(group => groupIds.includes(group.groupId))) this.cancelRestoration(scene, restoration);
+    }
+  }
+  cancelRestoration(scene, restoration) {
+    if (!restoration || this.restorations.get(restoration.id) !== restoration || restoration.sceneId !== scene?.id) return;
+    this.restorations.delete(restoration.id);
     this.stopPresentation(scene, [...restoration.runIds].map(id => this.manualRuns.get(id)).filter(Boolean));
     for (const runId of restoration.runIds) { this.manualRuns.delete(runId); this.tickTimes.delete(`${scene.id}:${runId}`); }
     notifyExecutionChange(scene, "initial-restoration-cancelled");
@@ -397,46 +430,49 @@ export class GroupRuntime {
   /** Reset is a manual command, not a group entry: no entry effects, starts or
    * resource rollback. Initial scripts retain their normal timing and cancellation.
    * Select entry states again on completion because an initial script may change states. */
-  async restoreAllInitial(scene) {
+  restoreAllInitial(scene) { return this.restoreGroupsInitial(scene, { all: true }); }
+  restoreGroupInitial(scene, groupId) { return this.restoreGroupsInitial(scene, { groupId }); }
+  async restoreGroupsInitial(scene, { all = false, groupId } = {}) {
     this.requireAuthority(scene);
-    const halt = this.haltAll(scene), generation = sceneExecutionGeneration(scene);
+    const groups = all ? getDefinitions(scene) : [getDefinition(scene, { groupId })];
+    const halt = this.halt(scene, { all, groupId }), generation = sceneExecutionGeneration(scene);
+    const generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
     await halt;
-    if (sceneExecutionGeneration(scene) !== generation || !isSceneAutomationHalted(scene)) return [];
-    const groups = getDefinitions(scene);
-    const restoration = { id: randomId(), sceneId: scene.id, generation, groups, runIds: new Set(), states: new Map(groups.map(group => [group.groupId, this.restorationState(scene, group.groupId)])) };
-    this.sceneRestoration = restoration;
+    if (sceneExecutionGeneration(scene) !== generation || all && !isSceneAutomationHalted(scene)
+      || groups.some(group => executionGeneration(scene, group.groupId) !== generations.get(group.groupId) || !getRuntime(scene, { groupId: group.groupId }).halted)) return [];
+    const restoration = { id: randomId(), sceneId: scene.id, generation, all, groups, runIds: new Set(), states: new Map(groups.map(group => [group.groupId, this.restorationState(scene, group.groupId)])) };
+    this.restorations.set(restoration.id, restoration);
     try {
       if (!await this.selectInitialStates(scene, restoration)) return [];
       for (const binding of Object.values(getObjectBindings(scene).bindings)) {
-        if (binding.groupId && !groups.some(group => group.groupId === binding.groupId) || binding.playerCharacter || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
+        if ((!all || binding.groupId) && !groups.some(group => group.groupId === binding.groupId) || binding.playerCharacter || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
         this.queueInitialRestoration(scene, { type: binding.type, id: binding.id }, binding, restoration);
       }
-      if (!restoration.runIds.size) await this.finishRestoration(scene);
+      if (!restoration.runIds.size) await this.finishRestoration(scene, restoration);
       this.refresh(scene); return [...restoration.runIds];
     } catch (error) { this.cancelRestoration(scene, restoration); throw error; }
   }
   async selectInitialStates(scene, restoration) {
     return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      if (this.sceneRestoration !== restoration || !this.restorationCurrent(scene)) { this.cancelRestoration(scene, restoration); return false; }
+      if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
       for (const group of restoration.groups) {
-        if (this.sceneRestoration !== restoration || !this.restorationCurrent(scene)) { this.cancelRestoration(scene, restoration); return false; }
+        if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
         const run = getRuntime(scene, { groupId: group.groupId });
         Object.assign(run, { stateId: group.entryStateId, state: materializeState(scene, group, getState(group, group.entryStateId)), runId: "", halted: true,
           haltedAt: this.now(), enteredAt: 0, definitionRevision: group.revision, effects: {}, scriptStates: {}, interactionClocks: {}, error: "" });
         await saveRuntime(scene, run);
         restoration.states.set(group.groupId, this.restorationState(scene, group.groupId));
       }
-      return this.sceneRestoration === restoration && this.restorationCurrent(scene);
+      return this.restorationCurrent(scene, restoration);
     });
   }
-  async finishRestoration(scene) {
-    const restoration = this.sceneRestoration;
+  async finishRestoration(scene, restoration) {
     if (!restoration || restoration.sceneId !== scene?.id) return;
-    if (!this.restorationCurrent(scene)) { this.cancelRestoration(scene); this.refresh(scene); return; }
+    if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return; }
     if ([...restoration.runIds].some(runId => this.manualRuns.has(runId))) return;
     try { await this.selectInitialStates(scene, restoration); }
-    finally { if (this.sceneRestoration === restoration) this.sceneRestoration = null; this.refresh(scene); }
+    finally { this.restorations.delete(restoration.id); this.refresh(scene); }
   }
   async once(scene, runId, key, operation) {
     const claimed = await withSceneLock(scene, async () => {
@@ -460,7 +496,7 @@ export class GroupRuntime {
     return this.setObjectAutomation(scene, { type: "Token", id: tokenId }, enabled, { groupId });
   }
   async setObjectAutomation(scene, target, enabled, { groupId } = {}) {
-    this.requireAuthority(scene); this.cancelRestoration(scene); const key = objectKey(target);
+    this.requireAuthority(scene); this.cancelRestorations(scene, { groupIds: [groupId ?? getObjectBindings(scene).bindings[objectKey(target)]?.groupId] }); const key = objectKey(target);
     return withSceneLock(scene, async () => {
       const run = getRuntime(scene, { groupId }); run.disabledObjects = run.disabledObjects.filter((id) => id !== key);
       if (!enabled) run.disabledObjects.push(key); await saveRuntime(scene, run); notifyExecutionChange(scene); this.refresh(scene); return run;
@@ -541,7 +577,7 @@ export class GroupRuntime {
       .finally(() => { this.cleanupTask = null; });
     this.busy = true; const jobs = [];
     try {
-      if (this.sceneRestoration && !this.restorationCurrent(scene)) this.cancelRestoration(scene);
+      for (const restoration of this.restorations.values()) if (!this.restorationCurrent(scene, restoration)) this.cancelRestoration(scene, restoration);
       for (const run of [...getRuntimes(scene), ...this.manualRuns.values()]) {
         const clockKey = `${scene.id}:${run.manual ? run.runId : run.groupId}`, now = this.now();
         const elapsed = Math.min(1, Math.max(0, (now - (this.tickTimes.get(clockKey) ?? now)) / 1000)); this.tickTimes.set(clockKey, now);
@@ -557,7 +593,7 @@ export class GroupRuntime {
       }
     } finally { this.busy = false; }
     await Promise.all(jobs.map((job) => this.scripts.execute(job)));
-    await this.finishRestoration(scene);
+    for (const restoration of this.restorations.values()) await this.finishRestoration(scene, restoration);
   }
   async onTokenMove(token, previous) {
     const scene = token.parent; if (!this.owns(scene) || game.paused) return;

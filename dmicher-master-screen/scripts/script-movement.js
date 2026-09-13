@@ -1,5 +1,5 @@
 import { message as localizedMessage } from "./localization.js";
-import { sceneObjectBounds, sceneObjectCenter, translateRegionShapes } from "./scene-object-geometry.js";
+import { sceneObjectBounds, translateRegionShapes } from "./scene-object-geometry.js";
 
 const objectType = (object) => object?.documentName ?? object?.constructor?.documentName;
 /** Stop only Foundry's supported native animation; never rewrite saved positions. */
@@ -14,20 +14,35 @@ export function scriptObjectCapabilities(object) {
   return { position: wall || region || has("x") && has("y"), rotation: wall || has("rotation") || type === "MeasuredTemplate" && has("direction"), size: ["Token", "Tile"].includes(type) || type === "Drawing" && Boolean(object.shape),
     sizeZ: type === "Token" && has("depth"), visibility: has("hidden") };
 }
-const field = (object, key) => Number(key.split(".").reduce((value, name) => value?.[name], object) ?? 0);
+const pathValue = (data, key) => key.split(".").reduce((value, name) => value?.[name], data);
+// Token animations in Foundry 13/14 overwrite the prepared document every frame.
+// The stored source remains the last admitted endpoint, including a GM's edits.
+// Planning from the animated frame would repeatedly lose distance while still
+// spending the whole time slice, forcing an increasingly fast final catch-up.
+const nativeValue = (object, key) => pathValue(object?._source, key) ?? pathValue(object, key);
+const field = (object, key) => Number(nativeValue(object, key) ?? 0);
 const gridSize = (scene) => Number(scene?.grid?.size || 100);
+
+/** A small geometry projection avoids cloning a Token's actor, flags or texture. */
+export function scriptObjectBounds(object, scene = object?.parent) {
+  if (!object) return null;
+  const data = { documentName: objectType(object) };
+  for (const key of ["x", "y", "width", "height", "shape", "shapes", "c"]) data[key] = nativeValue(object, key);
+  return sceneObjectBounds(data, scene, { useRendered: false });
+}
 
 /** UI defaults and runtime use the same units: positions in pixels, dimensions
  * in grid spaces. A wall is anchored at its midpoint and has no width/height. */
 export function readObjectGeometry(object, scene = object?.parent) {
   const capabilities = scriptObjectCapabilities(object), type = objectType(object);
-  const sizeSource = type === "Drawing" ? object.shape : object, scale = type === "Token" ? 1 : gridSize(scene);
-  const bounds = type === "Region" ? sceneObjectBounds(object, scene, { useRendered: false }) : null;
-  const position = !capabilities.position ? null : type === "Wall" ? sceneObjectCenter(object, scene)
+  const sizePrefix = type === "Drawing" ? "shape." : "", scale = type === "Token" ? 1 : gridSize(scene);
+  const bounds = ["Region", "Wall"].includes(type) ? scriptObjectBounds(object, scene) : null;
+  const coordinates = nativeValue(object, "c");
+  const position = !capabilities.position ? null : type === "Wall" ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
     : bounds ? { x: bounds.x, y: bounds.y } : { x: field(object, "x"), y: field(object, "y") };
-  const rotation = !capabilities.rotation ? null : type === "Wall" ? Math.atan2(object.c[3] - object.c[1], object.c[2] - object.c[0]) * 180 / Math.PI
+  const rotation = !capabilities.rotation ? null : type === "Wall" ? Math.atan2(coordinates[3] - coordinates[1], coordinates[2] - coordinates[0]) * 180 / Math.PI
     : field(object, type === "MeasuredTemplate" ? "direction" : "rotation");
-  return { position, rotation, size: capabilities.size ? { x: field(sizeSource, "width") / scale, y: field(sizeSource, "height") / scale, z: capabilities.sizeZ ? field(object, "depth") : null } : null };
+  return { position, rotation, size: capabilities.size ? { x: field(object, `${sizePrefix}width`) / scale, y: field(object, `${sizePrefix}height`) / scale, z: capabilities.sizeZ ? field(object, "depth") : null } : null };
 }
 
 export function planScriptMovement(scene, object, parameters) {
@@ -66,7 +81,7 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
   const spent = Math.min(Math.max(0, seconds * 1000), movement.remainingMs);
   const ratio = movement.remainingMs > 0 ? spent / movement.remainingMs : 1;
   if (ratio <= 0) return { consumed: 0, done: false };
-  const changes = {};
+  const changes = {}, rounding = {};
   const type = objectType(object), geometry = readObjectGeometry(object, scene);
   for (const [key, target] of Object.entries(movement.target)) {
     const angle = ["rotation", "direction"].includes(key);
@@ -77,32 +92,39 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
       // orientation change as the shortest adjustment to the current orientation.
       current = movement.rotationValue + ((current - expected + 540) % 360) - 180;
     }
+    const rounded = ["x", "y"].includes(key) || ["Tile", "Drawing"].includes(type) && ["width", "height", "shape.width", "shape.height"].includes(key);
+    // Keep sub-pixel progress between coarse updates; rounding every relative
+    // portion otherwise accumulates into the final portion. A changed saved
+    // coordinate is a manual rebase and intentionally discards that remainder.
+    if (rounded && movement.rounding?.[key]?.native === current) current = movement.rounding[key].exact;
     let value = current + (target - current) * ratio;
-    if (["x", "y"].includes(key) || ["Tile", "Drawing"].includes(type) && ["width", "height", "shape.width", "shape.height"].includes(key)) value = Math.round(value);
+    if (rounded) { rounding[key] = { exact: value, native: Math.round(value) }; value = rounding[key].native; }
     if (angle) { movement.rotationValue = value; value = ((value % 360) + 360) % 360; }
     changes[key] = value;
   }
   if (type === "Wall" && Object.keys(changes).length) {
     const center = geometry.position, next = { x: changes.x ?? center.x, y: changes.y ?? center.y }, angle = ((changes.rotation ?? geometry.rotation) - geometry.rotation) * Math.PI / 180;
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    changes.c = [0, 2].flatMap((i) => { const x = object.c[i] - center.x, y = object.c[i + 1] - center.y; return [Math.round(next.x + x * cos - y * sin), Math.round(next.y + x * sin + y * cos)]; });
+    const coordinates = nativeValue(object, "c");
+    changes.c = [0, 2].flatMap((i) => { const x = coordinates[i] - center.x, y = coordinates[i + 1] - center.y; return [Math.round(next.x + x * cos - y * sin), Math.round(next.y + x * sin + y * cos)]; });
     delete changes.x; delete changes.y; delete changes.rotation;
   } else if (type === "Region" && ("x" in changes || "y" in changes)) {
-    changes.shapes = translateRegionShapes(object, (changes.x ?? geometry.position.x) - geometry.position.x, (changes.y ?? geometry.position.y) - geometry.position.y);
+    changes.shapes = translateRegionShapes({ shapes: nativeValue(object, "shapes") }, (changes.x ?? geometry.position.x) - geometry.position.x, (changes.y ?? geometry.position.y) - geometry.position.y);
     delete changes.x; delete changes.y;
   } else if (type === "Drawing" && object.shape?.points?.length && ("shape.width" in changes || "shape.height" in changes)) {
     // Drawing polygons store local points as well as their bounding dimensions.
-    const sx = object.shape.width ? (changes["shape.width"] ?? object.shape.width) / object.shape.width : 1;
-    const sy = object.shape.height ? (changes["shape.height"] ?? object.shape.height) / object.shape.height : 1;
-    changes["shape.points"] = Array.from(object.shape.points).map((n, i) => n * (i % 2 ? sy : sx));
+    const width = field(object, "shape.width"), height = field(object, "shape.height");
+    const sx = width ? (changes["shape.width"] ?? width) / width : 1;
+    const sy = height ? (changes["shape.height"] ?? height) / height : 1;
+    changes["shape.points"] = Array.from(nativeValue(object, "shape.points")).map((n, i) => n * (i % 2 ? sy : sx));
   }
   if (!ignoreObstacles && object.documentName === "Token" && ("x" in changes || "y" in changes)) {
-    const origin = object.getCenterPoint?.() ?? { x: field(object, "x") + field(object, "width") * gridSize(scene) / 2, y: field(object, "y") + field(object, "height") * gridSize(scene) / 2 };
-    const destination = { x: origin.x + (changes.x ?? object.x) - object.x, y: origin.y + (changes.y ?? object.y) - object.y };
+    const origin = object.getCenterPoint?.(object._source ?? object) ?? { x: geometry.position.x + field(object, "width") * gridSize(scene) / 2, y: geometry.position.y + field(object, "height") * gridSize(scene) / 2 };
+    const destination = { x: origin.x + (changes.x ?? geometry.position.x) - geometry.position.x, y: origin.y + (changes.y ?? geometry.position.y) - geometry.position.y };
     if (object.object?.checkCollision?.(destination, { origin, type: "move", mode: "any" })) throw new Error(localizedMessage("Путь скрипта пересекает стену."));
   }
   const changed = Object.entries(changes).some(([key, value]) => {
-    const current = key.split(".").reduce((data, part) => data?.[part], object);
+    const current = nativeValue(object, key);
     if (Object.is(current, value)) return false;
     // Flat native coordinates (walls and drawing points) compare directly.
     // Region shape models retain their native document update contract.
@@ -114,7 +136,9 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
     if (signal?.aborted || !isCurrent()) return { consumed: 0, done: false };
     signal?.addEventListener("abort", stopAnimation, { once: true });
     try {
-      await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
+      // Foundry provides linear interpolation when easing is omitted. Preserve
+      // the actual slice duration, including a shorter last slice and slow ticks.
+      await object.update(changes, { animate: true, animation: { duration: spent } });
       // The update may start a native interpolation after an earlier abort.
       if (signal?.aborted || !isCurrent()) stopAnimation();
     } finally { signal?.removeEventListener("abort", stopAnimation); }
@@ -122,6 +146,7 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
   // A submitted Foundry document write cannot be recalled. Its completion must
   // not count as progress in a run which was stopped while the write awaited I/O.
   if (signal?.aborted || !isCurrent()) return { consumed: 0, done: false };
+  movement.rounding = rounding;
   movement.remainingMs = Math.max(0, movement.remainingMs - spent);
   return { consumed: spent / 1000, done: movement.remainingMs === 0 };
 }
