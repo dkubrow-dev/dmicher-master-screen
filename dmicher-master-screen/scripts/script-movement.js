@@ -99,7 +99,15 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
     const destination = { x: origin.x + (changes.x ?? object.x) - object.x, y: origin.y + (changes.y ?? object.y) - object.y };
     if (object.object?.checkCollision?.(destination, { origin, type: "move", mode: "any" })) throw new Error(localizedMessage("Путь скрипта пересекает стену."));
   }
-  if (Object.keys(changes).length) await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
+  const changed = Object.entries(changes).some(([key, value]) => {
+    const current = key.split(".").reduce((data, part) => data?.[part], object);
+    if (Object.is(current, value)) return false;
+    // Flat native coordinates (walls and drawing points) compare directly.
+    // Region shape models retain their native document update contract.
+    return !Array.isArray(current) || !Array.isArray(value) || current.length !== value.length
+      || value.some((entry, index) => !Object.is(entry, current[index]));
+  });
+  if (changed) await object.update(changes, { animate: true, animation: { duration: Math.min(500, spent) } });
   movement.remainingMs = Math.max(0, movement.remainingMs - spent);
   return { consumed: spent / 1000, done: movement.remainingMs === 0 };
 }

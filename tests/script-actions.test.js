@@ -37,11 +37,44 @@ test("script slots maintain independent progress and disabled scripts have no si
   assert.equal(Object.keys(f.state().scriptStates).length, 2); assert.equal(f.progress().action.remainingMs, 1500);
   const disabled = fixture({ enabled: false, steps: [step(1, "visibility", { visible: false })] }); await disabled.tick(); assert.equal(disabled.object.hidden, false);
 });
+test("two instant steps in a repeating script yield after one pass and continue on the next tick", async () => {
+  const f = fixture({ repeat: true, steps: [step(1, "move", { duration: 0, position: { x: 100, y: 0 } }, [2]), step(2, "emotion", { emoji: "!", duration: 0 })] });
+  const advanced = []; f.runtime.refreshObject = () => advanced.push(f.progress().stepId);
+  await f.tick(); assert.deepEqual(advanced, [2, 1]); assert.equal(f.object.x, 100); assert.equal(f.progress().emoji, "!");
+  assert.equal(f.progress().status, "ready"); assert.equal(f.progress().action, null);
+  advanced.length = 0;
+  await f.tick(); assert.deepEqual(advanced, [2, 1]); assert.equal(f.progress().status, "ready"); assert.equal(f.script.repeat, true);
+});
+test("an explicit instant graph cycle yields without changing its authored links", async () => {
+  const f = fixture({ repeat: false, steps: [step(1, "emotion", { emoji: "!", duration: 0 }, [2]), step(2, "emotion", { emoji: "?", duration: 0 }, [1])] });
+  const advanced = []; f.runtime.refreshObject = () => advanced.push(f.progress().stepId);
+  await f.tick(); assert.deepEqual(advanced, [2, 1]); assert.equal(f.progress().emoji, "?");
+  advanced.length = 0;
+  await f.tick(); assert.deepEqual(advanced, [2, 1]); assert.equal(f.progress().status, "ready");
+  assert.deepEqual(f.script.steps.map(({ next }) => next), [[2], [1]]);
+});
+test("a cycle which spends real time can use the remaining combat budget in the same tick", async () => {
+  const combat = { context: () => ({ id: "fight", turnKey: "turn1", isTurn: true }), notify: async () => {}, confirmAction: async () => "continue" };
+  const f = fixture({ combat: { enabled: true, turnSeconds: 1, endTurn: false }, steps: [step(1, "wait", { seconds: 0.25 }, [1])] }, { combat });
+  const advanced = []; f.runtime.refreshObject = () => advanced.push(f.progress().stepId);
+  await f.tick(); advanced.length = 0; await f.tick();
+  assert.deepEqual(advanced, [1, 1, 1, 1]); assert.equal(f.progress().combat.remaining, 0);
+  assert.equal(f.progress().status, "ready"); assert.equal(f.progress().stepId, 1);
+});
 test("movement combines position, rotation and resize with a shared duration and rebases manual changes", async () => {
   const f = fixture({ steps: [step(1, "move", { timeMode: "duration", duration: 10, position: { x: 100, y: 0 }, rotation: { mode: "absolute", angle: 90 }, size: { x: 2, y: 3 } })] });
   await f.tick(4); assert.equal(f.object.x, 40); assert.equal(f.object.rotation, 36); assert.equal(f.object.width, 1.4);
   f.object.x = 10; f.object.rotation = 0; await f.tick(3); assert.equal(f.object.x, 55); assert.equal(f.object.rotation, 45);
   await f.tick(3); assert.equal(f.object.x, 100); assert.equal(f.object.rotation, 90); assert.equal(f.object.height, 3);
+});
+test("movement already at its full target keeps its duration without native document writes", async () => {
+  const f = fixture({ steps: [step(1, "move", { duration: 1, position: { x: 0, y: 0 }, rotation: { mode: "absolute", angle: 0 }, size: { x: 1, y: 1 } })] });
+  let writes = 0; f.object.update = async () => { writes++; };
+  await f.tick(); assert.equal(writes, 0); assert.equal(f.progress().action.movement.remainingMs, 500);
+  await f.tick(); assert.equal(writes, 0); assert.equal(f.progress().status, "done");
+  const moved = fixture({ steps: [step(1, "move", { duration: 0, position: { x: 100, y: 0 } })] });
+  const changes = []; moved.object.update = async value => { changes.push(value); Object.assign(moved.object, value); };
+  await moved.tick(); assert.equal(changes.length, 1); assert.equal(moved.object.x, 100); assert.equal(moved.progress().status, "done");
 });
 test("native Token depth is optional; Tile sizes convert grid spaces to pixels", async () => {
   const scene = { grid: { size: 100, distance: 5 } }, token = { documentName: "Token", x: 0, y: 0, width: 1, height: 1, rotation: 0 };

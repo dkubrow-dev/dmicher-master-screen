@@ -34,6 +34,52 @@ function fixture() {
   return { app, flags, scene };
 }
 
+test("runtime updates do not replace authoring controls or their selected draft", async () => {
+  const { app, scene, flags } = fixture();
+  app.context({ reload: true }); const draft = app.draft;
+  let renders = 0; app.render = async () => { renders++; app.context({ reload: true }); };
+  for (let tick = 0; tick < 100; tick++) {
+    flags.groupRuntimes = { main: { stateId: "calm", scriptStates: { step: { remainingMs: tick, emojiAt: tick } } } };
+    flags.dialogueSessions = { changedAt: tick };
+    await app.refreshFromScene(scene);
+  }
+  assert.equal(renders, 0); assert.equal(app.draft, draft);
+  app.capture = () => {};
+  await app.handleAction("tab", { dataset: { tab: "routine" } });
+  assert.equal(app.tab, "routine"); assert.equal(renders, 1);
+});
+
+test("preparation and reference updates still refresh dirty forms without promoting their revision", async () => {
+  const { app, scene, flags } = fixture();
+  app.context({ reload: true }); app.dirty = true; app.capture = () => {};
+  let renders = 0; app.render = async () => { renders++; app.context({ reload: true }); };
+  flags.objectBindings.revision++;
+  await app.refreshFromScene(scene);
+  assert.equal(renders, 1); assert.equal(app.revision, 1); assert.equal(app.dirty, true);
+  flags.interactionCatalog = { revision: 1, shops: [], dialogues: [] };
+  await app.refreshFromScene(scene); assert.equal(renders, 2);
+  scene.tokens.get("npc").name = "Renamed";
+  await app.refreshFromScene(scene); assert.equal(renders, 3);
+  await app.refreshFromScene(scene); assert.equal(renders, 3);
+  scene.tokens.set("other", { id: "other", name: "Other NPC", documentName: "Token", parent: scene });
+  await app.refreshFromScene(scene); assert.equal(renders, 4);
+  scene.tokens.get("other").name = "Another name";
+  await app.refreshFromScene(scene); assert.equal(renders, 5);
+  scene.tokens.delete("other");
+  await app.refreshFromScene(scene); assert.equal(renders, 6);
+});
+
+test("repeated runtime notifications do not perpetually extend an authoring refresh", async () => {
+  const { app, scene, flags } = fixture(); app.context({ reload: true });
+  let release, renders = 0;
+  app.render = async () => { renders++; app.context({ reload: true }); await new Promise(resolve => { release = resolve; }); };
+  flags.objectBindings.revision++;
+  const task = app.refreshFromScene(scene); await Promise.resolve();
+  for (let tick = 0; tick < 20; tick++) app.refreshFromScene(scene);
+  release(); await task;
+  assert.equal(renders, 1); assert.equal(app.refreshTask, null);
+});
+
 test("queued refresh never removes the live initial or transition script", async () => {
   const { app } = fixture(), before = app.draft;
   let release; app.render = async () => { await new Promise((resolve) => { release = resolve; }); app.context({ reload: true }); };

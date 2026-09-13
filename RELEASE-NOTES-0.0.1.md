@@ -1,5 +1,8 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Исправлена работа кнопок редактора поведения при частых обновлениях исполняемого скрипта: форма обновляется при изменении подготовки и ссылочных данных. Мгновенный цикл уступает исполнение следующему такту; повтор сохраняется. Убраны повторные записи неизменённых ожиданий и перемещения в уже занятую точку. Подготовка миров не изменяется.
+- Fixed behavior editor buttons during frequent script runtime updates: the form refreshes when preparation or reference data changes. Instant cycles yield to the next tick while preserving repetition. Unchanged waits and movement to an already occupied position no longer produce redundant writes. World preparation is unchanged.
+
 Разработка от 13 сентября 2026 для Foundry 13/14. Обязательная зависимость — Generics 1.0.0. Номер версии сохранён; это сборка ветки разработки, не публикация удалённого релиза.
 
 - Каждый блок скрипта получил стандартные кнопки «Импорт JSON» и «Экспорт JSON». Импорт проверяет формат и собственные ссылки объекта, заменяет только черновик выбранного блока после подтверждения и требует сохранения. Экспорт учитывает несохранённый ввод.

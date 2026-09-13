@@ -131,7 +131,26 @@ try {
     await behavior.locator('footer [data-screen-action="save"]').click();
     assert.equal(await page.evaluate(() => scene.flags['dmicher-master-screen'].objectBindings.bindings['Token:guard'].dialogues[0].playerAction), false);
     await page.screenshot({path:path.join(output,`${version}-object-properties.png`)});
+    // Active scripts update runtime frequently. Keep real authoring buttons
+    // usable while those notifications reach the controller.
+    await page.evaluate(async () => {
+      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      await form.persistTask; await form.refreshTask;
+      const render = form.render, flags = scene.flags['dmicher-master-screen'], original = flags.groupRuntimes;
+      globalThis.authoringTraffic = { renders: 0, ticks: 0, done: false };
+      form.render = function(...args) { authoringTraffic.renders++; return render.apply(this, args); };
+      const interval = setInterval(() => {
+        flags.groupRuntimes = { ...original, diagnostic: { scriptStates: { remainingMs: ++authoringTraffic.ticks } } };
+        controller.changed(scene);
+        if (authoringTraffic.ticks === 20) {
+          clearInterval(interval); flags.groupRuntimes = original; form.render = render; authoringTraffic.done = true;
+        }
+      }, 25);
+    });
     await behavior.locator('[data-tab="transitions"]').click();
+    await page.waitForFunction(() => authoringTraffic.done);
+    assert.equal(await behavior.locator('[data-tab="transitions"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.evaluate(() => authoringTraffic.renders), 1, 'runtime traffic must not render the object form; only the clicked tab does');
     assert.equal(await behavior.locator('[data-kind="transition"][data-screen-action="edit-script"]').count(),4);
     await behavior.locator('[data-screen-action="edit-script"][data-kind="initial"]').click();
     await behavior.locator('[data-screen-action="add-script-step"]').click();

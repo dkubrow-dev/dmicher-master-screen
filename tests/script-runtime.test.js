@@ -29,6 +29,11 @@ async function fixture({ routine, transition, initial, emitSignal, effects: supp
   const progress = (slot = "routine", target = { type: "Token", id: "npc" }) => Object.entries(getRuntime(scene).scriptStates).find(([key]) => key.startsWith(`${target.type}:${target.id}:${slot}:`))?.[1];
   return { scene, flags, npc, tile, runtime, calls, progress, now: () => now, async tick(ms = 500) { now += ms; await runtime.tick(); } };
 }
+function recordScriptWrites(runtime) {
+  const writes = [], save = runtime.saveScriptState.bind(runtime);
+  runtime.saveScriptState = async (scene, state) => { writes.push(clone(state)); return save(scene, state); };
+  return writes;
+}
 test("group transition scripts finish before routines and never replay on refresh", async () => {
   const f = await fixture({ transition: script([step(1, "move", { duration: 0, position: { x: 100, y: 0 } })]), routine: script([step(1, "wait", { seconds: 2 })]) });
   await f.runtime.enter(f.scene, "calm"); await f.tick(); assert.equal(f.npc.x, 100); assert.equal(f.progress("transition").status, "done"); assert.equal(f.progress(), undefined);
@@ -316,6 +321,68 @@ test("dialogue wait modes advance only on their condition and ignore only this s
       run = getRuntime(f.scene); run.dialogueSessions.foreign.status = "left"; await saveRuntime(f.scene, run); await f.tick(); assert.equal(f.npc.hidden, true);
     }
   }
+});
+test("waiting for an open dialogue does not rewrite runtime on every poll and resumes after it closes", async () => {
+  const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "all" }, [2]), step(2, "visibility", { visible: false })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  const reference = { sessionId: "session", userId: "player", actorTokenId: "pc" };
+  f.runtime.startScriptDialogues = async () => {
+    const run = getRuntime(f.scene);
+    run.dialogueSessions.session = { ...reference, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+    await saveRuntime(f.scene, run); return [reference];
+  };
+  await f.runtime.enter(f.scene, "calm"); await f.tick();
+  const writes = recordScriptWrites(f.runtime), before = getRuntime(f.scene);
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 0); assert.deepEqual(getRuntime(f.scene), before); assert.equal(f.npc.hidden, false);
+  const run = getRuntime(f.scene); run.dialogueSessions.session.status = "left"; await saveRuntime(f.scene, run);
+  await f.tick(); assert.equal(f.npc.hidden, true); assert.equal(f.progress().status, "done"); assert.ok(writes.length > 0);
+});
+test("an exhausted combat budget stays read-only until the next own turn", async () => {
+  let turn = 1;
+  const combat = { context: () => ({ id: "fight", turnKey: `turn${turn}`, isTurn: true }), notify: async () => {}, confirmAction: async () => "continue" };
+  const f = await fixture({ combat, routine: script([step(1, "wait", { seconds: 2 })], { combat: { enabled: true, turnSeconds: 1, endTurn: false } }) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+  assert.equal(f.progress().combat.remaining, 0); assert.equal(f.progress().action.remainingMs, 1000);
+  const writes = recordScriptWrites(f.runtime);
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 0); assert.equal(f.progress().action.remainingMs, 1000);
+  turn = 2; await f.tick(); await f.tick();
+  assert.equal(f.progress().status, "done"); assert.ok(writes.length > 0);
+});
+test("a completed combat script persists a new turn once without repeating idle writes", async () => {
+  let turn = 1;
+  const combat = { context: () => ({ id: "fight", turnKey: `turn${turn}`, isTurn: true }), notify: async () => {}, confirmAction: async () => "continue" };
+  const f = await fixture({ combat, routine: script([step(1, "visibility", { visible: false })], { combat: { enabled: true, endTurn: false } }) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick(); assert.equal(f.progress().status, "done");
+  const writes = recordScriptWrites(f.runtime);
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 0);
+  turn = 2;
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 1); assert.equal(f.progress().combat.turnKey, "turn2"); assert.equal(f.progress().status, "done");
+});
+test("dialogue waiting still spends combat time and persists leaving combat only once", async () => {
+  let inCombat = true;
+  const combat = { context: () => inCombat ? { id: "fight", turnKey: "turn1", isTurn: true } : null, notify: async () => {}, confirmAction: async () => "continue" };
+  const f = await fixture({ combat, routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "all" })], { combat: { enabled: true, turnSeconds: 1, endTurn: false } }) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  const reference = { sessionId: "session", userId: "player", actorTokenId: "pc" };
+  f.runtime.startScriptDialogues = async () => {
+    const run = getRuntime(f.scene);
+    run.dialogueSessions.session = { ...reference, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+    await saveRuntime(f.scene, run); return [reference];
+  };
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+  const writes = recordScriptWrites(f.runtime);
+  await f.tick(); assert.equal(writes.length, 1); assert.equal(f.progress().combat.remaining, 0);
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 1);
+  inCombat = false; await f.tick(); assert.equal(writes.length, 2); assert.equal(f.progress().combat, null);
+  for (let i = 0; i < 10; i++) await f.tick(100);
+  assert.equal(writes.length, 2); assert.equal(f.progress().action.phase, "dialogue");
 });
 test("follow stops additional corners when the world pauses or the combat turn changes during an update", async () => {
   for (const interruption of ["pause", "turn"]) {

@@ -72,23 +72,31 @@ export class ObjectScriptRuntime {
       return;
     }
     const combat = this.combat.context(scene, object);
+    let combatChanged = false;
     if (combat) {
       if (!script.combat.enabled || !combat.isTurn || progress.combat?.stoppedId === combat.id) return;
       if (progress.combat?.turnKey !== combat.turnKey) {
         progress.combat = { id: combat.id, turnKey: combat.turnKey, remaining: script.combat.turnSeconds, confirmedStepId: null, ended: false, stoppedId: null };
+        combatChanged = true;
       }
       if (progress.status === "done" || progress.combat.remaining <= 0) {
         if (script.combat.endTurn && !progress.combat.ended) return this.claim(scene, state, object, script, progress, key, "endTurn", { id: progress.stepId ?? 0, kind: "wait", parameters: {}, next: [] }, { combat });
-        await this.save(scene, state); return;
+        if (combatChanged) await this.save(scene, state);
+        return;
       }
-    } else if (progress.combat) progress.combat = null;
+    } else if (progress.combat) { progress.combat = null; combatChanged = true; }
     if (["done", "uncertain", "failed"].includes(progress.status)) return;
     let available = combat ? progress.combat.remaining : Math.max(0, elapsed);
+    const instantSteps = new Set();
     for (let index = 0; index < LIMIT; index++) {
       if (!this.current(scene, state.runId, target, { scriptKey: key }) || !sameTurn(combat, this.combat.context(scene, object))) return;
       if (combat && progress.combat.remaining <= 0) return;
       const step = script.steps.find((entry) => entry.id === progress.stepId);
       if (!step) { progress.status = "done"; await this.save(scene, state); return; }
+      // An authored instant loop is valid, but yields to the next runtime tick
+      // instead of spending this whole tick repeating the same zero-time work.
+      if (instantSteps.has(step.id)) return;
+      instantSteps.add(step.id);
       if (progress.action?.stepId !== step.id) {
         progress.action = actionFor(scene, object, step);
       }
@@ -111,12 +119,18 @@ export class ObjectScriptRuntime {
         consumed = movement.consumed;
         if (combat) progress.combat.remaining = Math.max(0, progress.combat.remaining - consumed);
         available = Math.max(0, available - consumed);
-        await this.save(scene, state);
-        if (!movement.done) return;
+        if (!movement.done) { await this.save(scene, state); return; }
       } else if (step.kind === "dialogue" && action.phase === "dialogue") {
         if (scriptDialoguesPending(state, action.sessions, Date.now(), params.waitMode)) {
-          if (combat) progress.combat.remaining = Math.max(0, progress.combat.remaining - available);
-          await this.save(scene, state); return;
+          if (combat) {
+            const remaining = Math.max(0, progress.combat.remaining - available);
+            combatChanged ||= remaining !== progress.combat.remaining;
+            progress.combat.remaining = remaining;
+          }
+          // The dialogue service owns session changes. An idle poll has no new
+          // state to persist; only an actual combat-clock change needs a write.
+          if (combatChanged) await this.save(scene, state);
+          return;
         }
       } else if (["duration", "before", "after"].includes(action.phase)) {
         consumed = Math.min(available, action.remainingMs / 1000);
@@ -128,6 +142,7 @@ export class ObjectScriptRuntime {
         if (step.kind === "speech" && action.phase === "duration") return this.claim(scene, state, object, script, progress, key, "speechEnd", step);
         if (step.kind === "emotion" && params.duration > 0) { progress.emoji = ""; progress.emojiAt = visualTime(state); }
       } else return this.claim(scene, state, object, script, progress, key, "effect", step);
+      if (consumed > 0) instantSteps.clear();
       this.advance(progress, this.next(script, step));
       await this.save(scene, state); this.runtime.refreshObject(object);
       if (progress.status === "done") return;

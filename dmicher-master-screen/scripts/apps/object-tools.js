@@ -5,8 +5,8 @@ import { currentScene, getDefinitions, getObjectTags } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
 import { registeredToolIds, toolRegistration } from "../object-binding-model.js";
 import { getInteractionCatalog } from "../scene-assets.js";
-import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
-import { normalizeConditions } from "../model.js";
+import { SignalCatalog, getSignalCatalog, listSignalEmitters } from "../signal-catalog.js";
+import { MODULE_ID, normalizeConditions } from "../model.js";
 import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
 import { buildScriptFields, readScriptFields, bindScriptSorting } from "./script-fields.js";
 import { appendScriptStep, removeScriptStep } from "../script-editing.js";
@@ -47,7 +47,29 @@ class ObjectForm extends ScreenFormApplication {
       this.reconcileSelection?.(previous);
     }
     const definitions = getDefinitions(scene), definition = definitions.find((item) => item.groupId === this.draft.groupId);
+    if (reload) this.preparedRefreshKey = this.sceneRefreshKey(scene);
     return { scene, document, definitions, definition, catalog: getInteractionCatalog(scene) };
+  }
+  sceneRefreshKey(scene) {
+    const document = getSceneObject(scene, this.descriptor);
+    // Authoring forms depend on preparation and reference labels, not execution
+    // clocks, dialogue sessions or each movement tick. Explicit refresh stays available.
+    return JSON.stringify([scene?.id, scene?.name, game.i18n?.lang,
+      ...["objectBindings", "groupDefinitions", "interactionCatalog", "signalCatalog"].map(key => scene?.getFlag(MODULE_ID, key)),
+      document && [document.id, document.uuid, document.name, document.label, document.actor?.uuid],
+      listSignalEmitters(scene).map(emitter => [emitter.key, emitter.name]),
+      Array.from(game.macros?.values?.() ?? [], macro => [macro.id, macro.name, macro.command, macro.type, macro.canExecute])]);
+  }
+  refreshFromScene(scene) {
+    if (scene?.id !== this.sceneId || this.persistTask) return;
+    const key = this.sceneRefreshKey(scene);
+    if (key === this.preparedRefreshKey || key === this.requestedRefreshKey) return;
+    this.requestedRefreshKey = key;
+    const task = this.refresh();
+    if (!task) { this.requestedRefreshKey = null; return; }
+    return Promise.resolve(task).finally(() => {
+      if (this.requestedRefreshKey === key) this.requestedRefreshKey = null;
+    });
   }
   async _onRender(context, options) {
     await super._onRender(context, options);

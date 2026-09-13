@@ -345,7 +345,9 @@ export class ScreenController {
     const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
     if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
     for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
-      if (app?.rendered || app?.refreshTask) void Promise.resolve().then(() => (app.rendered || app.refreshTask) && app.refresh?.()).catch(notifyError);
+      if (app?.rendered || app?.refreshTask) void Promise.resolve().then(() => {
+        if (app.rendered || app.refreshTask) return app.refreshFromScene ? app.refreshFromScene(scene) : app.refresh?.();
+      }).catch(notifyError);
     }
     for (const runtime of getRuntimes(scene)) void this.workspace.apply(scene, runtime).catch(notifyError);
   }
