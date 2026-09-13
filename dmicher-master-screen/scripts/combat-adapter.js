@@ -2,6 +2,7 @@ import { message as localizedMessage, text } from "./localization.js";
 import { escapeScriptText } from "./script-text.js";
 import { scriptActionLabel } from "./script-action-labels.js";
 import { isAuthority } from "./store.js";
+import { debugError } from "./debug.js";
 
 const values = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
 const uuid = (document, fallback) => document?.uuid ?? fallback;
@@ -33,7 +34,7 @@ export function createCombatAdapter({ emitSignal, chat } = {}) {
       await send(combat, "turnChanged", { previousActorUuid: before.actorUuid, currentActorUuid: after.actorUuid });
     }
   };
-  const report = (error) => { console.error("dmicher-master-screen | combat", error); globalThis.ui?.notifications?.error(error.message ?? String(error)); };
+  const report = (error) => { debugError("combat", "failed", error); console.error("dmicher-master-screen | combat", error); globalThis.ui?.notifications?.error(error.message ?? String(error)); };
   return {
     supported: combatSupported, context,
     activate() {

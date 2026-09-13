@@ -17,10 +17,12 @@ import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSu
 import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form-fields.js";
 import { debugEnabled, setDebugEnabled } from "../debug.js";
 import { getDialogueAudioPickerOptions } from "../premium-provider.js";
+import { DirectorConsole, renderDirectorConsole } from "./director-console.js";
+import { notifyError } from "../ui.js";
 
 const clone = (value) => structuredClone(value);
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
-const notify = (error) => { console.error("dmicher-master-screen |", error); globalThis.ui?.notifications?.error(error.message); };
+const notify = (error) => notifyError(error);
 
 /** The IDE owns navigation and draft forms. The existing state editors remain isolated under Other. */
 export class MasterScreenApplication extends EditorApplication {
@@ -29,7 +31,7 @@ export class MasterScreenApplication extends EditorApplication {
   constructor(controller, { mode = "constructor", presentation = "panel", ...options } = {}) {
     super(controller, { mode: "constructor", ...options });
     this.mode = mode;
-    this.layout = new ScreenLayout({ dock: this.dock, onPopupClose: () => {
+    this.layout = new ScreenLayout({ dock: this.dock, mode, onPopupClose: () => {
       this.layout.setPresentation("panel");
       this.captureParameterDraft();
       void this.render({ force: true }).catch(notify);
@@ -46,11 +48,13 @@ export class MasterScreenApplication extends EditorApplication {
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
     this.assetPageIds = new Map();
+    this.directorConsole = new DirectorConsole();
   }
 
   _insertElement(element) { super._insertElement(element); this.layout.attach(element); }
 
   async _onClose(options) {
+    this.directorConsole.dispose();
     this.menuController?.dispose();
     this.menuDialog?.close(); this.menuDialog?.remove(); this.menuObserver?.disconnect();
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
@@ -64,6 +68,7 @@ export class MasterScreenApplication extends EditorApplication {
   syncDebugControl() {
     const input = this.element?.querySelector("[data-screen-debug]");
     if (input) input.checked = debugEnabled();
+    this.directorConsole.refresh();
   }
 
   async setPresentation(presentation) {
@@ -75,7 +80,10 @@ export class MasterScreenApplication extends EditorApplication {
   async changeMode(mode) {
     if (this.mode === mode) return;
     this.storeTabState();
+    this.directorConsole.captureViewState();
     this.mode = mode;
+    this.directorConsole.dispose();
+    this.layout.setMode(mode);
     this.otherBlock = mode === "director" ? "playback" : "tokens";
     this.layout.preferences.mainTab = "scene";
     this.layout.preferences.hiddenMain = this.layout.preferences.hiddenMain.filter((id) => id !== "scene");
@@ -172,6 +180,7 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async _prepareContext(options) {
+    this.directorConsole.captureViewState();
     let current = this.controller.getContext();
     if (this.selectionSceneId && this.selectionSceneId !== current.scene?.id) {
       this.storeTabState();
@@ -237,7 +246,9 @@ export class MasterScreenApplication extends EditorApplication {
         + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? t("Состояния магазинов", "Shop sessions") : t("Просмотр и ручной показ", "View and show manually"));
     }
 
-    if (activeDetail === "reference") {
+    if (activeDetail === "console" && this.mode === "director") {
+      detailHTML = renderDirectorConsole();
+    } else if (activeDetail === "reference") {
       const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">${t("Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.", "Select an entry in the main area. Saving parameters does not start automation; manual transitions are available in Director mode.")}</p>${actionButton("contextHelp", t("Открыть справку", "Open help"), `data-page="${page}"`)}`;
     } else if (["shops", "dialogues"].includes(activeMain)) {
@@ -259,13 +270,14 @@ export class MasterScreenApplication extends EditorApplication {
     }
     return { ...base, ...presentation, mainHTML, detailHTML, nodeActions,
       badgesHTML: renderGroupBadges(definitions, runtimes),
-      mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, this.menuBranch), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail) };
+      mainMenuHTML: renderMenu("main", preferences.hiddenMain, activeMain, { mode: this.mode }), detailMenuHTML: renderMenu("detail", preferences.hiddenDetail, activeDetail, { mode: this.mode }) };
   }
 
   async _onRender(context, options) {
     await super._onRender(context, options);
     this.refreshDraftSnapshot = null;
     this.layout.bind();
+    this.directorConsole.attach(this.mode === "director" ? this.element.querySelector("[data-director-console]") : null, this.selectionSceneId);
     this.controller.refreshConstructorFrame?.();
     updateSceneNavigationBadges(this.controller);
     const queues = new Map();
@@ -476,7 +488,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.element.dataset.dmicherTheme) dialog.dataset.dmicherTheme = this.element.dataset.dmicherTheme;
     dialog.setAttribute("aria-label", zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs"));
     const draw = () => {
-      dialog.innerHTML = `<h3>${zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs")}</h3>${renderMenuSettings(zone, this.layout.preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"])}<footer><button type="button" data-close-menu>${t("Готово", "Done")}</button></footer>`;
+      dialog.innerHTML = `<h3>${zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs")}</h3>${renderMenuSettings(zone, this.layout.preferences[zone === "main" ? "hiddenMain" : "hiddenDetail"], this.mode)}<footer><button type="button" data-close-menu>${t("Готово", "Done")}</button></footer>`;
       for (const input of dialog.querySelectorAll("[data-indeterminate]")) input.indeterminate = true;
     };
     draw(); this.menuDialog = dialog; doc.body.append(dialog);
@@ -576,8 +588,8 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "ideTab") {
       this.menuController.close();
       if (button.dataset.zone === "main") return this.switchMainTab(button.dataset.id);
+      if (button.dataset.zone !== "detail" || !this.layout.selectDetailTab(button.dataset.id)) return;
       this.captureParameterDraft();
-      this.layout.preferences[`${button.dataset.zone}Tab`] = button.dataset.id; this.layout.save();
       return this.render({ force: true });
     }
     if (action === "configureTool") {

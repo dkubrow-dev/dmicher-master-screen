@@ -1,6 +1,6 @@
 import { text as t } from "../localization.js";
 import { generics } from "../generics.js";
-import { MAIN_MENU, DETAIL_MENU, leaves, menuRows, menuPath, selectableTreeAttributes } from "./navigation-tree.js";
+import { MAIN_MENU, detailMenuForMode, leaves, menuRows, menuPath, selectableTreeAttributes } from "./navigation-tree.js";
 import { localizedDescription } from "../model.js";
 import { renderSignalFields, renderSubscriptions, macroKey, emitterName } from "./signal-fields.js";
 import { escapeHTML as esc, actionButton as button, textInput, selectOptions } from "./form-fields.js";
@@ -125,8 +125,8 @@ export function renderOtherList(mode, selected) {
   return otherBlocks().filter((block) => block.mode === mode).map((block) => `<button class="ms-ide-block-link ${selected === block.id ? "is-selected" : ""}" type="button" data-screen-action="selectOther" data-id="${block.id}">${esc(block.name)}</button>`).join("");
 }
 
-export function renderMenu(zone, hidden, active) {
-  const tree = zone === "main" ? MAIN_MENU : DETAIL_MENU;
+export function renderMenu(zone, hidden, active, { mode = "constructor" } = {}) {
+  const tree = zone === "main" ? MAIN_MENU : detailMenuForMode(mode);
   const visible = (node) => leaves([node]).some((id) => !hidden.includes(id));
   const entry = (node, popup = false) => `<button type="button" role="menuitem" data-screen-action="${node.children ? "menuCategory" : "ideTab"}" data-zone="${zone}" data-id="${node.id}" ${popup ? 'tabindex="-1"' : ""} ${node.children ? `aria-haspopup="menu" aria-controls="ms-menu-${zone}-${node.id}" aria-expanded="false"` : `aria-pressed="${active === node.id}"`} class="${node.children && leaves([node]).includes(active) ? "has-active-child" : ""}">${esc(t(node.label, node.labelEn ?? node.label))}${node.children ? popup ? " ▸" : " ▾" : ""}</button>`;
   const popups = (nodes, parent = "") => nodes.filter(visible).filter((node) => node.children).map((node) => `<nav id="ms-menu-${zone}-${node.id}" class="ms-menu-popup" data-menu-popup="${node.id}" data-zone="${zone}" data-parent-menu="${parent}" role="menu" aria-label="${esc(t(node.label, node.labelEn ?? node.label))}" popover="manual">${node.children.filter(visible).map((child) => entry(child, true)).join("")}</nav>${popups(node.children, node.id)}`).join("");
@@ -134,8 +134,8 @@ export function renderMenu(zone, hidden, active) {
   return `<div class="ms-menu-level"><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="-1" class="ms-menu-arrow" aria-label="${t("Предыдущие вкладки", "Previous tabs")}">‹</button><nav class="ms-menu-strip" role="menubar" data-menu-strip="${id}" aria-label="${zone === "main" ? t("Основные вкладки", "Main tabs") : t("Дополнительные вкладки", "Secondary tabs")}">${tree.filter(visible).map((node) => entry(node)).join("")}</nav><button type="button" data-screen-action="scrollMenu" data-menu-id="${id}" data-direction="1" class="ms-menu-arrow" aria-label="${t("Следующие вкладки", "Next tabs")}">›</button></div>${popups(tree)}`;
 }
 
-export function renderMenuSettings(zone, hidden) {
-  const nodes = zone === "main" ? MAIN_MENU : DETAIL_MENU;
+export function renderMenuSettings(zone, hidden, mode = "constructor") {
+  const nodes = zone === "main" ? MAIN_MENU : detailMenuForMode(mode);
   return `<table class="ms-menu-settings-table" role="treegrid" aria-label="${t("Состав меню", "Menu contents")}"><tbody>${menuRows(nodes, hidden).map((node) => `<tr role="row" aria-level="${node.depth + 1}" data-menu-setting-row="${node.id}"><td style="padding-inline-start:${8 + node.depth * 22}px"><label><input type="checkbox" data-menu-visible="${node.id}" ${node.checked ? "checked" : ""} ${node.partial ? 'data-indeterminate="true"' : ""}> <span>${esc(t(node.label, node.labelEn ?? node.label))}</span>${node.category ? `<small>${t("Категория", "Category")}</small>` : ""}</label></td></tr>`).join("")}</tbody></table>`;
 }
 

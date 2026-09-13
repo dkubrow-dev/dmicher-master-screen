@@ -1,5 +1,6 @@
 import { MODULE_ID } from "./model.js";
 import { text } from "./localization.js";
+import { appendDiagnostic, diagnosticSnapshot, diagnosticError } from "./diagnostics.js";
 
 export const DEBUG_SETTING = "debug";
 
@@ -21,32 +22,22 @@ export async function setDebugEnabled(enabled) {
   return game.settings.set(MODULE_ID, DEBUG_SETTING, enabled === true);
 }
 
-// Console entries must not retain live documents or change when runtime objects mutate.
-// Only plain data is accepted. Bad diagnostic context must never stop gameplay.
-function snapshot(value, seen = new WeakSet(), depth = 0) {
-  if (value === null || ["string", "boolean", "number"].includes(typeof value)) return value;
-  if (value === undefined) return undefined;
-  if (typeof value !== "object") return String(value);
-  if (depth > 12) return "[Depth limit]";
-  if (seen.has(value)) return "[Circular]";
-  if (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return "[Non-plain object]";
-  seen.add(value);
-  const result = Array.isArray(value) ? value.map((item) => snapshot(item, seen, depth + 1))
-    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, snapshot(item, seen, depth + 1)]));
-  seen.delete(value);
-  return result;
-}
-
 function write(method, category, event, context, error) {
-  if (!debugEnabled()) return;
+  const verbose = debugEnabled(), record = globalThis.game?.user?.isGM === true && (verbose || method !== "debug");
+  if (!verbose && !record) return;
   try {
-    const details = snapshot(typeof context === "function" ? context() : context);
-    const record = { at: new Date().toISOString(), ...details };
-    if (error !== undefined) record.error = { name: String(error?.name ?? "Error"), message: String(error?.message ?? error), stack: String(error?.stack ?? "") };
-    globalThis.console?.[method]?.(`${MODULE_ID} | [${category}] ${event}`, record);
+    let details;
+    try { details = diagnosticSnapshot(typeof context === "function" ? context() : context); }
+    catch { details = { diagnosticContext: "[Unavailable]" }; }
+    const at = new Date().toISOString();
+    const failure = method === "error" || error !== undefined ? diagnosticError(error) : undefined;
+    if (record) appendDiagnostic({ at, level: failure || method === "error" ? "error" : method, category, event, context: details, ...(failure ? { error: failure } : {}) });
+    if (verbose) globalThis.console?.[method === "signal" ? "debug" : method]?.(`${MODULE_ID} | [${category}] ${event}`, { at, ...details, ...(failure ? { error: failure } : {}) });
   } catch { /* Diagnostics cannot alter an action's result. */ }
 }
 
 /** Pass a factory for expensive context; it is never evaluated while Debug is off. */
 export function debugTrace(category, event, context = {}) { write("debug", category, event, context); }
 export function debugError(category, event, error, context = {}) { write("error", category, event, context, error); }
+/** Operational signal delivery is visible to the GM even with Debug disabled. */
+export function signalTrace(event, context = {}, error) { write("signal", "signal", event, context, error); }

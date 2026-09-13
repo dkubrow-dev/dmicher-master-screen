@@ -4,7 +4,8 @@ export const MAIN_MENU = Object.freeze([
   { id: "automation", label: "Автоматизация", labelEn: "Automation", children: [{ id: "signals", label: "Сигналы", labelEn: "Signals" }, { id: "macros", label: "Макросы", labelEn: "Macros" }] },
   { id: "other", label: "Иное", labelEn: "Other" }
 ]);
-export const DETAIL_MENU = Object.freeze([{ id: "parameters", label: "Параметры", labelEn: "Parameters" }, { id: "reference", label: "Подсказка", labelEn: "Reference" }]);
+export const DETAIL_MENU = Object.freeze([{ id: "parameters", label: "Параметры", labelEn: "Parameters" }, { id: "reference", label: "Подсказка", labelEn: "Reference" }, { id: "console", label: "Консоль", labelEn: "Console", mode: "director" }]);
+export const detailMenuForMode = (mode) => DETAIL_MENU.filter((node) => !node.mode || node.mode === mode);
 export const leaves = (nodes) => nodes.flatMap((node) => node.children ? leaves(node.children) : [node.id]);
 export function menuPath(nodes, id) {
   for (const node of nodes) {

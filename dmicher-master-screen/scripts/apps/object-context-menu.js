@@ -1,4 +1,4 @@
-import { themedClasses } from "../ui.js";
+import { themedClasses, notifyError } from "../ui.js";
 
 /** The same transient menu serves constructor tools and permitted player actions. */
 export class ObjectContextMenu {
@@ -17,10 +17,7 @@ export class ObjectContextMenu {
       button.type = "button"; button.setAttribute("role", "menuitem"); button.textContent = item.label;
       button.addEventListener("click", () => {
         this.close();
-        void Promise.resolve().then(item.action).catch((error) => {
-          console.error("dmicher-master-screen | Context action", error);
-          globalThis.ui?.notifications?.error(error.message);
-        });
+        void Promise.resolve().then(item.action).catch(notifyError);
       }, options);
       menu.append(button);
     }

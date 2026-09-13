@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { debugTrace, debugError, debugEnabled, registerDebugSetting, setDebugEnabled } from "../dmicher-master-screen/scripts/debug.js";
 
-test("Debug is off by default and never evaluates disabled diagnostic context", (t) => {
+test("without Debug or a GM journal diagnostic context is not evaluated", (t) => {
   t.mock.method(console, "debug", () => {});
   t.mock.method(console, "error", () => {});
   globalThis.game = { settings: { get: () => false } };

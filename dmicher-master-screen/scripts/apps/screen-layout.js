@@ -1,6 +1,6 @@
 import { message as localizedMessage } from "../localization.js";
 import { ConstructorDock } from "./constructor-dock.js";
-import { MAIN_MENU, DETAIL_MENU, leaves, toggleMenuNode } from "./navigation-tree.js";
+import { MAIN_MENU, DETAIL_MENU, detailMenuForMode, leaves, toggleMenuNode } from "./navigation-tree.js";
 
 const STORAGE_KEY = "dmicher-master-screen.ide-layout";
 const DEFAULTS = Object.freeze({ vertical: 0.43, horizontal: 0.36, hiddenMain: [], hiddenDetail: [], mainTab: "scene", detailTab: "parameters" });
@@ -8,26 +8,37 @@ export const MAIN_TABS = Object.freeze(leaves(MAIN_MENU));
 export const DETAIL_TABS = Object.freeze(leaves(DETAIL_MENU));
 export const clampRatio = (value) => Math.max(0.2, Math.min(0.8, Number(value) || 0.43));
 
-export function normalizeIDEPreferences(raw = {}) {
+export function normalizeIDEPreferences(raw = {}, mode = "constructor") {
   const hidden = (values, tabs) => {
     const result = tabs.filter((tab) => Array.isArray(values) && values.includes(tab));
     return result.length === tabs.length ? result.slice(1) : result;
   };
   const hiddenMain = hidden(raw.hiddenMain, MAIN_TABS), hiddenDetail = hidden(raw.hiddenDetail, DETAIL_TABS);
+  const availableDetail = leaves(detailMenuForMode(mode));
+  if (raw.detailTab === "console" && mode !== "director" && hiddenDetail.includes("parameters")) hiddenDetail.splice(hiddenDetail.indexOf("parameters"), 1);
+  if (availableDetail.every((tab) => hiddenDetail.includes(tab))) hiddenDetail.splice(hiddenDetail.indexOf(availableDetail[0]), 1);
   return { vertical: clampRatio(raw.vertical), horizontal: clampRatio(raw.horizontal ?? DEFAULTS.horizontal), hiddenMain, hiddenDetail,
     mainTab: MAIN_TABS.includes(raw.mainTab) && !hiddenMain.includes(raw.mainTab) ? raw.mainTab : MAIN_TABS.find((tab) => !hiddenMain.includes(tab)),
-    detailTab: DETAIL_TABS.includes(raw.detailTab) && !hiddenDetail.includes(raw.detailTab) ? raw.detailTab : DETAIL_TABS.find((tab) => !hiddenDetail.includes(tab)) };
+    detailTab: availableDetail.includes(raw.detailTab) && !hiddenDetail.includes(raw.detailTab) ? raw.detailTab : availableDetail.find((tab) => !hiddenDetail.includes(tab)) };
 }
 
 /** One application element moves between two browser documents; no second game session is started. */
 export class ScreenLayout {
-  constructor({ view = globalThis.window, dock = new ConstructorDock({ view }), onPopupClose = () => {} } = {}) {
+  constructor({ view = globalThis.window, dock = new ConstructorDock({ view }), mode = "constructor", onPopupClose = () => {} } = {}) {
     this.view = view; this.dock = dock; this.onPopupClose = onPopupClose;
-    this.presentation = "panel"; this.popup = null; this.preferences = normalizeIDEPreferences();
-    try { this.preferences = normalizeIDEPreferences(JSON.parse(view.localStorage.getItem(STORAGE_KEY)) ?? {}); } catch { /* Optional local preferences. */ }
+    this.mode = mode;
+    this.presentation = "panel"; this.popup = null; this.preferences = normalizeIDEPreferences({}, mode);
+    try { this.preferences = normalizeIDEPreferences(JSON.parse(view.localStorage.getItem(STORAGE_KEY)) ?? {}, mode); } catch { /* Optional local preferences. */ }
   }
 
   save() { try { this.view.localStorage.setItem(STORAGE_KEY, JSON.stringify(this.preferences)); } catch { /* Optional local preferences. */ } }
+
+  setMode(mode) { this.mode = mode; this.preferences = normalizeIDEPreferences(this.preferences, mode); }
+
+  selectDetailTab(tab) {
+    if (!leaves(detailMenuForMode(this.mode)).includes(tab) || this.preferences.hiddenDetail.includes(tab)) return false;
+    this.preferences.detailTab = tab; this.save(); return true;
+  }
 
   reservePopup() {
     if (this.popup && !this.popup.closed) { this.popup.focus(); return this.popup; }
@@ -142,10 +153,10 @@ export class ScreenLayout {
   }
 
   toggleTab(zone, tab, visible) {
-    const nodes = zone === "main" ? MAIN_MENU : DETAIL_MENU, key = zone === "main" ? "hiddenMain" : "hiddenDetail";
+    const nodes = zone === "main" ? MAIN_MENU : detailMenuForMode(this.mode), key = zone === "main" ? "hiddenMain" : "hiddenDetail";
     const next = toggleMenuNode(nodes, this.preferences[key], tab, visible);
     if (!next) return false;
-    this.preferences = normalizeIDEPreferences({ ...this.preferences, [key]: next }); this.save(); return true;
+    this.preferences = normalizeIDEPreferences({ ...this.preferences, [key]: next }, this.mode); this.save(); return true;
   }
 
   dispose() {

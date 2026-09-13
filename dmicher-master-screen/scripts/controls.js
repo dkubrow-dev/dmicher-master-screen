@@ -1,6 +1,7 @@
 import { text as t } from "./localization.js";
 import { message as localizedMessage } from "./localization.js";
 import { MODULE_ID } from "./model.js";
+import { notifyError } from "./ui.js";
 const ROOT = "screen-menu";
 export function buildControls(controller) {
   const stopped = controller.isAutomationHalted?.() && !controller.isRestoringInitial?.();
@@ -18,7 +19,7 @@ export function buildControls(controller) {
       ...definitions.map(([name, title, icon, action], order) => [name, {
         name, title, icon, order, visible: true, button: name !== "screen", toggle: name === "screen",
         active: name === "screen" && Boolean(controller.isScreenOpen?.()),
-        onChange: () => { if (game.user?.isGM) void Promise.resolve().then(action).catch((error) => ui.notifications.error(error.message)); }
+        onChange: () => { if (game.user?.isGM) void Promise.resolve().then(action).catch(notifyError); }
       }])]) };
 }
 export function installControls(controller) {

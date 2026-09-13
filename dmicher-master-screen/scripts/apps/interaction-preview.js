@@ -1,6 +1,6 @@
 import { text as t } from "../localization.js";
 import { ScreenFormApplication } from "./screen-form.js";
-import { themedClasses } from "../ui.js";
+import { themedClasses, notifyError } from "../ui.js";
 import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, getSceneObject, listNativeSceneObjects, resolveObjectShop, resolveObjectDialogue } from "../scene-objects.js";
 import { getDefinitions, getObjectTags } from "../store.js";
@@ -100,7 +100,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
         }
         this.take = {}; this.give.clear(); this.resetDialogue();
         void this.render({ force: true });
-      } catch (error) { ui.notifications.error(error.message); }
+      } catch (error) { notifyError(error, { sceneId: this.controller.getContext().scene?.id }); }
     }, listeners);
   }
   readConditions() {

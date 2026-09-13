@@ -1,5 +1,5 @@
 import { message as localizedMessage } from "../localization.js";
-import { themedClasses } from "../ui.js";
+import { themedClasses, notifyError } from "../ui.js";
 import { generics } from "../generics.js";
 import { SceneAssets } from "../scene-assets.js";
 import { getSceneObject } from "../scene-objects.js";
@@ -70,7 +70,7 @@ export class DialogueCatalogApplication extends HandlebarsApplicationMixin(Appli
       if (!button || button.disabled) return;
       event.preventDefault(); button.disabled = true;
       void this.handleAction(button.dataset.catalogAction, button.dataset).catch((error) => {
-        console.error(MODULE_ID, error); ui.notifications.error(error.message);
+        notifyError(error, { sceneId: this.sceneId, dialogueId: this.dialogueId });
       }).finally(() => { if (button.isConnected) button.disabled = false; });
     }, listeners);
   }

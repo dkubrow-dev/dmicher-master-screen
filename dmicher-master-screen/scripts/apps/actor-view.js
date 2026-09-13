@@ -1,6 +1,6 @@
 import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
-import { themedClasses } from "../ui.js";
+import { themedClasses, notifyError } from "../ui.js";
 import { objectCenter } from "../scene-object-geometry.js";
 import { listAvailableInteractions } from "../interaction-access.js";
 import { getRuntimes } from "../store.js";
@@ -127,7 +127,7 @@ export class ActorViewApplication extends HandlebarsApplicationMixin(Application
 
   async act(action) {
     try { return await action(); }
-    catch (error) { ui.notifications.error(error.message); return null; }
+    catch (error) { notifyError(error); return null; }
   }
 
   static selectToken() { this.selectObserver(); this.drawPreview(); }

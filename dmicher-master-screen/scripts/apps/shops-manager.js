@@ -1,5 +1,5 @@
 import { message as localizedMessage } from "../localization.js";
-import { themedClasses } from "../ui.js";
+import { themedClasses, notifyError } from "../ui.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 const MODULE_ID = "dmicher-master-screen";
@@ -56,8 +56,7 @@ export class ShopsManagerApplication extends HandlebarsApplicationMixin(Applicat
       event.preventDefault();
       button.disabled = true;
       void this.handleAction(button.dataset.shopManagerAction, button.dataset).catch((error) => {
-        console.error(`${MODULE_ID} | Shops manager`, error);
-        ui.notifications.error(error.message ?? localizedMessage("Не удалось выполнить действие магазина."));
+        notifyError(error, { sceneId: this.sceneId, shopId: button.dataset.shopId });
       }).finally(() => { if (button.isConnected) button.disabled = false; });
     }, { signal: this.events.signal });
   }

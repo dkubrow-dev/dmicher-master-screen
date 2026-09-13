@@ -1,0 +1,121 @@
+import fs from "node:fs";
+import path from "node:path";
+import assert from "node:assert/strict";
+import { workspace, startBrowserFixture, launchFixtureBrowser } from "./browser-fixture-server.mjs";
+
+const output = path.join(workspace, "artifacts/dmicher-master-screen/0.0.1/console-review");
+fs.mkdirSync(output, { recursive: true });
+const fixture = await startBrowserFixture(), browser = await launchFixtureBrowser(), reports = [];
+try {
+  for (const version of ["13.351", "14.366"]) for (const language of ["ru", "en"]) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage(), errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.goto(`${fixture.origin}/?version=${version}&lang=${language}`);
+    await page.waitForFunction(() => globalThis.ready);
+    const app = page.locator("#dmicher-master-screen-editor");
+    const tab = id => app.locator(`[data-screen-action="ideTab"][data-zone="detail"][data-id="${id}"]`);
+    assert.equal(await tab("console").count(), 0);
+    await app.locator('[data-select-kind="group"] td:last-child').first().click();
+    await app.locator('[name="groupName"]').fill("Unsaved console check");
+    await page.evaluate(async () => {
+      globalThis.logs = await import('/modules/dmicher-master-screen/scripts/debug.js');
+      globalThis.journal = await import('/modules/dmicher-master-screen/scripts/diagnostics.js');
+      let debug = false;
+      const get = game.settings.get;
+      game.settings.get = (module, key) => key === 'debug' ? debug : get(module, key);
+      game.settings.set = async (_module, key, value) => { if (key === 'debug') debug = value; controller.editor.syncDebugControl(); };
+      globalThis.originalFlags = JSON.stringify(scene.flags);
+    });
+    await app.locator('[data-screen-action="director"]').click();
+    await tab("console").click();
+    await app.locator('[data-director-console]').waitFor();
+    await page.evaluate(() => {
+      globalThis.ideRenders = 0;
+      const render = controller.editor.render.bind(controller.editor);
+      controller.editor.render = (...args) => { ideRenders++; return render(...args); };
+      logs.debugTrace('script', 'hidden.debug', { sceneId: scene.id });
+      logs.signalTrace('emitted', { sceneId: scene.id, emitterName: '<img src=x onerror=bad>', signalName: 'greeting', deliveryId: 'delivery-1' });
+      logs.signalTrace('subscriber.accepted', { sceneId: scene.id, emitterName: 'Guard', subscriberName: 'Door', signalName: 'greeting' });
+      logs.signalTrace('subscriber.completed', { sceneId: scene.id, subscriberName: 'Door', signalName: 'greeting', allowed: false });
+      logs.debugError('script', 'failed', new Error('Expected console fixture error'), { sceneId: scene.id, objectName: 'Guard' });
+      logs.signalTrace('emitted', { sceneId: 'different-scene', signalName: 'hidden-other-scene' });
+    });
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 4);
+    assert.equal(await page.evaluate(() => ideRenders), 0);
+    assert.equal(await app.locator('[data-console-entry] img').count(), 0);
+    assert.ok((await app.locator('[data-console-entries]').textContent()).includes('<img src=x onerror=bad>'));
+    assert.ok(!(await app.locator('[data-console-entries]').textContent()).includes('hidden-other-scene'));
+    await app.locator('[data-screen-debug]').check();
+    await page.evaluate(() => logs.debugTrace('script', 'step.start', { sceneId: scene.id, scriptName: 'Greeting', stepId: 3 }));
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 5);
+    await app.locator('[data-screen-debug]').uncheck();
+    assert.equal(await app.locator('[data-console-entry]').count(), 4);
+    await app.locator('[data-screen-debug]').check();
+    assert.equal(await app.locator('[data-console-entry]').count(), 5);
+    await page.evaluate(() => {
+      for (let index = 0; index < 110; index++) logs.signalTrace('subscriber.completed', { sceneId: scene.id, signalName: `signal-${index}`, emitterName: 'Guard', subscriberName: 'Door' });
+    });
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 115);
+    await page.evaluate(() => {
+      const scroll = document.querySelector('[data-console-scroll]'); scroll.scrollTop = 300;
+      const row = [...document.querySelectorAll('[data-console-entry]')].find(entry => entry.getBoundingClientRect().top >= scroll.getBoundingClientRect().top);
+      row.querySelector('details').open = true;
+      globalThis.readingRow = row; globalThis.readingTop = scroll.scrollTop;
+      for (let index = 0; index < 10; index++) logs.signalTrace('completed', { sceneId: scene.id, signalName: `new-${index}`, status: index ? 'success' : 'stale' });
+    });
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 125);
+    assert.equal(await page.evaluate(() => readingRow.isConnected && readingRow.querySelector('details').open), true);
+    assert.ok(Math.abs(await page.evaluate(() => document.querySelector('[data-console-scroll]').scrollTop - readingTop)) <= 1);
+    assert.equal(await page.evaluate(() => ideRenders), 0);
+    assert.equal(await page.evaluate(() => JSON.stringify(scene.flags) === originalFlags), true);
+    // Real signal delivery also requests a controller refresh. That unrelated
+    // full render must retain the same reading anchor and expanded details.
+    const readingId = await page.evaluate(() => readingRow.dataset.consoleEntry);
+    await page.evaluate(async () => { logs.signalTrace('completed', { sceneId: scene.id, signalName: 'refresh-check' }); controller.changed(scene); await controller.editor.refreshTask; await controller.editor.renderPromise; });
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 126);
+    assert.ok(await page.evaluate(() => ideRenders > 0), 'the real controller notification triggered a full render');
+    assert.equal(await app.locator(`[data-console-entry="${readingId}"] details`).evaluate(element => element.open), true);
+    assert.ok(Math.abs(await page.evaluate(() => document.querySelector('[data-console-scroll]').scrollTop - readingTop)) <= 1);
+    assert.ok(Math.abs(await page.evaluate(() => document.querySelector('.ms-console-table thead').getBoundingClientRect().top - document.querySelector('[data-console-scroll]').getBoundingClientRect().top)) <= 1, 'column headers remain visible while scrolling');
+    await page.screenshot({ path: path.join(output, `${version}-${language}.png`) });
+    await page.evaluate(() => { for (let index = 0; index < 510; index++) logs.signalTrace('emitted', { sceneId: scene.id, signalName: `bounded-${index}` }); });
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 500);
+    await app.locator('[data-console-clear]').click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 0);
+    await app.locator('[data-screen-action="tabSettings"][data-zone="detail"]').click();
+    await page.locator('[data-menu-visible="console"]').uncheck();
+    await page.waitForFunction(() => controller.editor.layout.preferences.detailTab !== 'console');
+    assert.equal(await tab('console').count(), 0);
+    assert.equal(await page.evaluate(() => controller.editor.directorConsole.unsubscribe), null);
+    await page.locator('[data-menu-visible="console"]').check();
+    await page.locator('[data-close-menu]').click();
+    await tab('console').click();
+    const popupReady = page.waitForEvent('popup');
+    await app.locator('[data-screen-action="togglePresentation"]').click();
+    const popup = await popupReady;
+    await popup.locator('[data-director-console]').waitFor();
+    await page.evaluate(() => logs.signalTrace('emitted', { sceneId: scene.id, signalName: 'detached-window' }));
+    await popup.waitForFunction(() => document.querySelectorAll('[data-console-entry]').length === 1);
+    await popup.close();
+    await app.locator('[data-director-console]').waitFor();
+    await page.waitForFunction(() => controller.editor.layout.presentation === 'panel');
+    await tab('parameters').click();
+    assert.equal(await page.evaluate(() => controller.editor.directorConsole.unsubscribe), null);
+    await page.evaluate(() => logs.signalTrace('emitted', { sceneId: scene.id, signalName: 'closed-tab' }));
+    assert.equal(await page.evaluate(() => controller.editor.directorConsole.timer), undefined);
+    await app.locator('[data-screen-action="constructor"]').click();
+    assert.equal(await tab('console').count(), 0);
+    assert.equal(await app.locator('[name="groupName"]').inputValue(), 'Unsaved console check');
+    assert.equal(await page.evaluate(() => controller.editor.layout.selectDetailTab('console')), false);
+    assert.equal(await page.evaluate(() => JSON.stringify(scene.flags) === originalFlags), true);
+    await app.locator('[data-screen-action="director"]').click(); await tab('console').click();
+    await page.evaluate(async () => { globalThis.closedConsole = controller.editor.directorConsole; await controller.editor.close(); logs.signalTrace('emitted', { sceneId: scene.id, signalName: 'closed-window' }); });
+    assert.equal(await page.evaluate(() => closedConsole.unsubscribe === null && closedConsole.root === null && closedConsole.timer === undefined), true);
+    assert.deepEqual(errors, []);
+    reports.push({ version, language, checks: 'mode-only navigation, debug filtering, signal/errors without debug, scene isolation, safe text, bounded DOM, sticky headers, scroll/details retention including a real controller refresh, no log-induced editor renders or flag writes, unsaved form retention, tab visibility settings, detached browser window, hidden/closed subscription disposal', errors });
+    await context.close();
+  }
+  fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(reports, null, 2));
+  console.log(JSON.stringify(reports, null, 2));
+} finally { await browser.close(); await fixture.close(); }

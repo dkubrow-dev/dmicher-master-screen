@@ -44,7 +44,6 @@ export const MESSAGE_TRANSLATIONS = Object.freeze({
   "Игрок составляет обмен": "Player is preparing a trade",
   "Нужна ручная сверка. Не повторяйте обмен автоматически.": "A manual review is required. Do not retry the trade automatically.",
   "Обмен выполняется. Дождитесь результата.": "The trade is in progress. Wait for the result.",
-  "Не удалось выполнить действие магазина.": "Failed to perform the shop action.",
   "Управление магазинами доступно мастеру.": "Only the GM can manage shops.",
   "Сцена изменилась. Обновите список магазинов.": "The scene has changed. Refresh the shop list.",
   "Магазин больше недоступен.": "The shop is no longer available.",

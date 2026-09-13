@@ -5,6 +5,20 @@ import { getSignalCatalog } from "./signal-catalog.js";
 import { validateSignalValues } from "./signal-types.js";
 import { executeSignalMacro, reportMacroError } from "./signal-macros.js";
 import { isExecutionHalted, executionGeneration, onExecutionChange, isSceneAutomationHalted, sceneExecutionGeneration } from "./execution.js";
+import { signalTrace } from "./debug.js";
+
+// Diagnostics keep document identity and returned values, never live Foundry documents.
+// Delivery IDs connect nested subscriber records without changing receipt semantics.
+function diagnosticContext(scene, delivery, subscription, owner) {
+  const { id, emitter, signal } = delivery;
+  return {
+    sceneId: scene?.id, sceneName: scene?.name, deliveryId: id,
+    emitterKey: emitter?.key ?? delivery.emitterKey, emitterName: emitter?.name, emitterType: emitter?.type,
+    signalId: signal?.id ?? delivery.signalId, signalName: signal?.name ?? delivery.signalName,
+    ...(subscription ? { subscriberKey: owner?.key ?? subscription.ownerKey, subscriberName: owner?.name,
+      subscriptionId: subscription.id, macroUuid: subscription.macroUuid } : {})
+  };
+}
 
 /** Awaitable, emitter-bound delivery. Nested signals run in their own call frame:
  * a handler may await its own emitted signal without waiting behind itself. */
@@ -31,11 +45,21 @@ export class SceneSignals {
   }
   history(scene) { return structuredClone(this.logs.get(scene) ?? []); }
   emit(scene, input) {
+    const diagnostic = { id: input?.id, emitterKey: input?.emitterKey, signalId: input?.signalId, signalName: input?.name };
+    try { return this.accept(scene, input, diagnostic); }
+    catch (error) {
+      signalTrace("rejected", () => diagnosticContext(scene, diagnostic), error);
+      throw error;
+    }
+  }
+  accept(scene, input, diagnostic) {
     this.requireAuthority();
     const catalog = getSignalCatalog(scene), emitter = catalog.emitters.find((entry) => entry.key === input.emitterKey);
     const signal = catalog.signals.find((entry) => entry.emitterKey === input.emitterKey && (input.signalId ? entry.id === input.signalId : entry.name === input.name));
+    Object.assign(diagnostic, { emitter, signal });
     if (!emitter || !signal) throw new Error(localizedMessage("Эмитент не объявлял этот сигнал в текущей сцене."));
     const parameters = validateSignalValues(signal.parameters, input.parameters ?? {}), id = input.id ?? randomId();
+    diagnostic.id = id;
     const inherited = input.context ?? {}, chain = inherited._chain ?? { count: 0 }, depth = inherited.depth ?? 0;
     if (depth >= 32 || chain.count >= 64) throw new Error(localizedMessage("Цепочка сигналов превысила 32 вложения или 64 вызова."));
     const signature = JSON.stringify([emitter.key, signal.id, parameters]);
@@ -56,10 +80,13 @@ export class SceneSignals {
     context._sceneGeneration ??= sceneExecutionGeneration(scene);
     if (context.groupId && context._generation === undefined) context._generation = executionGeneration(scene, context.groupId);
     const receipt = { signature, done: false };
+    const delivery = { id, emitter, signal, parameters, context, allowStopped: input.allowStopped === true };
     // Defer dispatch until the receipt is registered, including synchronous recursion.
-    receipt.promise = Promise.resolve().then(() => this.deliver(scene, { id, emitter, signal, parameters, context, allowStopped: input.allowStopped === true }))
+    receipt.promise = Promise.resolve().then(() => this.deliver(scene, delivery))
+      .catch((error) => { signalTrace("rejected", () => diagnosticContext(scene, delivery), error); throw error; })
       .finally(() => { receipt.done = true; this.pending.delete(receipt.promise); });
     receipts.set(id, receipt); this.pending.add(receipt.promise);
+    signalTrace("emitted", () => ({ ...diagnosticContext(scene, delivery), parameters }));
     return receipt.promise;
   }
   async awaitCurrent(scene, current, operation) {
@@ -84,20 +111,26 @@ export class SceneSignals {
       return catalog.emitters.some((entry) => entry.key === emitter.key)
         && catalog.signals.some((entry) => entry.id === signal.id && entry.emitterKey === emitter.key);
     };
-    if (!sourceCurrent()) return { ...result, status: "stale", allowed: false };
+    if (!sourceCurrent()) {
+      signalTrace("completed", () => ({ ...diagnosticContext(scene, delivery), status: "stale", allowed: false, exit: false, interrupt: false }));
+      return { ...result, status: "stale", allowed: false };
+    }
     const subscribers = getSignalCatalog(scene).subscriptions.filter((entry) => entry.enabled && entry.signalId === signal.id && entry.emitterKey === emitter.key);
     for (const subscription of subscribers) {
       if (!sourceCurrent()) { result.status = "stale"; result.allowed = false; break; }
       const catalog = getSignalCatalog(scene), owner = catalog.emitters.find((entry) => entry.key === subscription.ownerKey);
       const live = catalog.subscriptions.find((entry) => entry.id === subscription.id && entry.enabled && entry.macroUuid === subscription.macroUuid);
-      if (!owner || !live) continue;
+      const trace = (event, details = {}, error) => signalTrace(event, () => ({ ...diagnosticContext(scene, delivery, subscription, owner), ...details }), error);
+      if (!owner || !live) { trace("subscriber.skipped", { reason: "removed" }); continue; }
       const state = owner.groupId ? getRuntime(scene, { groupId: owner.groupId }) : null;
       const validation = signal.returns.some((field) => field.name === "allowed");
       const binding = scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[owner.key];
-      if (binding?.playerCharacter || state?.disabledObjects?.includes(owner.key)) continue;
+      if (binding?.playerCharacter || state?.disabledObjects?.includes(owner.key)) {
+        trace("subscriber.skipped", { reason: binding?.playerCharacter ? "player-character" : "disabled" }); continue;
+      }
       const validatesOwnGroup = ["validateStart", "validateTransition"].includes(signal.name) && emitter.type === "Group" && emitter.id === owner.groupId;
-      if (!allowStopped && !validatesOwnGroup && state && (!state.runId || isExecutionHalted(scene, state))) continue;
-      if (this.canHandle && !this.canHandle(scene, owner, signal)) continue;
+      if (!allowStopped && !validatesOwnGroup && state && (!state.runId || isExecutionHalted(scene, state))) { trace("subscriber.skipped", { reason: "halted" }); continue; }
+      if (this.canHandle && !this.canHandle(scene, owner, signal)) { trace("subscriber.skipped", { reason: "blocked" }); continue; }
       const generation = owner.groupId ? executionGeneration(scene, owner.groupId) : null;
       const current = () => {
         if (!sourceCurrent() || owner.groupId && generation !== executionGeneration(scene, owner.groupId)) return false;
@@ -112,6 +145,7 @@ export class SceneSignals {
       };
       const entry = { subscriptionId: subscription.id, ownerKey: owner.key, ownerName: owner.name, status: "done", returns: {} };
       result.results.push(entry);
+      trace("subscriber.accepted");
       try {
         const macro = await this.resolveMacro(subscription.macroUuid);
         const scope = {
@@ -128,19 +162,27 @@ export class SceneSignals {
           }
         };
         const outcome = await this.awaitCurrent(scene, current, () => executeSignalMacro(macro, signal, parameters, scope));
-        if (outcome.stale) { entry.status = "stale"; result.status = "stale"; result.allowed = false; break; }
+        if (outcome.stale) {
+          entry.status = "stale"; result.status = "stale"; result.allowed = false;
+          trace("subscriber.stale"); break;
+        }
         entry.returns = outcome.value;
         if (signal.returns.some((field) => field.name === "allowed") && entry.returns.allowed !== true) result.allowed = false;
         if (entry.returns.exit === true) result.exit = true;
         if (entry.returns.interrupt === true) result.interrupt = true;
         if (entry.returns.message) result.messages.push({ ownerKey: owner.key, name: owner.name, message: entry.returns.message });
+        trace("subscriber.completed", { returns: entry.returns, allowed: !validation || entry.returns.allowed === true,
+          exit: entry.returns.exit === true, interrupt: entry.returns.interrupt === true });
       } catch (error) {
         entry.status = "failed"; entry.error = reportMacroError(error, { name: subscription.macroUuid, signalName: signal.name, notify: this.isConstructor() });
         result.status = "failed";
         if (validation) result.allowed = false;
         result.messages.push({ ownerKey: owner.key, name: owner.name, message: entry.error });
+        trace("subscriber.failed", { message: entry.error }, error);
       }
     }
+    signalTrace("completed", () => ({ ...diagnosticContext(scene, delivery), status: result.status, allowed: result.allowed,
+      exit: result.exit, interrupt: result.interrupt, results: result.results, messages: result.messages }));
     const log = this.logs.get(scene) ?? [];
     log.push({ ...structuredClone(result), at: Date.now() }); this.logs.set(scene, log.slice(-100));
     this.onChange(scene);

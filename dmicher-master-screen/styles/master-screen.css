@@ -288,3 +288,24 @@
   .dmicher-master-screen .ms-grid-four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dmicher-master-screen .ms-shop-columns { grid-template-columns: 1fr; }
 }
+
+/* The local console owns its scroller so streaming records never move forms. */
+.dmicher-master-screen [data-detail-content]:has(> .ms-director-console) { overflow: hidden; display: flex; }
+.dmicher-master-screen .ms-director-console { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; min-height: 0; }
+.dmicher-master-screen .ms-console-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dmicher-master-screen .ms-console-toolbar button { width: auto; flex: none; height: 24px; min-height: 24px; padding: 1px 5px; font-size: 11px; }
+.dmicher-master-screen .ms-console-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; overflow-anchor: none; }
+.dmicher-master-screen .ms-console-table { table-layout: fixed; width: 100%; margin: 0; overflow: visible; font-size: 11px; }
+.dmicher-master-screen .ms-console-table thead { position: sticky; top: 0; z-index: 1; color: var(--dmicher-text); background: var(--dmicher-content-bg); }
+.dmicher-master-screen .ms-console-table th { padding: 4px; }
+.dmicher-master-screen .ms-console-table th:first-child { width: 87px; }
+.dmicher-master-screen .ms-console-table td { vertical-align: top; padding: 3px 4px; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-console-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dmicher-master-screen .ms-console-time small { display: block; opacity: .75; }
+.dmicher-master-screen .ms-console-table tr[data-level="error"] { background: #a320201c; box-shadow: inset 3px 0 #bc3939; }
+.dmicher-master-screen .ms-console-table summary { cursor: pointer; padding: 0; }
+.dmicher-master-screen .ms-console-table summary:hover { background: #8882; }
+.dmicher-master-screen .ms-console-event { font-weight: 600; }
+.dmicher-master-screen .ms-console-table code { display: block; padding: 0; border: 0; color: inherit; background: transparent; font-size: 10px; opacity: .8; white-space: normal; }
+.dmicher-master-screen .ms-console-summary { display: block; }
+.dmicher-master-screen .ms-console-table pre { margin: 4px 0 0; padding: 4px; max-width: 100%; color: inherit; background: transparent; overflow: auto; white-space: pre-wrap; font-size: 10px; user-select: text; }
