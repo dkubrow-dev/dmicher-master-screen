@@ -3,7 +3,7 @@ import { MODULE_ID } from "./model.js";
 import { asArray } from "./store.js";
 import { generics } from "./generics.js";
 import { objectKey } from "./interaction-access.js";
-import { dialogueSessionIsLive } from "./interaction-session-model.js";
+import { dialogueSessionIsPresent } from "./interaction-session-model.js";
 export { scriptDialoguesPending } from "./interaction-session-model.js";
 
 const fail = (message) => { throw new Error(message); };
@@ -87,7 +87,7 @@ export function createScriptDialogueService({ context, validate, process, author
     if (!session || session.origin !== "script" || !current.dialogue
       || !belongsTo(session, game.user.id, command.actorTokenId, current.dialogue, current.runtime)
       || session.actorId !== current.scene?.tokens?.get(command.actorTokenId)?.actor?.id
-      || !dialogueSessionIsLive(session) || session.status === "processing" || session.step !== view.step || session.nodeId !== view.nodeId) return false;
+      || !dialogueSessionIsPresent(session) || session.status === "processing" || session.step !== view.step || session.nodeId !== view.nodeId) return false;
     validate({ ...current, descriptor: current.dialogue }, command.actorTokenId, game.user, command.runId);
     if (typeof openWindow !== "function") fail(text("Окно игрового диалога не подключено.", "The live dialogue window is not connected."));
     shown.add(message.id);

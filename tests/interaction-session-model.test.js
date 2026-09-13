@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shopSessionIsLive, dialogueSessionIsLive } from "../dmicher-master-screen/scripts/interaction-session-model.js";
+import { shopSessionIsLive, dialogueSessionIsLive, dialogueSessionIsPresent } from "../dmicher-master-screen/scripts/interaction-session-model.js";
 import { objectReferenceKey } from "../dmicher-master-screen/scripts/object-reference.js";
 
 test("expired pending trade keeps its reservation while interrupted dialogue releases the object", () => {
   assert.equal(shopSessionIsLive({ status: "pending", expiresAt: 10 }, 20), true);
   assert.equal(shopSessionIsLive({ status: "editing", expiresAt: 10 }, 20), false);
   assert.equal(dialogueSessionIsLive({ status: "interrupted", expiresAt: 100 }, 20), false);
-  assert.equal(dialogueSessionIsLive({ status: "finished", expiresAt: 100 }, 20), true);
+  assert.equal(dialogueSessionIsLive({ status: "finished", expiresAt: 100 }, 20), false);
+  assert.equal(dialogueSessionIsPresent({ status: "finished", expiresAt: 100 }, 20), true);
   assert.equal(dialogueSessionIsLive({ status: "finished", expiresAt: 10 }, 20), false);
 });
 test("interaction references retain native type and cannot collide through token shorthand", () => {

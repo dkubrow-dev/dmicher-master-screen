@@ -13,6 +13,9 @@ import { interactionSignal, notifyInteractionSignal } from "./interaction-signal
 import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
 import { dialogueSessionIsLive, INTERACTION_LEASE_MS } from "./interaction-session-model.js";
 import { createScriptDialogueService } from "./script-dialogues.js";
+import { appendDialogueMessage, dialogueObjectMessage, dialoguePlayerMessage, dialogueSessionView as visibleSession } from "./dialogue-history.js";
+import { dialogueParticipant } from "./dialogue-participants.js";
+import { validateListenerAccess } from "./dialogue-listeners.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -39,13 +42,6 @@ export function validateDialogueAccess({ scene, runtime, descriptor, target, ses
   if (session?.origin === "script") return validateScriptDialogueAccess({ scene, runtime, descriptor, target }, actorTokenId, user, runId);
   return validateObjectAccess({ scene, runtime, descriptor, target, conditionType }, actorTokenId, user, runId);
 }
-function visibleSession(session, dialogue, target) {
-  const page = dialogue.pages.find((entry) => entry.id === session.nodeId);
-  return { sessionId: session.sessionId, dialogueId: dialogue.id, actorTokenId: session.actorTokenId, target: clone(dialogue.target),
-    nodeId: session.nodeId, step: session.step, status: session.status, targetName: target.name ?? dialogue.name,
-    title: dialogue.name, text: page?.text ?? "", art: page?.art || target.texture?.src || target.actor?.img || "",
-    responses: session.status === "active" ? (page?.responses ?? []).map(({ id, label }) => ({ id, label })) : [] };
-}
 /** The command lease is persisted before awaiting subscribers. A second lock checks
  * ownership, the live run and the exact response again before advancing the dialogue. */
 export function createDialogueService({ emitSignal, onChange = () => {}, context = getDialogueContext,
@@ -63,9 +59,31 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
     const session = sessionId && Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry.sessionId === sessionId);
     return session ? sessionContext(sceneId, session, groupId) : current;
   };
+  const refreshSession = (command) => {
+    const current = context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target);
+    const session = Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry?.sessionId === command.sessionId);
+    if (!session || !current.scene || globalThis.canvas?.scene?.id !== current.scene.id || session.runId !== current.runtime.runId) return null;
+    let participant;
+    try { participant = dialogueParticipant(current.scene, session, game.user, command.listenerTokenId); }
+    catch { return null; }
+    const resolved = sessionContext(command.sceneId, session, command.groupId ?? "main");
+    return visibleSession(session, resolved.dialogue, resolved.target, { role: participant.role, listenerTokenId: command.listenerTokenId });
+  };
   const remember = (state, key, response) => {
-    state.dialogueCommands ??= {}; state.dialogueCommands[key] = clone(response);
+    // History already belongs to the session. Copying it into every response and
+    // heartbeat cache makes Scene flags grow quadratically with the conversation.
+    const { history, ...snapshot } = response;
+    state.dialogueCommands ??= {};
+    state.dialogueCommands[key] = { ...clone(snapshot), ...(Array.isArray(history) ? { historyLength: history.length } : {}) };
     for (const old of Object.keys(state.dialogueCommands).slice(0, -200)) delete state.dialogueCommands[old];
+  };
+  const recall = (state, saved) => {
+    const { historyLength, ...response } = clone(saved);
+    if (Number.isInteger(historyLength)) {
+      const session = Object.values(state.dialogueSessions ?? {}).find((entry) => entry?.sessionId === response.sessionId);
+      response.history = clone(session?.history?.slice(0, historyLength) ?? []);
+    }
+    return response;
   };
   const customSignal = (scene, emitterKey, signalId, parameters, session, suffix) => {
     const descriptor = findSignal(scene, { emitterKey, signalId });
@@ -85,7 +103,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
         const state = clone(runtimeOf(scene, { groupId: command.groupId ?? "main" }));
         state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
         const previous = state.dialogueCommands[commandKey];
-        if (previous) { if (previous.status === "processing") fail(localizedMessage("Исход предыдущего ответа ещё не подтверждён. Откройте диалог заново.")); return { response: clone(previous) }; }
+        if (previous) { if (previous.status === "processing") fail(localizedMessage("Исход предыдущего ответа ещё не подтверждён. Откройте диалог заново.")); return { response: recall(state, previous) }; }
         if (command.kind === "interaction") {
           const descriptor = state.state?.interactions?.find((entry) => entry.id === command.interactionId), target = sceneObject(scene, descriptor?.target);
           const actor = validate({ scene, runtime: state, descriptor, target, conditionType: "interaction" }, command.actorTokenId, user, command.runId);
@@ -112,7 +130,8 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
             }
             session = { sessionId: random(), userId: user.id, actorTokenId: command.actorTokenId, dialogueId: dialogue.id, target: clone(dialogue.target),
               actorId: scene.tokens.get(command.actorTokenId)?.actor?.id, groupId: state.groupId, runId: state.runId, nodeId: dialogue.startPageId, step: 0, status: "active",
-              origin: scriptStart ? "script" : "player" };
+              origin: scriptStart ? "script" : "player", title: dialogue.name, history: [], participants: [] };
+            appendDialogueMessage(session, dialogueObjectMessage(session, dialogue.pages.find(({ id }) => id === session.nodeId), dialogue, target));
             state.dialogueSessions[key] = session;
             signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "opened"));
           } else if (session.status === "interrupted") {
@@ -121,14 +140,51 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
           if (scriptStart) session.origin = "script";
           freezeInteractionClock(state, dialogue.target);
         } else {
-          session = Object.values(state.dialogueSessions).find((entry) => entry?.sessionId === command.sessionId && entry.userId === user.id);
+          session = Object.values(state.dialogueSessions).find((entry) => entry?.sessionId === command.sessionId);
           if (!session) fail(localizedMessage("Разговор не найден или принадлежит другому игроку."));
           if (command.dialogueId && command.dialogueId !== session.dialogueId) fail(localizedMessage("Ответ относится к другому диалогу."));
           if (command.target && objectKey(command.target) !== objectKey(session.target)) fail(localizedMessage("Ответ относится к другому объекту."));
+          if (command.kind === "listen") {
+            const actor = validateListenerAccess({ scene, runtime: state, session }, command.actorTokenId, user);
+            session.participants ??= [];
+            let participant = session.participants.find((entry) => entry.userId === user.id && entry.actorTokenId === actor.id && entry.role === "listener");
+            if (!participant) {
+              participant = { userId: user.id, actorTokenId: actor.id, actorId: actor.actor.id, role: "listener" };
+              session.participants.push(participant);
+            }
+            participant.actorId = actor.actor.id;
+            participant.expiresAt = Date.now() + INTERACTION_LEASE_MS;
+            ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
+            const response = visibleSession(session, dialogue, target, { role: "listener", listenerTokenId: actor.id });
+            remember(state, commandKey, response); await save(scene, state); return { response };
+          }
+          const participant = dialogueParticipant(scene, session, user, command.listenerTokenId);
+          if (participant.role === "listener") {
+            if (!["renew", "leave"].includes(command.kind)) fail(text("Слушатель не может выбирать ответы или завершать разговор.", "A listener cannot choose answers or finish the conversation."));
+            if (command.kind === "leave") {
+              session.participants = session.participants.filter((entry) => entry !== participant.participant);
+              const response = { status: "left", sessionId: session.sessionId, role: "listener" };
+              remember(state, commandKey, response); await save(scene, state); return { response };
+            }
+            if (session.runId !== state.runId) fail(localizedMessage("Разговор уже завершён или ответ ещё обрабатывается."));
+            participant.participant.expiresAt = Date.now() + INTERACTION_LEASE_MS;
+            ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
+            const response = visibleSession(session, dialogue, target, { role: "listener", listenerTokenId: command.listenerTokenId });
+            remember(state, commandKey, response); await save(scene, state); return { response };
+          }
+          if (command.kind === "finish") {
+            if (["active", "processing", "interrupted"].includes(session.status)) {
+              session.status = "finished"; session.step++;
+              signals.push(interactionSignal(scene, "Dialogue", session.dialogueId, session, "closed"));
+            }
+            ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
+            const response = visibleSession(session, dialogue, target);
+            remember(state, commandKey, response); await save(scene, state); return { response };
+          }
           if (command.kind === "leave") {
             if (["active", "processing", "interrupted", "finished"].includes(session.status)) {
-              // A finished page already emitted its closing signal. Its still-open
-              // window owns a pause lease, which Leave must release immediately.
+              // Finish already emitted the closing signal and released automation;
+              // closing its remaining transcript window must not repeat the signal.
               const alreadyFinished = session.status === "finished";
               session.status = "left"; session.step++;
               if (!alreadyFinished) signals.push(interactionSignal(scene, "Dialogue", session.dialogueId, session, "closed"));
@@ -136,7 +192,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
             const response = { status: "left", sessionId: session.sessionId }; remember(state, commandKey, response); await save(scene, state); return { response };
           }
           if (!["answer", "renew"].includes(command.kind)) fail(localizedMessage("Неизвестное действие диалога."));
-          const canContinue = session.status === "active" || command.kind === "renew" && session.status === "finished";
+          const canContinue = session.status === "active";
           if (!dialogueSessionIsLive(session) || !canContinue) fail(localizedMessage("Разговор уже завершён или ответ ещё обрабатывается."));
           ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
         }
@@ -174,10 +230,12 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
           validate({ scene, runtime: state, descriptor: dialogue, target: current.target, session }, session.actorTokenId, user, session.runId);
           const selected = dialogue.pages.find((page) => page.id === session.nodeId)?.responses.find((entry) => entry.id === staged.selected.id);
           if (JSON.stringify(selected) !== JSON.stringify(staged.selected)) fail(localizedMessage("Ответ изменён мастером во время обработки."));
+          appendDialogueMessage(session, dialoguePlayerMessage(session, selected, scene.tokens.get(session.actorTokenId), user));
           session.step++;
           if (selected.nextPageId) {
             if (!dialogue.pages.some((page) => page.id === selected.nextPageId)) fail(localizedMessage("Следующий шаг разговора не найден."));
             session.nodeId = selected.nextPageId;
+            appendDialogueMessage(session, dialogueObjectMessage(session, dialogue.pages.find(({ id }) => id === session.nodeId), dialogue, current.target));
           }
           session.status = outcome.interrupt ? "interrupted" : outcome.exit || !selected.nextPageId ? "finished" : "active";
           if (!outcome.interrupt && selected.signalId) signals.push(customSignal(scene, `Dialogue:${dialogue.id}`, selected.signalId, selected.parameters, session, "answer"));
@@ -215,7 +273,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
       if (authority() && game.user.isGM) response = await process(command, game.user, random());
       else response = await requestGMReply(chat, { command, commandFlag: "dialogueCommand", responseFlag: "dialogueResult", content: `<p>${text("Ширма: взаимодействие со сценой.", "Master screen: scene interaction.")}</p>`, kind: "dialogue-command", timeoutMessage: localizedMessage("Мастер не ответил. Состояние разговора можно восстановить повторным открытием.") });
       if (response.failure) throw new Error(response.failure);
-      if (response.sessionId) { knownSessions.set(response.sessionId, clone(response)); if (knownSessions.size > 200) knownSessions.delete(knownSessions.keys().next().value); }
+      if (response.sessionId) { knownSessions.set(response.sessionId, { nodeId: response.nodeId, step: response.step }); if (knownSessions.size > 200) knownSessions.delete(knownSessions.keys().next().value); }
       return response;
     })();
     inFlight.set(key, task); try { return await task; } finally { inFlight.delete(key); }
@@ -223,10 +281,12 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
   return Object.freeze({ ...createManualDialogueService(),
     ...createScriptDialogueService({ context: scriptContext, validate: validateScriptDialogueAccess,
       process: (command, user, commandId) => process(command, user, commandId, { scriptStart: true }),
-      authority, chat, openWindow: openScriptWindow }), getContext,
+      authority, chat, openWindow: openScriptWindow }), getContext, refreshSession,
     requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target).runtime?.runId }),
     requestInteraction: (command) => send({ ...command, kind: "interaction", runId: command.runId ?? context(command.sceneId, null, command.groupId ?? "main").runtime?.runId }),
     requestAnswer: (command) => { const known = knownSessions.get(command.sessionId); return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step }); },
+    requestListen: (command) => send({ ...command, kind: "listen" }),
+    requestFinish: (command) => send({ ...command, kind: "finish" }),
     leaveSession: (command) => send({ ...command, kind: "leave" }), renewSession: (command) => send({ ...command, kind: "renew" }),
     async processCommand(message, initiatingUserId) {
       const command = message.getFlag?.(MODULE_ID, "dialogueCommand");

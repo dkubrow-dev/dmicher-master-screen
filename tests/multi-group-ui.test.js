@@ -10,7 +10,7 @@ class App {
   async close() { this.rendered = false; }
 }
 let sequence = 0;
-globalThis.foundry = { applications: { api: { ApplicationV2: App, HandlebarsApplicationMixin: base => base } }, utils: { randomID: () => `id${++sequence}` } };
+globalThis.foundry = { applications: { api: { ApplicationV2: App, HandlebarsApplicationMixin: base => base, DialogV2: { confirm: async () => true } } }, utils: { randomID: () => `id${++sequence}` } };
 globalThis.game = { user: { id: "gm", isGM: true }, users: [], settings: { get: () => "dark" } };
 const { ShopApplication } = await import("../dmicher-master-screen/scripts/apps/shop-window.js");
 const { ShopsManagerApplication } = await import("../dmicher-master-screen/scripts/apps/shops-manager.js");
@@ -87,7 +87,7 @@ test("closing a dialogue or shop while admission is pending releases its eventua
   assert.deepEqual(released, ["dialogue-lease", "shop-lease"]);
 });
 
-test("the last dialogue page renews its lease until Close and disposes the timer", async () => {
+test("an active dialogue renews its lease but finished history does not keep automation paused", async () => {
   const originalSet = globalThis.setInterval, originalClear = globalThis.clearInterval;
   let callback, cleared = false; const renewed = [];
   globalThis.setInterval = (fn, ms) => { assert.equal(ms, 30000); callback = fn; return { unref() {} }; };
@@ -95,8 +95,11 @@ test("the last dialogue page renews its lease until Close and disposes the timer
   try {
     const service = { getContext: () => ({ runtime: { runId: "run" } }), renewSession: async (intent) => renewed.push(intent), leaveSession: async () => {} };
     const app = new DialogueApplication(service, { sceneId: "map", dialogueId: "talk", actorTokenId: "hero", target: { type: "Token", id: "npc" } });
-    app.view = { sessionId: "lease", status: "finished", responses: [] }; await app._onRender({}, {});
+    app.view = { sessionId: "lease", status: "active", responses: [] }; await app._onRender({}, {});
     callback(); await Promise.resolve(); assert.equal(renewed[0].sessionId, "lease"); assert.equal(renewed[0].target.id, "npc");
+    app.view.status = "finished"; await app._onRender({}, {});
+    assert.equal(cleared, true); assert.equal(app.leaseTimer, null);
+    callback(); await Promise.resolve(); assert.equal(renewed.length, 1);
     await app.close(); assert.equal(cleared, true); assert.equal(app.leaseTimer, null);
   } finally { globalThis.setInterval = originalSet; globalThis.clearInterval = originalClear; }
 });

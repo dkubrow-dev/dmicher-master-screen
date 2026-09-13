@@ -1,4 +1,4 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { randomId, normalizeDescription } from "./model.js";
 import { validateParameters } from "./signal-types.js";
 
@@ -30,6 +30,7 @@ export function normalizeDialogueAsset(raw) {
   if (!object(raw)) fail(localizedMessage("Ожидается диалог."));
   const pages = array(raw.pages ?? [], 100, localizedMessage("Страницы диалога")).map((page) => {
     if (!object(page)) fail(localizedMessage("Ожидается страница диалога."));
+    if (page.imageAlignment !== undefined && !["left", "right"].includes(page.imageAlignment)) fail(text("Изображение блока выравнивается слева или справа.", "Page image alignment must be left or right."));
     const responses = array(page.responses ?? [], 30, localizedMessage("Ответы")).map((response) => {
       if (!object(response)) fail(localizedMessage("Ожидается ответ диалога."));
       const nextPageId = response.nextPageId ? id(response.nextPageId, localizedMessage("Следующая страница")) : "";
@@ -39,7 +40,7 @@ export function normalizeDialogueAsset(raw) {
     });
     if (new Set(responses.map((entry) => entry.id)).size !== responses.length) fail(localizedMessage("ID ответов страницы не должны повторяться."));
     return { id: id(page.id || randomId(), localizedMessage("Страница")), name: name(page.name || localizedMessage("Страница"), localizedMessage("Страница")),
-      text: prose(page.text ?? "", 12000, localizedMessage("Текст страницы")), art: prose(page.art ?? "", 1024, localizedMessage("Арт страницы")), responses };
+      text: prose(page.text ?? "", 12000, localizedMessage("Текст страницы")), art: prose(page.art ?? "", 1024, localizedMessage("Арт страницы")), imageAlignment: page.imageAlignment ?? "left", responses };
   });
   if (!pages.length || new Set(pages.map((entry) => entry.id)).size !== pages.length) fail(localizedMessage("Диалог должен содержать страницы с уникальными ID."));
   const startPageId = raw.startPageId ?? pages[0].id;

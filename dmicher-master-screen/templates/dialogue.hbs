@@ -1,9 +1,23 @@
 <section class="ms-dialogue-content">
   <header><h2>{{targetName}}</h2>{{#if title}}<p>{{title}}</p>{{/if}}</header>
-  {{#if art}}<img class="ms-dialogue-art" src="{{art}}" alt="">{{/if}}
-  {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
+  {{#if manual}}<p class="ms-note">{{dmicherScreenText "Мастер ведёт сцену вручную. Ответы здесь помогают вести разговор; дальнейшие события определяет мастер." "The GM is running the scene manually. Responses guide the conversation; the GM decides what happens next."}}</p>{{/if}}
+  {{#if gmPreview}}<p class="ms-note">{{dmicherScreenText "Ручной просмотр: сигналы и скрипты не запускаются; состояние автоматизации не меняется." "Manual preview: no signals or scripts run; automation state remains unchanged."}}</p>{{/if}}
+  {{#if listener}}<p class="ms-note ms-dialogue-listener">{{dmicherScreenText "Вы слушаете разговор. Ответы выбирает начавший его игрок." "You are listening. The player who began this conversation chooses the responses."}}</p>{{/if}}
+  <div class="ms-dialogue-history" role="log" aria-live="polite" aria-relevant="additions" aria-label="{{dmicherScreenText 'История диалога' 'Dialogue history'}}">
+    {{#each messages}}
+    <article class="ms-dialogue-message {{#if isPlayer}}is-player{{else}}is-object{{/if}}" data-message-id="{{id}}" data-image-alignment="{{imageAlignment}}">
+      <div class="ms-dialogue-bubble">
+        {{#if img}}<img class="ms-dialogue-avatar {{#if imageRight}}is-right{{else}}is-left{{/if}}" src="{{img}}" alt="">{{/if}}
+        <strong class="ms-dialogue-speaker">{{name}}</strong>
+        {{#if text}}<p class="ms-dialogue-text">{{text}}</p>{{/if}}
+      </div>
+      {{#if responses.length}}<div class="ms-dialogue-responses">{{#each responses}}<button type="button" {{#if @root.preview}}data-screen-action="previewAnswer"{{else}}data-action="answer"{{/if}} data-response-id="{{id}}" {{#if pageId}}data-page-id="{{pageId}}"{{/if}} {{#if disabled}}disabled{{/if}}>{{label}}</button>{{/each}}</div>{{/if}}
+    </article>
+    {{/each}}
+  </div>
   {{#if error}}<p class="ms-error" role="status">{{error}}</p>{{/if}}
+  {{#if unavailable}}<p class="ms-note" role="status">{{dmicherScreenText "Разговор больше недоступен. Прочитанная история остаётся в этом окне." "This conversation is no longer available. The history you have read remains in this window."}}</p>{{/if}}
+  {{#if signalId}}<p class="ms-note">{{dmicherScreenText "Справка мастеру: в автоматическом режиме этот ответ вызывает" "GM reference: in automated play this response emits"}} <code>{{signalId}}</code>.</p>{{/if}}
   {{#if finished}}<p class="ms-note">{{dmicherScreenText "Разговор завершён." "Conversation finished."}}</p>{{/if}}
-  <div class="ms-dialogue-responses">{{#each responses}}<button type="button" data-action="answer" data-response-id="{{id}}" {{#if disabled}}disabled{{/if}}>{{label}}</button>{{/each}}</div>
-  <footer><button type="button" data-action="leave">{{dmicherScreenText "Уйти" "Leave"}}</button></footer>
+  <footer>{{#if canFinish}}<button type="button" {{#if preview}}data-screen-action="previewFinish"{{else}}data-action="finish"{{/if}} {{#if busy}}disabled{{/if}}>{{dmicherScreenText "Завершить диалог" "Finish dialogue"}}</button>{{else}}<button type="button" {{#if preview}}data-screen-action="previewClose"{{else}}data-action="leave"{{/if}}>{{dmicherScreenText "Закрыть" "Close"}}</button>{{/if}}</footer>
 </section>

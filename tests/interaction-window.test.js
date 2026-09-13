@@ -38,3 +38,13 @@ test("interaction window opens the selected shop catalog and rejects a stale run
   await assert.rejects(() => app.choose(choice, "pc"), /changed/);
   assert.equal(f.calls.length, 1);
 });
+
+test("interaction window routes listening to its authenticated session command", async () => {
+  const f = fixture(), calls = [];
+  f.controller.openListeningDialogue = (...args) => calls.push(args);
+  const app = new InteractionApplication(f.controller, { sceneId: "map", tokenId: "speaker", sourceTokenId: "listener", groupId: "hall" });
+  const choice = { kind: "listen", sessionId: "conversation", groupId: "hall", runId: "run", actorTokenId: "speaker" };
+  await app.choose(choice, "listener"); assert.deepEqual(calls, [[choice, "listener"]]);
+  f.runtime.runId = "new-run"; await assert.rejects(() => app.choose(choice, "listener"), /changed/);
+  assert.equal(calls.length, 1);
+});

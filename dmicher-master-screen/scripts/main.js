@@ -60,7 +60,10 @@ Hooks.once("ready", () => {
   on("canvasReady", attachCanvas);
   on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
   on("updateScene", () => updateSceneNavigationBadges(controller));
-  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
+  on("refreshToken", (token) => controller.dialogueMarkers.refresh(token.document ?? token));
+  on("updateToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
+  on("deleteToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
+  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); controller.dialogueMarkers.clear(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
   on("createChatMessage", (message, _options, userId) => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
     void Promise.resolve().then(() => controller.dialogues.processScriptInvitation(message, userId)).catch(notifyError);
@@ -74,6 +77,7 @@ Hooks.once("ready", () => {
 globalThis.addEventListener?.("pagehide", () => {
   controller?.editor?.layout?.dispose();
   controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
+  controller?.dialogueMarkers.clear();
   clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   detachCanvas?.();

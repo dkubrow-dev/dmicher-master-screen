@@ -26,9 +26,11 @@ export class InteractionApplication extends HandlebarsApplicationMixin(Applicati
     const context = await super._prepareContext(options), scene = game.scenes.get(this.sceneId);
     const object = getSceneObject(scene, this.target);
     const choices = scene?.id === globalThis.canvas?.scene?.id
-      ? listAvailableInteractions(scene, this.target, scene.tokens.get(this.sourceTokenId), game.user).filter((entry) => !this.groupId || entry.groupId === this.groupId)
+      ? (this.controller.getAvailableInteractions?.(scene, this.target, scene.tokens.get(this.sourceTokenId))
+        ?? listAvailableInteractions(scene, this.target, scene.tokens.get(this.sourceTokenId), game.user)).filter((entry) => !this.groupId || entry.groupId === this.groupId)
       : [];
-    return { ...context, name: object?.name ?? object?.label, missing: !object, choices,
+    return { ...context, name: object?.name ?? object?.label, missing: !object,
+      choices: choices.map((choice) => choice.kind === "listen" ? { ...choice, name: `${t("Слушать диалог", "Listen to dialogue")}: ${choice.name}` } : choice),
       characters: this.controller.getPlayerTokens().filter((entry) => game.user.isGM || entry.actor.testUserPermission(game.user, "OWNER"))
         .map((entry) => ({ id: entry.id, name: entry.name, selected: entry.id === this.sourceTokenId })) };
   }
@@ -40,6 +42,7 @@ export class InteractionApplication extends HandlebarsApplicationMixin(Applicati
     }
     if (choice.kind === "shop") return this.controller.openShop(this.target, { actorTokenId, groupId: choice.groupId, shopId: choice.id });
     if (choice.kind === "dialogue") return this.controller.openDialogue(choice.id, actorTokenId, { groupId: choice.groupId, target: this.target });
+    if (choice.kind === "listen") return this.controller.openListeningDialogue(choice, actorTokenId);
     return this.controller.requestNamedInteraction(choice.id, actorTokenId, { groupId: choice.groupId });
   }
 

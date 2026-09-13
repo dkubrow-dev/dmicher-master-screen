@@ -73,6 +73,81 @@ test("dialogue advances only on an offered answer and emits typed lifecycle sign
   assert.equal(f.events[0].parameters.userUuid, `User.${f.player.id}`);
   assert.equal(f.events[1].parameters.responseUuid, "Scene.scene.dmicher.Dialogue.talk.Page.start.Response.ask");
 });
+
+test("transcript snapshots accepted replies once and preserves prior page text and portraits", async () => {
+  const f = fixture(); f.pc.actor.img = "portrait.webp"; f.pc.name = "Player character";
+  const { result: opened } = await f.send(f.start);
+  assert.deepEqual(opened.history.map(({ role, text }) => ({ role, text })), [{ role: "object", text: "Welcome" }]);
+  const state = f.runtime(); state.state.dialogues[0].pages[0].text = "Edited after opening";
+  state.state.dialogues[0].pages[1].imageAlignment = "right"; f.setRuntime(state);
+  const request = f.message({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 }, { messageId: "history" });
+  await f.service.processCommand(request, f.player.id); await f.service.processCommand(request, f.player.id);
+  const history = request.flags.dialogueResult.history;
+  assert.deepEqual(history.map(({ role, text }) => ({ role, text })), [
+    { role: "object", text: "Welcome" }, { role: "player", text: "Ask" }, { role: "object", text: "Information" }
+  ]);
+  assert.equal(history[1].img, "portrait.webp"); assert.equal(history[1].imageAlignment, "right");
+  assert.equal(history[2].imageAlignment, "right"); assert.equal(new Set(history.map(({ id }) => id)).size, 3);
+  assert.ok(Object.values(f.runtime().dialogueCommands).every((entry) => !Object.hasOwn(entry, "history")), "command cache must not multiply the transcript");
+  await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, responseId: "finish", nodeId: "info", step: 1 });
+  await f.service.processCommand(request, f.player.id);
+  assert.deepEqual(request.flags.dialogueResult.history, history, "a replay returns the original transcript prefix, without later replies");
+});
+
+function addListener(f) {
+  const token = { id: "listener", documentName: "Token", name: "Listener", x: 0, y: 0, width: 1, height: 1,
+    actor: { id: "listener-actor", testUserPermission: (user) => user.id === f.other.id }, object: { checkCollision: () => false } };
+  f.scene.tokens.set(token.id, token); return token;
+}
+
+test("a listener receives the history but cannot answer or finish and has an independent lease", async () => {
+  const f = fixture(); const listener = addListener(f);
+  const { result: opened } = await f.send(f.start);
+  const { result: joined } = await f.send({ kind: "listen", sceneId: "scene", sessionId: opened.sessionId, actorTokenId: listener.id }, { user: f.other });
+  assert.equal(joined.role, "listener"); assert.equal(joined.actorTokenId, f.pc.id); assert.equal(joined.listenerTokenId, listener.id);
+  assert.deepEqual(joined.responses, []); assert.deepEqual(joined.history, opened.history);
+  const reader = { sceneId: "scene", sessionId: opened.sessionId, listenerTokenId: listener.id };
+  for (const kind of ["answer", "finish"]) assert.ok((await f.send({ ...reader, kind, responseId: "ask", nodeId: "start", step: 0 }, { user: f.other })).result.failure);
+  const expiresAt = Object.values(f.runtime().dialogueSessions)[0].expiresAt;
+  await f.send({ ...reader, kind: "renew" }, { user: f.other });
+  assert.equal(Object.values(f.runtime().dialogueSessions)[0].expiresAt, expiresAt, "a reader cannot keep the speaker's automation paused");
+  await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 });
+  game.user = f.other;
+  const before = structuredClone(f.runtime()), eventCount = f.events.length;
+  const latest = f.service.refreshSession(reader);
+  assert.equal(latest.history.length, 3); assert.deepEqual(latest.responses, []);
+  assert.deepEqual(f.runtime(), before); assert.equal(f.events.length, eventCount, "local refresh emits no commands, events or writes");
+  await f.send({ ...reader, kind: "leave" }, { user: f.other });
+  assert.equal(Object.values(f.runtime().dialogueSessions)[0].status, "active"); assert.equal(f.service.refreshSession(reader), null);
+});
+
+test("listener admission and ongoing reads validate token ownership and the exact stored Actor", async () => {
+  const f = fixture(); const token = addListener(f); const { result: opened } = await f.send(f.start);
+  const command = { kind: "listen", sceneId: "scene", sessionId: opened.sessionId, actorTokenId: token.id };
+  token.x = 1000; assert.ok((await f.send(command, { user: f.other })).result.failure);
+  token.x = 0; token.hidden = true; assert.ok((await f.send(command, { user: f.other })).result.failure);
+  token.hidden = false; assert.ok((await f.send({ ...command, actorTokenId: f.pc.id }, { user: f.other })).result.failure);
+  assert.equal((await f.send(command, { user: f.other })).result.role, "listener");
+  game.user = f.other;
+  const reader = { ...command, listenerTokenId: token.id };
+  token.x = 1000; assert.equal(f.service.refreshSession(reader).role, "listener", "range is a join condition, not a continuous read restriction");
+  token.actor = { ...token.actor, id: "replacement" };
+  assert.equal(f.service.refreshSession(reader), null);
+  assert.ok((await f.send({ ...reader, kind: "renew" }, { user: f.other })).result.failure);
+  token.x = 0;
+  assert.equal((await f.send(command, { user: f.other })).result.role, "listener", "explicit rejoining admits the new owned Actor");
+  assert.equal(f.service.refreshSession(reader).role, "listener");
+});
+
+test("finish keeps the transcript and emits closed only once, while later close cannot replay it", async () => {
+  const f = fixture(); const { result: opened } = await f.send(f.start);
+  const command = { sceneId: "scene", sessionId: opened.sessionId };
+  const { result: finished } = await f.send({ ...command, kind: "finish" });
+  assert.equal(finished.status, "finished"); assert.deepEqual(finished.history, opened.history);
+  assert.equal((await f.send({ ...command, kind: "finish" })).result.status, "finished");
+  await f.send({ ...command, kind: "leave" });
+  assert.deepEqual(f.events.map(({ name }) => name), ["opened", "closed"]);
+});
 test("response interruption preserves the next page and resumes without another quota use", async () => {
   let interrupt = true;
   const f = fixture({ signal: async (_scene, packet) => ({ status: "done", allowed: true, interrupt: packet.name === "response" && interrupt, exit: false }) });
@@ -272,7 +347,7 @@ test("an ongoing dialogue requires its exact stored Actor and object identities"
   }
 });
 
-test("finished dialogue windows renew their pause and release it immediately on close without duplicate signals", async (t) => {
+test("finishing a dialogue releases its pause while keeping history, and close cannot replay signals", async (t) => {
   let now = 1000;
   t.mock.method(Date, "now", () => now);
   for (const throughAnswer of [false, true]) {
@@ -288,15 +363,13 @@ test("finished dialogue windows renew their pause and release it immediately on 
       ? (await f.send({ kind: "answer", sceneId: "scene", sessionId: opened.sessionId, responseId: "finish", nodeId: "start", step: 0 })).result
       : opened;
     assert.equal(finished.status, "finished");
-    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), true);
+    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), false);
     const before = structuredClone(Object.values(f.runtime().dialogueSessions)[0]);
     now += 30_000;
     const { result: renewed } = await f.send({ kind: "renew", sceneId: "scene", sessionId: finished.sessionId, target: { type: "Token", id: "npc" } });
-    assert.equal(renewed.status, "finished");
-    assert.equal(renewed.nodeId, before.nodeId);
-    assert.equal(renewed.step, before.step);
-    assert.ok(Object.values(f.runtime().dialogueSessions)[0].expiresAt > before.expiresAt);
-    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), true);
+    assert.ok(renewed.failure);
+    assert.deepEqual(Object.values(f.runtime().dialogueSessions)[0], before);
+    assert.equal(isInteractionPaused(f.scene, { type: "Token", id: "npc" }), false);
     assert.equal(f.events.filter((event) => event.name === "closed").length, 1);
     const leave = { kind: "leave", sceneId: "scene", sessionId: finished.sessionId };
     assert.equal((await f.send(leave)).result.status, "left");

@@ -1,5 +1,8 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Диалоги показывают историю реплик в одном окне: выравнивание арта слева/справа, портрет и выбранный ответ игрока, завершение отдельно от закрытия окна. Завершённый разговор освобождает рутину и ожидание скрипта; история остаётся. Слушатели присоединяются через 💬 над ведущим персонажем и читают переписку без права отвечать. Обновление окна не создаёт команд, а кэш команд не копирует всю историю.
+- Dialogues now keep a single conversation history with left/right artwork, player portraits and selected replies. Finishing releases routine and script waits while keeping the transcript open. Listeners join through the speaker's 💬 marker and read without choosing replies. Window refresh sends no commands, and the command cache does not duplicate entire transcripts.
+
 - Исправлена работа кнопок редактора поведения при частых обновлениях исполняемого скрипта: форма обновляется при изменении подготовки и ссылочных данных. Мгновенный цикл уступает исполнение следующему такту; повтор сохраняется. Убраны повторные записи неизменённых ожиданий и перемещения в уже занятую точку. Подготовка миров не изменяется.
 - Fixed behavior editor buttons during frequent script runtime updates: the form refreshes when preparation or reference data changes. Instant cycles yield to the next tick while preserving repetition. Unchanged waits and movement to an already occupied position no longer produce redundant writes. World preparation is unchanged.
 

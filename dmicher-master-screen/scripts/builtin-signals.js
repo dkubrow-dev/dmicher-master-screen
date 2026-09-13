@@ -52,7 +52,7 @@ const specs = {
   Dialogue: [
     ["opened", "Открыт", "Opened", "Игрок начал или продолжил диалог.", "A player started or resumed a dialogue.", interactionFields("dialogue"), []],
     ["response", "Выбор диалога", "Dialogue response", "Игрок выбрал ответ; прерывание сохраняет позицию и имеет приоритет перед завершением.", "A player chose a response; suspension preserves the position and takes priority over completion.", [...interactionFields("dialogue"), field("responseUuid")], [field("exit", "boolean", { default: false }), field("interrupt", "boolean", { default: false }), field("message", "string", { default: "" })]],
-    ["closed", "Закрыт", "Closed", "Диалог закрыт после завершения или ухода; при прерывании не испускается.", "The dialogue closed after completion or leaving; not emitted on suspension.", interactionFields("dialogue"), []]
+    ["closed", "Завершён", "Finished", "Разговор завершён ответом, конечным блоком или игроком; окно истории может оставаться открытым. При прерывании не испускается.", "The conversation finished through a reply, terminal block or player action; its transcript window may remain open. Not emitted on suspension.", interactionFields("dialogue"), []]
   ]
 };
 

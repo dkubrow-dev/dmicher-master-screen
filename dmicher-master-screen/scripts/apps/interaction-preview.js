@@ -2,11 +2,13 @@ import { text as t } from "../localization.js";
 import { ScreenFormApplication } from "./screen-form.js";
 import { themedClasses } from "../ui.js";
 import { SceneAssets } from "../scene-assets.js";
-import { SceneObjects, listNativeSceneObjects, resolveObjectShop, resolveObjectDialogue } from "../scene-objects.js";
+import { SceneObjects, getSceneObject, listNativeSceneObjects, resolveObjectShop, resolveObjectDialogue } from "../scene-objects.js";
 import { getDefinitions, getObjectTags } from "../store.js";
 import { normalizeTags } from "../model.js";
 import { generics } from "../generics.js";
 import { evaluateInteractionPreview } from "../interaction-access.js";
+import { dialogueObjectMessage, dialoguePlayerMessage } from "../dialogue-history.js";
+import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose } from "./dialogue-presentation.js";
 
 const esc = generics.utilities.escapeHTML;
 const clone = structuredClone;
@@ -16,10 +18,11 @@ const select = (name, label, entries, value) => `<label class="ms-field">${esc(l
 /** All state below is local rehearsal data. No session, Item update or event is produced. */
 export class InteractionPreviewApplication extends ScreenFormApplication {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-interaction-preview"), position: { width: 940, height: 780 }, window: { icon: "fa-solid fa-eye", resizable: true } };
-  static PARTS = { main: { template: "modules/dmicher-master-screen/templates/interaction-preview.hbs", scrollable: [".ms-preview-result"] } };
+  static PARTS = { main: { template: "modules/dmicher-master-screen/templates/interaction-preview.hbs", scrollable: [".ms-preview-body", ".ms-preview-result"] } };
   constructor(controller, { kind, assetId, draft, pageId } = {}, options = {}) {
     super(options); this.controller = controller; this.kind = kind; this.assetId = assetId; this.sceneId = controller.getContext().scene?.id;
     this.assetDraft = draft ? clone(draft) : null; this.pageId = pageId; this.conditions = null; this.take = {}; this.give = new Set(); this.feedback = "";
+    this.dialogueHistory = []; this.dialogueSession = { sessionId: "preview", step: 0 };
   }
   onDraftInput() { return false; }
   get title() { return t("Предпросмотр взаимодействия", "Interaction preview"); }
@@ -50,19 +53,40 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     this.stock ??= new Map((asset.items ?? []).map((item) => [item.id, item.stock]));
     const checks = [["visible", t("Объект виден", "Object is visible")], ["enabled", t("Запуск разрешён", "Launch allowed")], ["halted", t("Группа остановлена", "Group stopped")], ["showBlocked", t("Показать содержимое при отказе", "Show content when access is denied")]].map(([key, label]) => `<label class="ms-check"><input type="checkbox" name="${key}" ${state[key] ? "checked" : ""}>${label}</label>`).join("");
     const form = `<details open class="ms-details"><summary>${t("Имитируемые условия", "Simulated conditions")}</summary><div class="ms-grid-two">${select("groupId", t("Группа", "Group"), definitions.map((entry) => ({ id: entry.groupId, name: entry.groupName })), state.groupId)}${select("stateId", t("Состояние", "State"), group?.states ?? [], state.stateId)}${select("target", t("Объект", "Object"), objects.map((entry) => ({ id: entry.key, name: entry.name })), state.target)}${select("actorTokenId", t("Персонаж", "Character"), actors.map((token) => ({ id: token.id, name: `${token.name} · ${token.actor.name}` })), state.actorTokenId)}</div><label class="ms-field">${t("Имитируемые теги персонажа", "Simulated character tags")}<input name="tags" value="${esc(state.tags)}"></label><div class="ms-grid-two"><label class="ms-field">${t("Расстояние", "Distance")}<input name="distance" type="number" min="0" step="any" value="${state.distance}"></label><label class="ms-field">${t("Произошедших запусков", "Previous launches")}<input name="used" type="number" min="0" step="1" value="${state.used}"></label></div><div class="ms-grid-two">${checks}</div>${button("applyPreview", t("Применить условия и начать заново", "Apply conditions and restart"))}</details>`;
-    return { ...parent, html: `<p class="ms-preview-banner">${t("Предпросмотр: инвентарь и остатки мира не меняются, сигналы не отправляются.", "Preview: world inventory and stock remain unchanged; no signals are emitted.")}</p><h3>${esc(asset.name)}</h3>${form}<p class="ms-preview-gate" data-preview-allowed="${gate.allowed}">${gate.allowed ? t("Действие доступно при выбранных условиях.", "The action is available under these conditions.") : esc(gate.reason)}</p><div class="ms-preview-result">${this.allowed ? this.kind === "shop" ? this.renderShop(this.currentAsset) : this.renderDialogue(asset) : ""}<p data-preview-feedback>${esc(this.feedback)}</p></div>` };
+    return { ...parent, html: `<p class="ms-preview-banner">${t("Предпросмотр: инвентарь и остатки мира не меняются, сигналы не отправляются.", "Preview: world inventory and stock remain unchanged; no signals are emitted.")}</p><h3>${esc(asset.name)}</h3>${form}<p class="ms-preview-gate" data-preview-allowed="${gate.allowed}">${gate.allowed ? t("Действие доступно при выбранных условиях.", "The action is available under these conditions.") : esc(gate.reason)}</p><div class="ms-preview-result">${this.allowed ? this.kind === "shop" ? this.renderShop(this.currentAsset) : await this.renderDialogue(asset) : ""}<p data-preview-feedback>${esc(this.feedback)}</p></div>` };
   }
   renderShop(asset) {
     return `<div class="ms-shop-columns"><section><h3>${t("Каталог магазина", "Shop catalog")}</h3>${asset.img ? `<img class="ms-dialogue-art" src="${esc(asset.img)}" alt="">` : ""}<div class="ms-asset-stock ${asset.display === "tiles" ? "is-tiles" : ""}"><div class="ms-stock-items">${asset.items.map((item) => `<div class="ms-stock-entry"><img src="${esc(item.data.img || "icons/svg/item-bag.svg")}" alt=""><span>${esc(item.data.name)} · ${this.stock.get(item.id) ?? 0}</span>${button("previewTake", "+", `data-id="${esc(item.id)}" ${(this.stock.get(item.id) ?? 0) <= (this.take[item.id] ?? 0) ? "disabled" : ""}`)}</div>`).join("")}</div></div></section><section><h3>${t("Предложение персонажа", "Character's offer")}</h3>${this.inventory.map((item) => button("previewGive", `${this.give.has(item.id) ? "✓ " : "+ "}${item.name}`, `data-id="${esc(item.id)}"`)).join("") || `<p>${t("У персонажа нет предметов.", "The character has no items.")}</p>`}<h3>${t("Предложение магазина", "Shop's offer")}</h3>${Object.entries(this.take).map(([id, count]) => `<div>${esc(asset.items.find((item) => item.id === id)?.data.name)} × ${count} ${button("previewRemoveTake", t("Убрать", "Remove"), `data-id="${esc(id)}"`)}</div>`).join("")}${button("previewTrade", asset.requireGMApproval ? t("Имитировать одобрение мастера", "Simulate GM approval") : t("Имитировать обмен", "Simulate trade"))}</section></div>`;
   }
-  renderDialogue(asset) {
+  dialogueSource() {
+    const scene = this.controller.getContext().scene, [type, id] = (this.conditions?.target ?? "").split(":");
+    if (scene?.id !== this.sceneId) return {};
+    const target = getSceneObject(scene, { type, id });
+    return { target, token: scene.tokens.get(this.conditions?.actorTokenId) };
+  }
+  appendDialoguePage(asset, page) {
+    this.dialogueHistory.push(dialogueObjectMessage(this.dialogueSession, page, asset, this.dialogueSource().target));
+    if (!page.responses.length) this.ended = true;
+  }
+  resetDialogue(pageId = null) {
+    this.pageId = pageId; this.ended = false; this.dialogueHistory = []; this.dialogueSession.step = 0;
+    this.scrollState = null; this.feedback = "";
+  }
+  async renderDialogue(asset) {
     const page = asset.pages.find((entry) => entry.id === this.pageId) ?? asset.pages.find((entry) => entry.id === asset.startPageId);
-    if (!page || this.ended) return button("previewRestart", t("Начать диалог заново", "Restart dialogue"));
+    if (!page) return "";
     this.pageId = page.id;
-    return `${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<p class="ms-dialogue-text">${esc(page.text)}</p><div class="ms-dialogue-responses">${page.responses.map((response) => button("previewAnswer", response.label, `data-id="${esc(response.id)}"`)).join("")}${button("previewLeave", t("Уйти", "Leave"))}</div>`;
+    if (!this.dialogueHistory.length) this.appendDialoguePage(asset, page);
+    const responses = this.ended ? [] : page.responses.map(({ id, label }) => ({ id, label }));
+    const html = await foundry.applications.handlebars.renderTemplate("modules/dmicher-master-screen/templates/dialogue.hbs", {
+      title: asset.name, targetName: this.dialogueSource().target?.name, messages: dialogueMessages({ history: this.dialogueHistory }, responses),
+      finished: this.ended, canFinish: !this.ended, preview: true
+    });
+    return `<div class="ms-preview-dialogue">${html}</div>${button("previewRestart", t("Начать диалог заново", "Restart dialogue"))}`;
   }
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = this.bindEvents();
+    restoreDialogueScroll(this);
     this.element.addEventListener("change", (event) => {
       if (!["groupId", "actorTokenId"].includes(event.target.name)) return;
       try {
@@ -72,7 +96,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
           this.conditions.tags = this.conditions.actorTokenId ? getObjectTags(scene, { type: "Token", id: this.conditions.actorTokenId }).join(", ") : "";
           this.inventory = null;
         }
-        this.take = {}; this.give.clear(); this.ended = false;
+        this.take = {}; this.give.clear(); this.resetDialogue();
         void this.render({ force: true });
       } catch (error) { ui.notifications.error(error.message); }
     }, listeners);
@@ -84,9 +108,10 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     for (const key of ["visible", "enabled", "halted", "showBlocked"]) previous[key] = field(key).checked;
   }
   async handleAction(action, button) {
-    if (action === "applyPreview") { this.readConditions(); this.inventory = null; this.stock = null; this.localShopItems = null; this.take = {}; this.give.clear(); this.ended = false; this.pageId = null; this.feedback = ""; return this.render({ force: true }); }
+    if (action === "applyPreview") { this.readConditions(); this.inventory = null; this.stock = null; this.localShopItems = null; this.take = {}; this.give.clear(); this.resetDialogue(); return this.render({ force: true }); }
     if (!this.allowed || !this.currentAsset || !game.user.isGM) return;
-    const asset = this.currentAsset, id = button?.dataset.id;
+    const asset = this.currentAsset, id = button?.dataset.responseId ?? button?.dataset.id;
+    captureDialogueScroll(this);
     if (action === "previewTake" && (this.stock.get(id) ?? 0) > (this.take[id] ?? 0)) this.take[id] = (this.take[id] ?? 0) + 1;
     if (action === "previewRemoveTake") delete this.take[id];
     if (action === "previewGive" && this.inventory.some((item) => item.id === id)) { if (this.give.has(id)) this.give.delete(id); else this.give.add(id); }
@@ -105,12 +130,27 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
       this.give.clear(); this.take = {}; this.feedback = t("Имитация обмена завершена. Документы мира не изменены.", "The simulated trade is complete. World documents are unchanged.");
     }
     if (action === "previewAnswer") {
+      if (this.ended) return;
       const response = asset.pages.find((page) => page.id === this.pageId)?.responses.find((entry) => entry.id === id); if (!response) return;
-      if (response.nextPageId) this.pageId = response.nextPageId;
-      else { this.ended = true; this.feedback = response.signalId ? `${t("Диалог завершён. В игре ответ отправит сигнал «", "Dialogue finished. During play the response would emit signal “")}${response.signalId}${t("». Предпросмотр его не отправляет.", "”. Preview does not emit it.")}` : t("Диалог завершён без сигнала.", "Dialogue finished without a signal."); }
+      const next = asset.pages.find((page) => page.id === response.nextPageId);
+      if (response.nextPageId && !next) return;
+      this.dialogueHistory.push(dialoguePlayerMessage(this.dialogueSession, response, this.dialogueSource().token, game.user));
+      this.dialogueSession.step++;
+      if (next) { this.pageId = next.id; this.appendDialoguePage(asset, next); }
+      else { this.ended = true; this.feedback = response.signalId ? `${t("Диалог завершён. В игре ответ отправит сигнал «", "Dialogue finished. During play the response would emit signal “")}${response.signalId}${t("». Предпросмотр его не отправляет.", "”. Preview does not emit it.")}` : t("Предпросмотр диалога завершён. Сигналы не отправлены.", "Dialogue preview finished. No signals were emitted."); }
     }
-    if (action === "previewLeave") { this.ended = true; this.feedback = t("Уход без сигнала.", "Left without a signal."); }
-    if (action === "previewRestart") { this.ended = false; this.pageId = asset.startPageId; this.feedback = ""; }
+    if (action === "previewFinish") { this.ended = true; this.feedback = t("Предпросмотр диалога завершён. Сигналы не отправлены.", "Dialogue preview finished. No signals were emitted."); }
+    if (action === "previewClose") return this.close();
+    if (action === "previewRestart") this.resetDialogue(asset.startPageId);
     return this.render({ force: true });
+  }
+  async close(options = {}) {
+    if (this.closeTask) return this.closeTask;
+    this.closeTask = (async () => {
+      if (this.kind === "dialogue" && this.dialogueHistory.length && !this.ended && !await confirmDialogueClose()) return;
+      this.ended = true;
+      return super.close(options);
+    })().finally(() => { this.closeTask = null; });
+    return this.closeTask;
   }
 }

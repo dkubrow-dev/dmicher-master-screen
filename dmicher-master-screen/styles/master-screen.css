@@ -109,6 +109,21 @@
 .dmicher-master-screen .ms-dialogue-text { white-space: pre-wrap; line-height: 1.6; margin: 16px 0; }
 .dmicher-master-screen .ms-dialogue-responses { display: flex; flex-direction: column; gap: 8px; }
 .dmicher-master-screen .ms-dialogue-content footer { margin-top: 16px; }
+.dmicher-master-screen.ms-dialogue .ms-dialogue-content, .dmicher-master-screen .ms-preview-dialogue .ms-dialogue-content { display: flex; flex-direction: column; overflow: hidden; min-height: 0; gap: 10px; }
+.dmicher-master-screen.ms-dialogue .ms-dialogue-content > :is(header, footer, .ms-note, .ms-error), .dmicher-master-screen .ms-preview-dialogue .ms-dialogue-content > :is(header, footer, .ms-note, .ms-error) { flex: none; margin: 0; }
+.dmicher-master-screen .ms-preview-dialogue { height: 480px; margin-bottom: 8px; }
+.dmicher-master-screen .ms-dialogue-history { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 2px 6px 2px 0; }
+.dmicher-master-screen .ms-dialogue-message { margin: 0 24px 14px 0; }
+.dmicher-master-screen .ms-dialogue-message.is-player { margin: 0 0 14px 24px; }
+.dmicher-master-screen .ms-dialogue-bubble { display: flow-root; padding: 12px; border: 1px solid var(--dmicher-border-muted); border-radius: 10px; background: var(--dmicher-surface-muted); overflow-wrap: anywhere; }
+.dmicher-master-screen .is-player .ms-dialogue-bubble { background: var(--dmicher-row-hover); }
+.dmicher-master-screen .ms-dialogue-speaker { display: block; margin-bottom: 5px; color: var(--dmicher-heading); }
+.dmicher-master-screen .ms-dialogue-avatar { width: min(120px, 35%); height: 120px; object-fit: contain; border: 0; border-radius: 6px; }
+.dmicher-master-screen .ms-dialogue-avatar.is-left { float: left; margin: 0 12px 6px 0; }
+.dmicher-master-screen .ms-dialogue-avatar.is-right { float: right; margin: 0 0 6px 12px; }
+.dmicher-master-screen .is-player .ms-dialogue-avatar { width: min(64px, 25%); height: 64px; }
+.dmicher-master-screen .ms-dialogue-bubble .ms-dialogue-text { margin: 0; line-height: 1.5; }
+.dmicher-master-screen .ms-dialogue-message .ms-dialogue-responses { margin-top: 8px; gap: 5px; }
 .dmicher-master-screen .ms-conditions-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; }
 .dmicher-master-screen .ms-conditions-scope > strong { flex-basis: 100%; font-size: 0.88rem; }
 .dmicher-master-screen .ms-conditions-scope .ms-check { margin: 3px 0; }

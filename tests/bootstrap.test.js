@@ -350,3 +350,31 @@ test("a single owned self-target selects the acting character without requiring 
     assert.deepEqual(f.scene.updates, []);
   } finally { await f.dispose(); }
 });
+
+test("player token menu joins a conversation with separate speaker and listener identities", async () => {
+  const f = fixture(14), controller = new ScreenController();
+  try {
+    game.user = game.users.get("player"); controller.mode = "director";
+    const make = (id, x, owned) => ({ id, name: id, documentName: "Token", parent: f.scene, x, y: 0, width: 1, height: 1,
+      actor: { id: `${id}-actor`, testUserPermission: () => owned }, object: { checkCollision: () => false } });
+    const listener = make("listener", 0, true), speaker = make("speaker", 50, false);
+    f.scene.tokens.set(listener.id, listener); f.scene.tokens.set(speaker.id, speaker);
+    canvas.tokens.controlled = [{ document: listener }];
+    const session = { sessionId: "conversation", dialogueId: "talk", groupId: "main", runId: "run", userId: "speaker-user",
+      actorTokenId: speaker.id, actorId: speaker.actor.id, target: { type: "Token", id: "guard" }, status: "active", expiresAt: Date.now() + 60000 };
+    const runtime = { ...emptyRuntime(), runId: "run", stateId: "calm", dialogueSessions: { speaker: session } };
+    f.scene.flags[MODULE_ID].groupRuntimes = { main: runtime };
+    f.scene.flags[MODULE_ID].interactionCatalog = { dialogues: [{ id: "talk", name: "Greeting", pages: [{ id: "hello", name: "Hello" }] }] };
+    const requests = [], view = { ...session, role: "listener", listenerTokenId: listener.id, history: [], responses: [] };
+    controller.dialogues = { requestListen: async (command) => { requests.push(command); return view; },
+      refreshSession: async () => view, getContext: () => ({ scene: f.scene, runtime }), leaveSession: async () => {} };
+    let items; controller.objectMenu.open = (entries) => { items = entries; };
+    assert.equal(controller.openObjectMenu({ type: "Token", id: speaker.id }), true);
+    assert.equal(items.length, 1); const app = await items[0].action();
+    assert.equal(requests.length, 1); assert.equal(requests[0].actorTokenId, listener.id);
+    assert.equal(requests[0].sessionId, session.sessionId);
+    assert.equal(app.actorTokenId, speaker.id); assert.equal(app.listenerTokenId, listener.id);
+    assert.equal(app.command().listenerTokenId, listener.id);
+    assert.deepEqual(f.scene.updates, []);
+  } finally { controller.dialogueMarkers.clear(); await f.dispose(); }
+});

@@ -10,7 +10,7 @@ function fixture() {
   const other = { id: "other", role: 1, isGM: false };
   const dialogue = { id: "talk", name: "Manual discussion", enabled: false, range: 1, target: { type: "Token", id: "npc" },
     conditions: { enabled: false, allowTags: ["never"] }, startPageId: "start", pages: [
-      { id: "start", text: "Opening", art: "", responses: [{ id: "next", label: "Continue", nextPageId: "last" }] },
+      { id: "start", text: "Opening", art: "", imageAlignment: "right", responses: [{ id: "next", label: "Continue", nextPageId: "last" }] },
       { id: "last", text: "Conclusion", art: "", responses: [{ id: "finish", label: "Accept", signalId: "alarm.start" }] }
     ] };
   const catalog = { schemaVersion: 1, revision: 0, shops: [], dialogues: [{ id: dialogue.id, name: dialogue.name, startPageId: dialogue.startPageId,
@@ -38,6 +38,7 @@ test("GM manual reading ignores automation state without changing halted state, 
   assert.equal(view.gmPreview, true);
   assert.equal(view.dialogue.pages[1].responses[0].signalId, "alarm.start");
   assert.equal(view.dialogue.pages[0].art, "npc.webp");
+  assert.equal(view.dialogue.pages[0].imageAlignment, "right");
   assert.equal(f.sent.length, 0);
   assert.deepEqual(f.runtime, before);
 });
@@ -54,6 +55,7 @@ test("manual invitation requires an explicit audience and strips event payloads 
   assert.equal(data.dialogue.conditions, undefined);
   assert.equal(data.dialogue.target, undefined);
   assert.equal(data.dialogue.nodes[1].responses[0].signalId, "");
+  assert.equal(data.dialogue.nodes[0].imageAlignment, "right");
 });
 
 test("a selected recipient opens a live authenticated GM invitation only once", async () => {
@@ -98,13 +100,16 @@ test("manual window responses navigate locally and never invoke the event bus or
   const { ManualDialogueApplication } = await import("../dmicher-master-screen/scripts/apps/manual-dialogue.js");
   globalThis.Hooks = { callAll: () => { throw new Error("must not emit"); } };
   const app = new ManualDialogueApplication({ dialogue: manualDialogueData(f.dialogue, { includeSignalIds: true }), sourceName: "NPC", invitationId: "one", gmPreview: true });
+  assert.equal((await app._prepareContext({})).messages[0].imageAlignment, "right");
   ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "next", pageId: "start" } });
   assert.equal(app.pageId, "last");
+  assert.deepEqual((await app._prepareContext({})).messages.map((message) => message.text), ["Opening", "Continue", "Conclusion"]);
   ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", pageId: "start" } });
   assert.equal(app.finished, false);
   ManualDialogueApplication.answer.call(app, null, { dataset: { responseId: "finish", pageId: "last" } });
   assert.equal(app.finished, true);
   assert.equal((await app._prepareContext({})).signalId, "alarm.start");
+  assert.deepEqual((await app._prepareContext({})).messages.map((message) => message.text), ["Opening", "Continue", "Conclusion", "Accept"]);
   ManualDialogueApplication.leave.call(app);
   assert.equal(app.closed, true);
   assert.equal(f.runtime.halted, true);

@@ -218,7 +218,7 @@ test("a script admission callback receives its already-opened sessions without e
   assert.equal(f.messages.length, 2);
 });
 
-test("script dialogue waits for real close and scoped pause excludes only its exact sessions", async () => {
+test("script dialogue waits for completion and scoped pause excludes only its exact sessions", async () => {
   const f = fixture(), sessions = await f.service.startScriptDialogues(f.command), now = Date.now();
   assert.equal(scriptDialoguesPending(f.runtime(), sessions, now), true);
   assert.equal(isInteractionPaused(f.scene, f.command.target, now, { excludeDialogueSessions: sessions }), false);
@@ -231,7 +231,8 @@ test("script dialogue waits for real close and scoped pause excludes only its ex
   assert.equal(scriptDialoguesPending(f.runtime(), sessions, now), true);
   assert.equal(isInteractionPaused(f.scene, f.command.target, now), false);
   session.status = "finished";
-  assert.equal(scriptDialoguesPending(f.runtime(), sessions, now), true);
+  assert.equal(scriptDialoguesPending(f.runtime(), sessions, now), false);
+  assert.equal(isInteractionPaused(f.scene, f.command.target, now), false);
   session.status = "left";
   assert.equal(scriptDialoguesPending(f.runtime(), sessions, now), false);
   session.status = "active"; session.expiresAt = now - 1;
@@ -248,13 +249,13 @@ test("another character's session and a shop keep the source paused despite scri
   assert.equal(isInteractionPaused(f.scene, f.command.target, Date.now(), { excludeDialogueSessions: own }), true);
 });
 
-test("script wait modes leave other participants open after any first close", async () => {
+test("script wait modes leave other participants open after any first completion", async () => {
   const f = fixture(), refs = await f.service.startScriptDialogues({ ...f.command, tokenUuids: [f.pc.uuid, f.second.uuid] });
   const now = Date.now(), sessions = Object.values(f.runtime().dialogueSessions);
   assert.equal(scriptDialoguesPending(f.runtime(), refs, now, "all"), true);
   assert.equal(scriptDialoguesPending(f.runtime(), refs, now, "first"), true);
   assert.equal(scriptDialoguesPending(f.runtime(), refs, now, "none"), false);
-  sessions[1].status = "left";
+  sessions[1].status = "finished";
   assert.equal(scriptDialoguesPending(f.runtime(), refs, now, "first"), false);
   assert.equal(scriptDialoguesPending(f.runtime(), refs, now, "all"), true);
   assert.equal(sessions[0].status, "active");

@@ -11,7 +11,7 @@ export function manualDialogueData(source, { includeSignalIds = false } = {}) {
   if (!Array.isArray(source?.pages)) throw new Error(localizedMessage("У диалога пока нет страниц."));
   const dialogue = normalizeDialogueAsset(source);
   return { id: dialogue.id, name: dialogue.name, startPageId: dialogue.startPageId,
-    pages: dialogue.pages.map((page) => ({ id: page.id, text: page.text, art: page.art,
+    pages: dialogue.pages.map((page) => ({ id: page.id, text: page.text, art: page.art, imageAlignment: page.imageAlignment,
       responses: page.responses.map((response) => ({ id: response.id, label: response.label,
         nextPageId: response.nextPageId, signalId: includeSignalIds ? response.signalId : "" })) })) };
 }

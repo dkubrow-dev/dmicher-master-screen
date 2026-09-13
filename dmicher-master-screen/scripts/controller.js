@@ -1,5 +1,7 @@
 import { message as localizedMessage } from "./localization.js";
 import { createObjectDecorations } from "./apps/object-decorations.js";
+import { createDialogueMarkers } from "./apps/dialogue-markers.js";
+import { listListeningSessions } from "./dialogue-listeners.js";
 import { MODULE_ID, getState } from "./model.js";
 import { asArray, currentScene, getDefinition, getRuntime, getDefinitions, getRuntimes, requireGM, saveDefinition, getObjectTags, saveObjectTags } from "./store.js";
 import { generics } from "./generics.js";
@@ -35,6 +37,7 @@ export class ScreenController {
     this.selectedGroups = new Map();
     this.shopWindows = new Map();
     this.dialogueWindows = new Map();
+    this.dialogueMarkers = createDialogueMarkers();
     this.objectInfoWindows = new Map();
     this.objectBehaviorWindows = new Map();
     this.objectMenu = new ObjectContextMenu();
@@ -115,15 +118,22 @@ export class ScreenController {
     } else {
       const actorTokenId = this.getActingTokenId(undefined, descriptor.type === "Token" ? descriptor.id : undefined);
       const actorToken = scene.tokens?.get(actorTokenId);
-      items = listAvailableInteractions(scene, descriptor, actorToken, game.user).map((entry) => ({
-        label: entry.kind === "shop" ? `${ru ? "Торг" : "Trade"}: ${entry.name}` : entry.kind === "dialogue" ? `${entry.paused ? (ru ? "Продолжить диалог" : "Resume dialogue") : (ru ? "Диалог" : "Dialogue")}: ${entry.name}` : entry.name,
+      items = this.getAvailableInteractions(scene, descriptor, actorToken).map((entry) => ({
+        label: entry.kind === "shop" ? `${ru ? "Торг" : "Trade"}: ${entry.name}` : entry.kind === "listen" ? `${ru ? "Слушать диалог" : "Listen to dialogue"}: ${entry.name}` : entry.kind === "dialogue" ? `${entry.paused ? (ru ? "Продолжить диалог" : "Resume dialogue") : (ru ? "Диалог" : "Dialogue")}: ${entry.name}` : entry.name,
         action: () => entry.kind === "shop" ? this.openShop(descriptor, { actorTokenId, groupId: entry.groupId, shopId: entry.id })
           : entry.kind === "dialogue" ? this.openDialogue(entry.id, actorTokenId, { groupId: entry.groupId, target: descriptor })
+            : entry.kind === "listen" ? this.openListeningDialogue(entry, actorTokenId)
             : this.requestNamedInteraction(entry.id, actorTokenId, { groupId: entry.groupId })
       }));
     }
     if (!items.length) { this.objectMenu.close(); return false; }
     this.objectMenu.open(items, position); return true;
+  }
+  getAvailableInteractions(scene, descriptor, actorToken) {
+    const choices = listAvailableInteractions(scene, descriptor, actorToken, game.user);
+    if (descriptor.type !== "Token" || !actorToken) return choices;
+    return choices.concat(listListeningSessions(scene, { targetTokenId: descriptor.id, actorTokenId: actorToken.id, user: game.user })
+      .map((session) => ({ ...session, kind: "listen", id: session.sessionId })));
   }
   async openAsset(kind, id) {
     requireGM();
@@ -261,7 +271,7 @@ export class ScreenController {
   async interact(tokenId, sourceTokenId, { targetType = "Token", groupId } = {}) {
     const scene = currentScene(), target = { type: targetType, id: tokenId };
     sourceTokenId = this.getActingTokenId(sourceTokenId, targetType === "Token" ? tokenId : undefined);
-    const choices = listAvailableInteractions(scene, target, scene?.tokens.get(sourceTokenId), game.user).filter((entry) => !groupId || entry.groupId === groupId);
+    const choices = this.getAvailableInteractions(scene, target, scene?.tokens.get(sourceTokenId)).filter((entry) => !groupId || entry.groupId === groupId);
     if (!choices.length) throw new Error(localizedMessage("Взаимодействие недоступно для этого персонажа."));
     this.interaction = new InteractionApplication(this, { sceneId: scene.id, tokenId, sourceTokenId, targetType, groupId });
     return this.interaction.render({ force: true });
@@ -297,6 +307,20 @@ export class ScreenController {
     const key = `${sceneId}:${runId}:${dialogueId}:${target?.type}:${target?.id}:${actorTokenId}`;
     const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
       () => new DialogueApplication(this.dialogues, { ...command, initialView }), { moduleId: MODULE_ID });
+    this.dialogueWindows.set(key, app);
+    return app;
+  }
+  async openListeningDialogue(session, actorTokenId) {
+    const scene = currentScene();
+    actorTokenId = this.getActingTokenId(actorTokenId, session.actorTokenId);
+    if (!actorTokenId) throw new Error(localizedMessage("Выберите своего персонажа на карте"));
+    const command = { sceneId: scene.id, groupId: session.groupId, sessionId: session.sessionId, runId: session.runId, actorTokenId };
+    const initialView = await this.dialogues.requestListen(command);
+    if (currentScene()?.id !== command.sceneId) return null;
+    const key = `${scene.id}:listener:${session.sessionId}:${actorTokenId}`;
+    const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
+      () => new DialogueApplication(this.dialogues, { ...command, actorTokenId: session.actorTokenId, listenerTokenId: actorTokenId,
+        dialogueId: session.dialogueId, target: session.target, role: "listener", initialView }), { moduleId: MODULE_ID });
     this.dialogueWindows.set(key, app);
     return app;
   }
@@ -342,6 +366,7 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
+    this.dialogueMarkers.sync(scene);
     const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
     if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
     for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
@@ -366,5 +391,5 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     globalThis.ui?.controls?.render();
   }
-  async dispose() { this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.cancelPick?.(); await this.closeScreen(); }
+  async dispose() { this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.dialogueMarkers.clear(); this.cancelPick?.(); await this.closeScreen(); }
 }
