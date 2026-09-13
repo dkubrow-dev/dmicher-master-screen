@@ -41,10 +41,12 @@ export class ScreenController {
     this.workspace = new WorkspaceManager();
     this.runtime = new GroupRuntime({ visuals: createObjectDecorations(), chat: generics.chat, onChange: (scene) => this.changed(scene),
       isConstructor: () => this.mode === "constructor",
+      startScriptDialogues: (command, options) => this.dialogues.startScriptDialogues(command, options),
       emitSignal: (scene, signal) => this.signals.emit(scene, signal),
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
     this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor" });
-    this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
+    this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene),
+      openScriptWindow: (command, initialView) => this.openScriptDialogue(command, initialView) });
     this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
     this.hooks = [];
   }
@@ -163,14 +165,7 @@ export class ScreenController {
     return this.stateChooser;
   }
   async changeStates(changes) {
-    requireGM(); const scene = currentScene();
-    for (const { groupId, stateId } of changes) {
-      const definition = getDefinition(scene, { groupId });
-      if (!getState(definition, stateId)) throw new Error(localizedMessage("Состояние больше не существует."));
-    }
-    for (const { groupId, stateId } of changes) {
-      if (getRuntime(scene, { groupId }).stateId !== stateId) await this.runtime.enter(scene, stateId, { groupId, force: true, preserveStatus: true });
-    }
+    requireGM(); return this.runtime.changeStates(currentScene(), changes);
   }
   startAll() { return this.runtime.startAll(currentScene()); }
   haltAll() { return this.runtime.haltAll(currentScene()); }
@@ -287,6 +282,16 @@ export class ScreenController {
     const key = `${scene.id}:${runtime.runId}:${dialogueId}:${target?.type}:${target?.id}:${actorTokenId}`;
     const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
       () => new DialogueApplication(this.dialogues, { sceneId: scene.id, groupId: runtime.groupId, dialogueId, target, actorTokenId }), { moduleId: MODULE_ID });
+    this.dialogueWindows.set(key, app);
+    return app;
+  }
+  openScriptDialogue(command, initialView) {
+    // The service has already opened and authenticated this session. Reuse the
+    // ordinary window key so a manual click cannot create a second conversation.
+    const { sceneId, runId, dialogueId, target, actorTokenId } = command;
+    const key = `${sceneId}:${runId}:${dialogueId}:${target?.type}:${target?.id}:${actorTokenId}`;
+    const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
+      () => new DialogueApplication(this.dialogues, { ...command, initialView }), { moduleId: MODULE_ID });
     this.dialogueWindows.set(key, app);
     return app;
   }

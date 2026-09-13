@@ -71,6 +71,12 @@ export class ObjectBehaviorApplication extends ObjectForm {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-behavior"), position: { width: 790, height: 740 }, window: { resizable: true } };
   tab = "transitions"; selectedScript = null; selectedFeature = null; signalDraft = null; subscriptionDraft = null; validation = null;
   get title() { return t("Поведение объекта", "Object behavior"); }
+  scriptParameterContext(context = this.context()) {
+    const ownDialogues = new Set((this.draft.dialogues ?? []).map((entry) => entry.dialogueId));
+    return { ownerKey: this.ownerKey, document: context.document, definitions: context.definitions,
+      dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
+      catalog: getSignalCatalog(context.scene) };
+  }
   activeScript() { const ref = this.selectedScript; return !ref ? null : ref.kind === "initial" ? this.draft.initialScript : ref.kind === "transition" ? this.draft.transitionScripts?.[ref.stateId] : this.draft.scripts?.find((script) => script.stateId === ref.stateId); }
   setActiveScript(script) {
     const ref = this.selectedScript;
@@ -92,7 +98,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
       body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p><div class="ms-initial-script-actions">${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}</div>`) : "";
       body += definition ? this.stateScriptTable(definition, this.tab === "transitions" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
       const script = this.activeScript();
-      if (script) body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, getSignalCatalog(context.scene), { ownerKey: this.ownerKey, document: context.document, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) });
+      if (script) { const scriptContext = this.scriptParameterContext(context); body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, scriptContext.catalog, { ...scriptContext, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) }); }
     }
     return { body: layout(`${this.draft.playerCharacter ? `<p class="ms-note">${t("Автоматизация персонажа игрока отключена.", "Player-character automation is disabled.")}</p>` : ""}${body}`, nav) };
   }
@@ -124,11 +130,11 @@ export class ObjectBehaviorApplication extends ObjectForm {
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = { signal: this.events.signal };
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
-    bindScriptParameters(this.element, () => ({ document: this.context().document, catalog: getSignalCatalog(this.context().scene), ownerKey: this.ownerKey }), () => { this.dirty = true; }, listeners);
+    bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
     const disposeSignalFields = bindSignalFields(this.element, { getSignal: () => this.signalDraft, onChange: () => { this.capture(); this.dirty = true; }, onError: notifyError });
     this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
     this.element.addEventListener("change", (event) => { const target = event.target; try {
-      if (target.matches("[data-script-kind],[data-script-emoji]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; if (target.matches("[data-script-kind]")) step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); else step.parameters.emoji = target.value; this.dirty = true; void this.render({ force: true }); }
+      if (target.matches("[data-script-kind]")) { this.capture(); const step = this.activeScript().steps[Number(target.dataset.step)]; step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); this.dirty = true; void this.render({ force: true }); }
       else if (target.matches('[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
     } catch (error) { notifyError(error); } }, listeners);
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);

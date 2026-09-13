@@ -1,5 +1,5 @@
-import { message as localizedMessage } from "./localization.js";
-import { objectCenter, crossesRectangle } from "./scene-object-geometry.js";
+import { message as localizedMessage, text } from "./localization.js";
+import { objectCenter, crossesRectangle, sceneObjectBounds } from "./scene-object-geometry.js";
 import { MODULE_ID, getState, emptyRuntime } from "./model.js";
 import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
 import { createFoundryEffects } from "./effects.js";
@@ -12,6 +12,8 @@ import { ObjectScriptRuntime, scriptProgressKey, initialScriptProgress } from ".
 import { createCombatAdapter } from "./combat-adapter.js";
 import { getSignalCatalog } from "./signal-catalog.js";
 import { SCENE_OBJECT_TYPES, SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
+import { DEFAULT_EMOTION_SIZE, normalizeStateTransitions } from "./script-model.js";
+import { appendFollowWaypoint } from "./script-target-movement.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -20,8 +22,8 @@ const uuid = (scene) => scene.uuid ?? `Scene.${scene.id}`;
 /** Owns group lifetimes. Scripts and signals have separate executors and never own group state. */
 export class GroupRuntime {
   constructor({ onChange = () => {}, onWorkspace = async () => {}, emitSignal = async () => ({ allowed: true }), chat,
-    effects, visuals, now = () => Date.now(), isConstructor = () => false, combat } = {}) {
-    Object.assign(this, { onChange, onWorkspace, emitSignal, now, isConstructor });
+    effects, visuals, now = () => Date.now(), isConstructor = () => false, combat, startScriptDialogues } = {}) {
+    Object.assign(this, { onChange, onWorkspace, emitSignal, now, isConstructor, startScriptDialogues });
     this.visuals = visuals;
     this.effects = effects ?? createFoundryEffects(chat);
     this.chat = chat; this.hooks = []; this.previousPositions = new Map(); this.tickTimes = new Map();
@@ -49,6 +51,7 @@ export class GroupRuntime {
     for (const type of SCENE_OBJECT_TYPES) {
       on(`refresh${type}`, (object) => this.refreshObject(object.document));
       on(`delete${type}`, (document) => this.visuals?.remove(document));
+      on(`update${type}`, (document) => { void this.recordFollowTarget(document).catch(error => this.report(error)); });
     }
     on("preUpdateToken", (token, changes) => { if ("x" in changes || "y" in changes) this.previousPositions.set(token.uuid ?? token.id, objectCenter(token, token.parent)); });
     on("updateToken", (token, changes) => {
@@ -73,7 +76,7 @@ export class GroupRuntime {
     }
     return saveRuntime(scene, state);
   }
-  currentObject(scene, runId, target, { ignoreInteractionPause = false } = {}) {
+  currentObject(scene, runId, target, { ignoreInteractionPause = false, scriptKey, excludeDialogueSessions = [] } = {}) {
     if (!this.owns(scene, runId)) return false;
     const run = this.scriptState(scene, runId), binding = getObjectBindings(scene).bindings[objectKey(target)];
     if (!run) return false;
@@ -81,8 +84,34 @@ export class GroupRuntime {
     if (run.manual && objectKey(run.target) !== objectKey(target)) return false;
     if (!run.manual && [...this.manualRuns.values()].some((manual) => manual.sceneId === scene.id && objectKey(manual.target) === objectKey(target))) return false;
     if (!run.manual && (!binding || binding.groupId !== run.groupId || run.disabledObjects.includes(objectKey(target)))) return false;
-    if (!ignoreInteractionPause && isInteractionPaused(scene, target)) return false;
+    if (!ignoreInteractionPause && this.scriptInteractionPaused(scene, run, target, scriptKey, excludeDialogueSessions)) return false;
     return true;
+  }
+  scriptInteractionPaused(scene, run, target, scriptKey, extraReferences = []) {
+    return isInteractionPaused(scene, target, Date.now(), { excludeDialogueSessions: [...(run?.scriptStates?.[scriptKey]?.dialogueSessions ?? []), ...extraReferences] });
+  }
+  /** Capture every native update before entering the Scene queue. Keeping the
+   * actual turns prevents a 100 ms tick or interaction pause from cutting corners. */
+  async recordFollowTarget(document) {
+    const scene = document?.parent;
+    if (!scene || !this.owns(scene) || scene.id !== globalThis.canvas?.scene?.id) return;
+    const bounds = sceneObjectBounds(document, scene, { useRendered: false });
+    if (!bounds) return;
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    const targetUuid = document.uuid ?? `${scene.uuid ?? `Scene.${scene.id}`}.${document.documentName}.${document.id}`;
+    return withSceneLock(scene, async () => {
+      for (const run of [...getRuntimes(scene), ...this.manualRuns.values()]) {
+        if (!this.owns(scene, run.runId)) continue;
+        const state = this.scriptState(scene, run.runId); let changed = false;
+        for (const progress of Object.values(state.scriptStates ?? {})) {
+          const follow = progress.action?.follow;
+          if (!follow || follow.targetUuid !== targetUuid || ["failed", "done", "uncertain"].includes(progress.status)) continue;
+          try { changed = appendFollowWaypoint(follow, point) || changed; }
+          catch (error) { progress.status = "failed"; state.error = error.message; changed = true; this.report(error); }
+        }
+        if (changed) await this.saveScriptState(scene, state);
+      }
+    });
   }
   refreshObject(object) {
     if (!object) return;
@@ -92,7 +121,8 @@ export class GroupRuntime {
       ...[...this.manualRuns.values(), ...this.manualVisuals.values()].filter((run) => run.sceneId === scene?.id)];
     const prefix = `${objectKey(target)}:`, progress = runs.flatMap((run) => Object.entries(run.scriptStates ?? {}).filter(([key]) => key.startsWith(prefix)).map(([, value]) => value)).filter(Boolean);
     const latest = (field) => progress.reduce((selected, entry) => Number(entry[`${field}At`] ?? 0) > Number(selected?.[`${field}At`] ?? 0) ? entry : selected, null);
-    this.visuals?.update(object, { emoji: latest("emoji")?.emoji ?? "", bubble: latest("bubble")?.bubble ?? null });
+    const emotion = latest("emoji");
+    this.visuals?.update(object, { emoji: emotion?.emoji ?? "", emojiSize: emotion?.emojiSize ?? DEFAULT_EMOTION_SIZE, bubble: latest("bubble")?.bubble ?? null });
   }
   refresh(scene) {
     if (scene?.id !== globalThis.canvas?.scene?.id) return;
@@ -120,21 +150,26 @@ export class GroupRuntime {
     }
     return parameters;
   }
-  async enter(scene, stateId, { groupId = "main", force = false, restart = false, expectedRunId, signalContext, preserveStatus = false } = {}) {
-    this.requireAuthority(scene);
+  prepareStateChange(scene, stateId, { groupId = "main", force = false, restart = false, expectedRunId, signalContext, preserveStatus = false } = {}) {
     const previous = getRuntime(scene, { groupId }), group = getDefinition(scene, { groupId });
     stateId ??= previous.stateId ?? group.entryStateId;
     const prepared = getState(group, stateId); if (!prepared) throw new Error(localizedMessage("Состояние не найдено."));
     if (expectedRunId && previous.runId !== expectedRunId) return null;
-    if (!force && !restart && !previous.halted && !isSceneAutomationHalted(scene) && previous.stateId === stateId) return previous;
+    if (!force && !restart && !previous.halted && !isSceneAutomationHalted(scene) && previous.stateId === stateId) return { unchanged: previous };
     const starting = !preserveStatus && (restart || !previous.runId || previous.halted);
     const generation = executionGeneration(scene, groupId), sceneGeneration = sceneExecutionGeneration(scene);
-    const parameters = await this.validateChange(scene, group, prepared, previous, starting, signalContext);
     const active = preserveStatus ? Boolean(previous.runId && !previous.halted) : true;
-    const run = await withSceneLock(scene, async () => {
+    return { groupId, stateId, group, prepared, previous, starting, generation, sceneGeneration, active, preserveStatus, signalContext };
+  }
+  assertStateChangeCurrent(scene, plan) {
+    const { groupId, previous, group, generation, sceneGeneration } = plan, current = getRuntime(scene, { groupId });
+    if (current.runId !== previous.runId || current.stateId !== previous.stateId || current.halted !== previous.halted || getDefinition(scene, { groupId }).revision !== group.revision || executionGeneration(scene, groupId) !== generation || sceneExecutionGeneration(scene) !== sceneGeneration) throw new Error(localizedMessage("Группа изменилась во время проверки. Повторите команду."));
+  }
+  async commitStateChange(scene, plan, admitted = () => {}) {
+    const { groupId, stateId, group, prepared, previous, generation, sceneGeneration, active, preserveStatus } = plan;
+    return withSceneLock(scene, async () => {
       this.requireAuthority(scene);
-      const current = getRuntime(scene, { groupId });
-      if (current.runId !== previous.runId || current.stateId !== previous.stateId || getDefinition(scene, { groupId }).revision !== group.revision || executionGeneration(scene, groupId) !== generation || sceneExecutionGeneration(scene) !== sceneGeneration) throw new Error(localizedMessage("Группа изменилась во время проверки. Повторите команду."));
+      admitted(); this.assertStateChangeCurrent(scene, plan);
       const snapshot = materializeState(scene, group, prepared);
       const next = { ...emptyRuntime(groupId), groupId, stateId, state: snapshot, runId: active ? randomId() : previous.runId,
         halted: preserveStatus ? previous.halted : false, haltedAt: preserveStatus ? previous.haltedAt : 0,
@@ -148,16 +183,81 @@ export class GroupRuntime {
       finishHalt(scene, generation, groupId); notifyExecutionChange(scene);
       this.tickTimes.set(`${scene.id}:${groupId}`, this.now()); return next;
     });
+  }
+  async completeStateChange(scene, plan, run, admitted = () => {}) {
+    const { active, groupId, starting, signalContext, parameters } = plan;
+    admitted();
     if (active) {
       await this.once(scene, run.runId, "workspace", () => this.onWorkspace(scene, clone(run.state.workspace), { runId: run.runId, groupId }));
+      admitted();
       if (run.state.pause) await this.once(scene, run.runId, "pause", () => game.togglePause(true, { broadcast: true }));
+      admitted();
       if (run.state.sound) await this.once(scene, run.runId, "sound", () => this.effects.sound(run.state.sound));
-      for (const spawn of run.state.spawns) await this.once(scene, run.runId, `spawn:${spawn.id}`, () => this.effects.spawn(scene, spawn, run.runId, () => this.owns(scene, run.runId)));
+      admitted();
+      for (const spawn of run.state.spawns) {
+        await this.once(scene, run.runId, `spawn:${spawn.id}`, () => this.effects.spawn(scene, spawn, run.runId, () => this.owns(scene, run.runId)));
+        admitted();
+      }
     }
     this.refresh(scene);
     await this.emitSignal(scene, { emitterKey: `Group:${groupId}`, name: starting ? "started" : "transitioned", parameters,
       context: { ...signalContext, runId: run.runId, groupId, manual: !active } });
     return getRuntime(scene, { groupId });
+  }
+  async enter(scene, stateId, options = {}) {
+    this.requireAuthority(scene);
+    const plan = this.prepareStateChange(scene, stateId, options);
+    if (!plan || plan.unchanged) return plan?.unchanged ?? null;
+    plan.parameters = await this.validateChange(scene, plan.group, plan.prepared, plan.previous, plan.starting, plan.signalContext);
+    const run = await this.commitStateChange(scene, plan);
+    return this.completeStateChange(scene, plan, run);
+  }
+  /** Both manual selection and scripts preserve each group's automation status.
+   * Resolve and validate the entire selection before writes; later intervention
+   * stops the remainder but cannot undo transitions which have already completed. */
+  async changeStates(scene, transitions, { originRunId, admitted = () => {}, signalContext } = {}) {
+    const requireOrigin = admitted, applied = [];
+    const requireApplied = () => {
+      for (const { run, generation, sceneGeneration } of applied) {
+        const current = getRuntime(scene, { groupId: run.groupId });
+        if (current.runId !== run.runId || current.stateId !== run.stateId || current.halted !== run.halted
+          || executionGeneration(scene, run.groupId) !== generation || sceneExecutionGeneration(scene) !== sceneGeneration) {
+          throw new Error(localizedMessage("Группа изменилась во время проверки. Повторите команду."));
+        }
+      }
+    };
+    admitted = () => {
+      if (originRunId && !this.owns(scene, originRunId)) throw new Error(text("Скрипт относится к прежнему запуску автоматизации.", "The script belongs to a previous automation run."));
+      requireOrigin(); requireApplied();
+    };
+    this.requireAuthority(scene); admitted();
+    const pairs = normalizeStateTransitions(transitions), originGroupId = originRunId ? this.scriptState(scene, originRunId)?.groupId : null;
+    const plans = pairs.map(({ groupId, stateId }) => this.prepareStateChange(scene, stateId, { groupId, force: true, preserveStatus: true, signalContext }))
+      .filter((plan) => plan.previous.stateId !== plan.stateId)
+      .sort((a, b) => Number(a.groupId === originGroupId) - Number(b.groupId === originGroupId));
+    for (const plan of plans) {
+      admitted();
+      plan.parameters = await this.validateChange(scene, plan.group, plan.prepared, plan.previous, false, signalContext);
+      admitted();
+    }
+    await withSceneLock(scene, async () => {
+      this.requireAuthority(scene); admitted();
+      for (const plan of plans) this.assertStateChangeCurrent(scene, plan);
+    });
+    const result = [];
+    for (const plan of plans) {
+      admitted();
+      const run = await this.commitStateChange(scene, plan, admitted);
+      applied.push({ run, generation: plan.generation, sceneGeneration: plan.sceneGeneration });
+      // The final own-group transition deliberately retires the originating run.
+      // New-state effects belong to the new run; old script steps cannot resume.
+      const guard = plan.groupId === originGroupId ? requireApplied : admitted;
+      if (plan.groupId === originGroupId && this.manualRuns.delete(originRunId)) {
+        this.tickTimes.delete(`${scene.id}:${originRunId}`); notifyExecutionChange(scene);
+      }
+      result.push(await this.completeStateChange(scene, plan, run, guard));
+    }
+    return result;
   }
   async halt(scene, { groupId = "main", all = false } = {}) {
     this.requireAuthority(scene);
@@ -244,8 +344,6 @@ export class GroupRuntime {
           for (const { target } of objects) {
             if (!this.currentObject(scene, run.runId, target, { ignoreInteractionPause: true })) continue;
             let current = this.scriptState(scene, run.runId); const key = objectKey(target);
-            if (isInteractionPaused(scene, target)) { if (!current.interactionClocks[key]) { current.interactionClocks[key] = { at: now }; await this.saveScriptState(scene, current); } continue; }
-            let budget = elapsed; if (current.interactionClocks[key]) { current.interactionClocks[key] = null; await this.saveScriptState(scene, current); budget = 0; }
             const object = getSceneObject(scene, target);
             const transition = run.manual ? run.script : run.state.transitions.find((script) => objectKey(script.target) === key);
             let slot = run.manual ? "initial" : "transition", script = transition;
@@ -255,6 +353,10 @@ export class GroupRuntime {
               script = run.state.scripts.find((entry) => objectKey(entry.target) === key); slot = "routine";
             }
             if (!script) continue;
+            if (this.scriptInteractionPaused(scene, current, target, scriptProgressKey(target, script, slot))) {
+              if (!current.interactionClocks[key]) { current.interactionClocks[key] = { at: now }; await this.saveScriptState(scene, current); } continue;
+            }
+            let budget = elapsed; if (current.interactionClocks[key]) { current.interactionClocks[key] = null; await this.saveScriptState(scene, current); budget = 0; }
             try { const job = await this.scripts.tick(scene, this.scriptState(scene, run.runId), object, script, budget, { slot }); if (job) jobs.push(job); }
             catch (error) { this.report(error); current = this.scriptState(scene, run.runId); if (current) {
               const progress = current.scriptStates[scriptProgressKey(target, script, slot)] ??= initialScriptProgress(script); progress.status = "failed";

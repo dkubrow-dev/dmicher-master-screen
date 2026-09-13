@@ -70,6 +70,21 @@ test("speech has explicit lifetime, bubble and owned message cleanup", async () 
   await f.tick(); assert.equal(f.progress().bubble.text, "Hello"); assert.equal(f.progress().bubble.fontSize, 30); assert.deepEqual(f.progress().messageIds, ["message"]);
   await f.tick(); assert.equal(f.progress().status, "ready"); await f.tick(); assert.equal(f.progress().status, "done"); assert.equal(f.progress().bubble, null); assert.ok(f.calls.some((c) => c[0] === "remove"));
 });
+test("emotion size persists with its symbol across executor replacement and expiry clears the symbol", async () => {
+  const f = fixture({ steps: [step(1, "emotion", { emoji: "!", size: 44.5, duration: 2 }, [2]), step(2, "emotion", { emoji: "?", size: 19.25 })] });
+  await f.tick();
+  assert.equal(f.progress().emoji, "!"); assert.equal(f.progress().emojiSize, 44.5);
+  const at = f.progress().emojiAt, replacement = new ObjectScriptRuntime(f.runtime);
+  await replacement.tick(f.scene, f.state(), f.object, f.script, 1);
+  assert.equal(f.progress().emojiAt, at); assert.equal(f.progress().emojiSize, 44.5);
+  assert.equal(f.progress().action.remainingMs, 500);
+  await replacement.tick(f.scene, f.state(), f.object, f.script, 0.5);
+  assert.equal(f.progress().emoji, "?"); assert.equal(f.progress().emojiSize, 19.25);
+  assert.ok(f.progress().emojiAt > at); assert.equal(f.progress().status, "done");
+  const timed = fixture({ steps: [step(1, "emotion", { emoji: "!", size: 12.5, duration: 1 })] });
+  await timed.tick(); await timed.tick();
+  assert.equal(timed.progress().emoji, ""); assert.equal(timed.progress().status, "done");
+});
 test("combat consumes one configured budget, confirms new turns, skips and resumes to fixed target", async () => {
   let turn = 1, decision = "continue", finished = 0, confirmations = 0;
   const combat = { context: () => ({ id: "fight", turnKey: `fight:${turn}`, isTurn: true }), notify: async () => {}, confirmAction: async () => { confirmations++; return decision; }, finishTurn: async () => { finished++; } };

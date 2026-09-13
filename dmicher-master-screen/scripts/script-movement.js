@@ -59,7 +59,7 @@ export function planScriptMovement(scene, object, parameters) {
 
 /** Rebase each portion on the current document. A GM may move/rotate between turns;
  * the final destination and the remaining planned time stay unchanged. */
-export async function advanceScriptMovement(scene, object, movement, seconds, { isCurrent = () => true } = {}) {
+export async function advanceScriptMovement(scene, object, movement, seconds, { isCurrent = () => true, ignoreObstacles = false } = {}) {
   if (!isCurrent()) return { consumed: 0, done: false };
   const spent = Math.min(Math.max(0, seconds * 1000), movement.remainingMs);
   const ratio = movement.remainingMs > 0 ? spent / movement.remainingMs : 1;
@@ -94,7 +94,7 @@ export async function advanceScriptMovement(scene, object, movement, seconds, { 
     const sy = object.shape.height ? (changes["shape.height"] ?? object.shape.height) / object.shape.height : 1;
     changes["shape.points"] = Array.from(object.shape.points).map((n, i) => n * (i % 2 ? sy : sx));
   }
-  if (object.documentName === "Token" && ("x" in changes || "y" in changes)) {
+  if (!ignoreObstacles && object.documentName === "Token" && ("x" in changes || "y" in changes)) {
     const origin = object.getCenterPoint?.() ?? { x: field(object, "x") + field(object, "width") * gridSize(scene) / 2, y: field(object, "y") + field(object, "height") * gridSize(scene) / 2 };
     const destination = { x: origin.x + (changes.x ?? object.x) - object.x, y: origin.y + (changes.y ?? object.y) - object.y };
     if (object.object?.checkCollision?.(destination, { origin, type: "move", mode: "any" })) throw new Error(localizedMessage("Путь скрипта пересекает стену."));

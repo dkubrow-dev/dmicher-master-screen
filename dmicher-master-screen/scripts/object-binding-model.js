@@ -1,6 +1,6 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { normalizeConditions, normalizeTags } from "./model.js";
-import { normalizeScript, normalizeScripts } from "./script-model.js";
+import { normalizeScript, normalizeScripts, normalizeStateTransitions } from "./script-model.js";
 import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js";
 import { interactionType } from "./interaction-model.js";
 import { validateParameters } from "./signal-types.js";
@@ -64,10 +64,24 @@ export function validateBindingReferences(binding, { definitions, signals, macro
   checkStates(Object.keys(binding.transitionScripts)); checkStates(binding.scripts.map((script) => script.stateId));
   const ownerKey = objectKey(binding);
   for (const step of bindingScriptSteps(binding)) {
+    // Import remapping can merge two formerly distinct destination groups, so
+    // recheck uniqueness along with references before the complete draft is saved.
+    if (step.kind === "state") for (const transition of normalizeStateTransitions(step.parameters.transitions)) {
+      const destination = definitions.find((entry) => entry.groupId === transition.groupId);
+      if (!destination?.states.some((state) => state.id === transition.stateId)) {
+        fail(text("Переход скрипта ссылается на отсутствующую группу или состояние.", "The script transition refers to a missing group or state."));
+      }
+    }
     if (step.kind === "signal") {
       const signal = signals.find((entry) => entry.id === step.parameters.signalId && entry.emitterKey === ownerKey);
       if (!signal) fail(localizedMessage("Объект может испустить только собственный объявленный сигнал."));
       validateParameters(signal, step.parameters.parameters);
+    }
+    if (step.kind === "dialogue" && step.parameters.dialogueId) {
+      const id = step.parameters.dialogueId;
+      if (!binding.dialogues.some((reference) => reference.dialogueId === id) || !assets.dialogues.some((dialogue) => dialogue.id === id)) {
+        fail(text("Скрипт может запускать только диалог, прикреплённый к этому объекту.", "A script can start only a dialogue attached to this object."));
+      }
     }
     if (step.kind === "macro" && !macros.some((macro) => macro.ownerKey === ownerKey && macro.uuid === step.parameters.macroUuid)) fail(localizedMessage("Скрипт может вызвать только макрос своего объекта."));
   }

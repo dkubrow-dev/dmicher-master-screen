@@ -3,10 +3,24 @@ import { escapeHTML as e, parameterRow as row } from "./form-fields.js";
 import { scriptStepTemplate } from "../script-model.js";
 import { readObjectGeometry, scriptObjectCapabilities } from "../script-movement.js";
 import { fieldInitialValue } from "../signal-types.js";
+import { openEmojiPicker } from "./emoji-picker.js";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const clone = (value) => structuredClone(value);
 const own = (object, key, value) => Object.defineProperty(object, key, { value, writable: true, configurable: true, enumerable: true });
+
+function stateTransitionFields(transitions, definitions) {
+  const used = new Set(transitions.map((pair) => pair.groupId));
+  const options = (items, selected) => items.map(([id, name]) => `<option value="${e(id)}"${id === selected ? " selected" : ""}>${e(name)}</option>`).join("");
+  return `<table class="ms-state-pairs"><thead><tr><th>${t("Группа", "Group")}</th><th>${t("Состояние", "State")}</th><th></th></tr></thead><tbody>${transitions.map((pair, index) => {
+    const group = definitions.find((item) => item.groupId === pair.groupId);
+    const groups = definitions.filter((item) => item.groupId === pair.groupId || !used.has(item.groupId)).map((item) => [item.groupId, item.groupName]);
+    if (!group) groups.unshift([pair.groupId, t(`Недоступна: ${pair.groupId}`, `Unavailable: ${pair.groupId}`)]);
+    const states = (group?.states ?? []).map((state) => [state.id, state.name]);
+    if (!states.some(([id]) => id === pair.stateId)) states.unshift([pair.stateId, t(`Недоступно: ${pair.stateId}`, `Unavailable: ${pair.stateId}`)]);
+    return `<tr><td><select data-script-state-group data-pair-index="${index}" aria-label="${t("Группа", "Group")}">${options(groups, pair.groupId)}</select></td><td><select data-script-state-value data-pair-index="${index}" aria-label="${t("Состояние", "State")}">${options(states, pair.stateId)}</select></td><td><button type="button" data-script-state-remove="${index}" aria-label="${t("Удалить переход", "Remove transition")}">×</button></td></tr>`;
+  }).join("")}</tbody></table><button type="button" data-script-state-add${definitions.some((item) => !used.has(item.groupId)) ? "" : " disabled"}>+ ${t("Группа", "Group")}</button>`;
+}
 
 /** Editor defaults are a presentation contract, not a migration of stored scenes.
  * Inactive mode fields stay in JSON; explicit null keeps an action disabled. */
@@ -83,7 +97,9 @@ function fields(parameters, context) {
       rows += group("chat", t("Чат", "Chat"), check(["chat", "enabled"], t("Включить", "Enable")) + (parameters.chat.enabled ? select(["chat", "timing"], t("Публикация", "Publish"), [["before", t("До реплики", "Before speech")], ["after", t("После реплики", "After speech")]]) + textParameterRow(["chat", "text"], t("Текст", "Text")) + tags(["chat", "allowTags"], t("Разрешённые теги", "Allowed tags")) + tags(["chat", "denyTags"], t("Исключённые теги", "Excluded tags")) + num(["chat", "range"], t("Дальность", "Range"), { min: 0, unit: t("ед.", "units") }) + check(["chat", "deleteAfter"], t("Удалить после реплики", "Delete after speech")) : ""));
       rows += group("bubble", t("Облачко", "Bubble"), check(["bubble", "enabled"], t("Включить", "Enable")) + (parameters.bubble.enabled ? textParameterRow(["bubble", "text"], t("Текст", "Text")) + num(["bubble", "fontSize"], t("Размер шрифта", "Font size"), { min: 1, step: "1", unit: "px" }) : "")); break;
     }
-    case "emotion": rows = input(["emoji"], t("Эмоция", "Emotion")) + row(t("Выбрать", "Choose"), `<select data-script-emoji data-index="${context.index}" data-step="${context.stepIndex}" aria-label="${t("Выбрать символ", "Choose symbol")}"><option value="">—</option>${["😀", "🙂", "😐", "😟", "😠", "😱", "😴", "❓", "❗", "💬", "❤️", "⚔️"].map((emoji) => `<option>${emoji}</option>`).join("")}</select>`) + num(["duration"], t("Длительность", "Duration"), sec); break;
+    case "emotion":
+      rows = row(t("Эмоция", "Emotion"), `<span class="ms-script-value ms-emotion-value"><input ${attrs(["emoji"])} aria-label="${t("Эмоция", "Emotion")}" value="${e(parameters.emoji)}"><button type="button" data-script-emoji-picker aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Выбрать эмоцию", "Choose emotion")}" title="${t("Выбрать эмоцию", "Choose emotion")}">☺</button></span>`)
+        + num(["size"], t("Размер", "Size"), { min: 0, unit: "px" }) + num(["duration"], t("Длительность", "Duration"), sec); break;
     case "sound": rows = input(["src"], t("Файл", "File")) + row(t("Выбрать", "Choose"), action("script-sound", t("Выбрать звук", "Choose sound"))) + num(["volume"], t("Громкость", "Volume"), { min: 0 }); break;
     case "signal": {
       const signals = (context.catalog?.signals ?? []).filter((signal) => signal.emitterKey === context.ownerKey), signal = signals.find((item) => item.id === parameters.signalId);
@@ -92,6 +108,29 @@ function fields(parameters, context) {
       rows += delays(); break;
     }
     case "macro": rows = select(["macroUuid"], t("Макрос", "Macro"), [["", "—"], ...(context.catalog?.macros ?? []).filter((item) => item.ownerKey === context.ownerKey).map((item) => [item.uuid, game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.uuid])]) + delays(); break;
+    case "state": rows = row(t("Переходы", "Transitions"), stateTransitionFields(parameters.transitions, context.definitions ?? [])); break;
+    case "approach":
+      rows = input(["targetUuid"], t("Объект (UUID)", "Object (UUID)"))
+        + num(["distance"], t("Расстояние", "Distance"), { min: 0, unit: t("ед.", "units") })
+        + select(["timeMode"], t("Режим", "Mode"), [["duration", t("Длительность", "Duration")], ["speed", t("Скорость", "Speed")]])
+        + (parameters.timeMode === "speed" ? num(["speed"], t("Скорость", "Speed"), { min: 0, unit: t("ед./сек.", "units/sec.") }) : num(["duration"], t("Длительность", "Duration"), sec));
+      break;
+    case "follow":
+      rows = input(["targetUuid"], t("Объект (UUID)", "Object (UUID)"))
+        + num(["minDistance"], t("Минимальное расстояние", "Minimum distance"), { min: 0, unit: t("ед.", "units") })
+        + num(["maxDistance"], t("Максимальное расстояние", "Maximum distance"), { min: 0, unit: t("ед.", "units") })
+        + num(["speed"], t("Скорость", "Speed"), { min: 0, unit: t("ед./сек.", "units/sec.") })
+        + select(["mode"], t("Режим", "Mode"), [["trajectory", t("По траектории", "Along trajectory")], ["direct", t("По прямой", "Straight line")]])
+        + select(["finishOn"], t("Завершать по", "Finish on"), [["arrival", t("Достижению цели", "Reaching the target")], ["state-change", t("Смене состояния", "State change")]]);
+      break;
+    case "dialogue": {
+      const dialogues = [...(context.dialogueOptions ?? [])].map((item) => [item.id, item.name]);
+      if (parameters.dialogueId && !dialogues.some(([id]) => id === parameters.dialogueId)) dialogues.push([parameters.dialogueId, t(`Недоступен: ${parameters.dialogueId}`, `Unavailable: ${parameters.dialogueId}`)]);
+      rows = select(["dialogueId"], t("Диалог", "Dialogue"), [["", "—"], ...dialogues])
+        + row(t("Персонажи", "Characters"), `<textarea ${attrs(["tokenUuids"], "lines")} aria-label="${t("UUID токенов, по одному в строке", "Token UUIDs, one per line")}" rows="3">${e(parameters.tokenUuids.join("\n"))}</textarea>`)
+        + select(["waitMode"], t("Ожидание", "Waiting"), [["all", t("Дожидаться всех диалогов", "Wait for all dialogues")], ["first", t("Дождаться завершения первого из диалогов", "Wait for the first dialogue to finish")], ["none", t("Не дожидаться завершения диалогов", "Do not wait for dialogues")]]);
+      break;
+    }
   }
   return table(rows);
 }
@@ -103,6 +142,8 @@ export function renderScriptParameters(step, context = {}) {
 /** Both editors share the same textarea value, which is also what Save reads.
  * Only the parameter table is replaced when conditional fields change. */
 export function bindScriptParameters(root, getContext, onChange, options) {
+  let closePicker = () => {};
+  const renderedParameters = new WeakMap();
   const controls = (target) => {
     const row = target.closest("[data-script-step]");
     if (!row) return null;
@@ -110,27 +151,43 @@ export function bindScriptParameters(root, getContext, onChange, options) {
     return { row, index, stepIndex, area: row.querySelector("[data-script-json-value]"), kind: row.querySelector("[data-script-kind]").value };
   };
   const repaint = (state, parameters) => {
+    closePicker();
     const host = state.row.querySelector("[data-script-parameter-fields]"), closed = new Set([...host.querySelectorAll("details:not([open])")].map((entry) => entry.dataset.paramGroup));
     const active = host.ownerDocument.activeElement, focused = host.contains(active) ? { path: active.dataset.scriptParam, group: active.dataset.scriptParamGroup, nullable: active.dataset.scriptParamNull } : null;
     host.innerHTML = fields(parameters, { ...getContext(), index: state.index, stepIndex: state.stepIndex, kind: state.kind });
+    renderedParameters.set(state.row, JSON.stringify(parameters));
     for (const detail of host.querySelectorAll("details")) if (closed.has(detail.dataset.paramGroup)) detail.open = false;
     if (focused) [...host.querySelectorAll("input,select,textarea")].find((control) => focused.path ? control.dataset.scriptParam === focused.path : focused.group ? control.dataset.scriptParamGroup === focused.group : focused.nullable && control.dataset.scriptParamNull === focused.nullable)?.focus();
   };
   const synchronize = (event) => {
     const target = event.target;
-    if (!target.matches("[data-script-param],[data-script-param-group],[data-script-param-null],[data-script-json-value]")) return;
+    if (!target.matches("[data-script-param],[data-script-param-group],[data-script-param-null],[data-script-json-value],[data-script-state-group],[data-script-state-value]")) return;
     const state = controls(target); if (!state) return;
     try {
       let parameters = completeScriptParameters(state.kind, JSON.parse(state.area.value), getContext().document);
-      if (target.matches("[data-script-json-value]")) { repaint(state, parameters); if (event.type === "change") state.area.value = JSON.stringify(parameters, null, 2); }
-      else {
+      if (target.matches("[data-script-json-value]")) {
+        // Blur emits change after input. Rebuilding again would remove a button
+        // between pointerdown and click and lose the user's first action.
+        if (renderedParameters.get(state.row) !== JSON.stringify(parameters)) repaint(state, parameters);
+        if (event.type === "change") state.area.value = JSON.stringify(parameters, null, 2);
+      }
+      else if (target.matches("[data-script-state-group],[data-script-state-value]")) {
+        const pair = parameters.transitions[Number(target.dataset.pairIndex)];
+        if (target.matches("[data-script-state-group]")) {
+          const group = getContext().definitions.find((item) => item.groupId === target.value);
+          if (!group) throw new Error(t("Группа больше не существует.", "The group no longer exists."));
+          pair.groupId = group.groupId; pair.stateId = group.entryStateId;
+        } else pair.stateId = target.value;
+        state.area.value = JSON.stringify(parameters, null, 2);
+        if (event.type === "change") repaint(state, parameters);
+      } else {
         if (target.matches("[data-script-param-group]")) {
           const key = target.dataset.scriptParamGroup;
           parameters[key] = target.checked ? completeScriptParameters(state.kind, undefined, getContext().document)[key] : null;
         } else if (target.matches("[data-script-param-null]")) setScriptParameter(parameters, target.dataset.scriptParamNull, target.checked ? null : target.dataset.nullType === "boolean" ? false : ["integer", "number"].includes(target.dataset.nullType) ? 0 : "");
         else {
           const type = target.dataset.paramType;
-          const entry = type === "boolean" ? target.checked : type === "number" ? target.value === "" && target.dataset.paramNullable ? null : target.valueAsNumber : type === "tags" ? target.value.split(",").map((tag) => tag.trim()).filter(Boolean) : type === "json" ? JSON.parse(target.value) : target.value;
+          const entry = type === "boolean" ? target.checked : type === "number" ? target.value === "" && target.dataset.paramNullable ? null : target.valueAsNumber : type === "tags" ? target.value.split(",").map((tag) => tag.trim()).filter(Boolean) : type === "lines" ? target.value.split(/[\s,]+/).filter(Boolean) : type === "json" ? JSON.parse(target.value) : target.value;
           if (typeof entry === "number" && !Number.isFinite(entry)) throw new Error(t("Введите число.", "Enter a number."));
           setScriptParameter(parameters, target.dataset.scriptParam, entry);
           if (state.kind === "signal" && JSON.parse(target.dataset.scriptParam)[0] === "signalId") {
@@ -143,12 +200,38 @@ export function bindScriptParameters(root, getContext, onChange, options) {
         const changesFields = target.matches("[data-script-param-group],[data-script-param-null]") || path?.[0] === "timeMode" || path?.[0] === "signalId" || path?.at(-1) === "enabled";
         if (event.type === "change" && changesFields) repaint(state, parameters);
       }
+      renderedParameters.set(state.row, JSON.stringify(parameters));
       state.area.setCustomValidity(""); target.setCustomValidity?.(""); onChange();
     } catch (error) { target.setCustomValidity?.(error.message); }
   };
   root.addEventListener("input", synchronize, options);
   root.addEventListener("change", synchronize, options);
   root.addEventListener("click", (event) => {
+    const stateButton = event.target.closest("[data-script-state-add],[data-script-state-remove]");
+    if (stateButton) {
+      event.preventDefault(); event.stopPropagation();
+      const state = controls(stateButton);
+      try {
+        const parameters = completeScriptParameters(state.kind, JSON.parse(state.area.value), getContext().document);
+        if (stateButton.hasAttribute("data-script-state-add")) {
+          const group = (getContext().definitions ?? []).find((item) => !parameters.transitions.some((pair) => pair.groupId === item.groupId));
+          if (!group) return;
+          parameters.transitions.push({ groupId: group.groupId, stateId: group.entryStateId });
+        } else parameters.transitions.splice(Number(stateButton.dataset.scriptStateRemove), 1);
+        state.area.value = JSON.stringify(parameters, null, 2); state.area.setCustomValidity(""); repaint(state, parameters); onChange();
+      } catch (error) { state.area.setCustomValidity(error.message); state.area.hidden = false; state.area.reportValidity(); }
+      return;
+    }
+    const picker = event.target.closest("[data-script-emoji-picker]");
+    if (picker) {
+      event.preventDefault(); event.stopPropagation();
+      const wasOpen = picker.getAttribute("aria-expanded") === "true"; closePicker();
+      if (!wasOpen) closePicker = openEmojiPicker(picker, { signal: options?.signal, onSelect(symbol) {
+        const input = picker.parentElement.querySelector("[data-script-param]");
+        input.value = symbol; input.dispatchEvent(new input.ownerDocument.defaultView.Event("input", { bubbles: true })); input.focus();
+      } });
+      return;
+    }
     const button = event.target.closest("[data-script-json]"); if (!button) return;
     event.preventDefault(); event.stopPropagation(); const state = controls(button);
     state.area.hidden = !state.area.hidden; button.setAttribute("aria-expanded", String(!state.area.hidden));

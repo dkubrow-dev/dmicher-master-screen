@@ -12,6 +12,7 @@ import { validateParameters } from "./signal-types.js";
 import { interactionSignal, notifyInteractionSignal } from "./interaction-signals.js";
 import { beginInteractionPause, freezeInteractionClock } from "./interaction-pause.js";
 import { dialogueSessionIsLive, INTERACTION_LEASE_MS } from "./interaction-session-model.js";
+import { createScriptDialogueService } from "./script-dialogues.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -35,8 +36,9 @@ function visibleSession(session, dialogue, target) {
 /** The command lease is persisted before awaiting subscribers. A second lock checks
  * ownership, the live run and the exact response again before advancing the dialogue. */
 export function createDialogueService({ emitSignal, onChange = () => {}, context = getDialogueContext,
-  runtimeOf = getRuntime, save = saveRuntime, lock = withSceneLock, authority = isAuthority, validate = validateDialogueAccess } = {}) {
-  const chat = generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "scene-input" });
+  runtimeOf = getRuntime, save = saveRuntime, lock = withSceneLock, authority = isAuthority, validate = validateDialogueAccess,
+  messageService, openScriptWindow } = {}) {
+  const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "scene-input" });
   const inFlight = new Map(), commands = new Map(), knownSessions = new Map();
   const slot = (userId, actorTokenId, dialogueId, target) => `${userId}:${actorTokenId}:${dialogueId}:${objectKey(target)}`;
   const remember = (state, key, response) => {
@@ -191,7 +193,8 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
     })();
     inFlight.set(key, task); try { return await task; } finally { inFlight.delete(key); }
   };
-  return Object.freeze({ ...createManualDialogueService(), getContext: context,
+  return Object.freeze({ ...createManualDialogueService(),
+    ...createScriptDialogueService({ context, validate, process, authority, chat, openWindow: openScriptWindow }), getContext: context,
     requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target).runtime?.runId }),
     requestInteraction: (command) => send({ ...command, kind: "interaction", runId: command.runId ?? context(command.sceneId, null, command.groupId ?? "main").runtime?.runId }),
     requestAnswer: (command) => { const known = knownSessions.get(command.sessionId); return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step }); },

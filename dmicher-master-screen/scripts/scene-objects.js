@@ -1,10 +1,10 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { getInteractionCatalog, mergeInteractionAssets } from "./scene-assets.js";
 import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./signal-catalog.js";
-import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals } from "./configuration-transfer.js";
-import { normalizeObjectBinding, normalizeObjectBindings, objectKey, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
+import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences } from "./configuration-transfer.js";
+import { normalizeObjectBinding, normalizeObjectBindings, objectKey, bindingScriptSteps, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
 import { interactionType } from "./interaction-model.js";
 import { replacementFlagData } from "./scene-flags.js";
 export { normalizeObjectBinding, normalizeObjectBindings, objectKey } from "./object-binding-model.js";
@@ -88,6 +88,13 @@ export function exportObjectConfiguration(scene, groupId, { stateId } = {}) {
     binding.transitionScripts = binding.transitionScripts[stateId] ? { [stateId]: binding.transitionScripts[stateId] } : {};
     binding.scripts = binding.scripts.filter((script) => script.stateId === stateId);
     for (const kind of ["shops", "dialogues"]) binding[kind] = binding[kind].filter((ref) => !ref.stateIds.length || ref.stateIds.includes(stateId)).map((ref) => ({ ...ref, stateIds: [stateId] }));
+    // Do not broaden a dialogue's state availability just to package a script.
+    // The full group is the transferable unit when a retained script depends on
+    // an attachment scoped to a state outside this export.
+    const missingDialogue = bindingScriptSteps(binding).some((step) => step.kind === "dialogue" && step.parameters.dialogueId
+      && !binding.dialogues.some((reference) => reference.dialogueId === step.parameters.dialogueId));
+    if (missingDialogue) fail(text("Скрипт ссылается на диалог, не включённый в выбранное состояние. Экспортируйте всю группу.",
+      "A script refers to a dialogue not included in the selected state. Export the entire group."));
   }
   const assets = getInteractionCatalog(scene), keys = new Set(bindings.map(objectKey));
   const interactionCatalog = { schemaVersion: 1, revision: 0, shops: assets.shops.filter((asset) => bindings.some((b) => b.shops.some((ref) => ref.shopId === asset.id))),
@@ -114,7 +121,12 @@ export function importObjectConfiguration(scene, source, { groupId, sourceGroupI
   const remap = (values) => values.map((id) => stateMapping.get(id) ?? id);
   for (const [key, original] of Object.entries(incoming.bindings)) {
     if (current.bindings[key]?.groupId && current.bindings[key].groupId !== groupId) fail(localizedMessage("Объект {0} уже принадлежит другой группе.", [key]));
-    const binding = remapBindingSignals(original, idMapping), previousGroup = binding.groupId; binding.groupId = groupId;
+    let binding = remapBindingSignals(original, idMapping);
+    binding = remapBindingStateTransitions(binding, { sourceGroupId, groupId, stateMapping });
+    binding = remapBindingActionReferences(binding, {
+      assetMapping: mapping, sourceSceneUuid: source.sourceSceneUuid ?? `Scene.${source.sourceSceneId}`, sceneUuid: scene.uuid ?? `Scene.${scene.id}`
+    });
+    const previousGroup = binding.groupId; binding.groupId = groupId;
     binding.transitionScripts = Object.fromEntries(Object.entries(binding.transitionScripts).map(([id, script]) => [stateMapping.get(id) ?? id, script]));
     binding.scripts.forEach((script) => { script.stateId = stateMapping.get(script.stateId) ?? script.stateId; });
     for (const kind of ["shop", "dialogue"]) for (const ref of binding[`${kind}s`]) {

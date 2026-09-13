@@ -1,8 +1,11 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { withSceneLock } from "./store.js";
 import { onExecutionChange } from "./execution.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } from "./script-movement.js";
 import { createCombatAdapter } from "./combat-adapter.js";
+import { DEFAULT_EMOTION_SIZE } from "./script-model.js";
+import { planScriptApproach, planScriptFollow, advanceScriptFollow } from "./script-target-movement.js";
+import { scriptDialoguesPending } from "./interaction-session-model.js";
 
 const clone = structuredClone;
 const LIMIT = 16;
@@ -11,7 +14,7 @@ const visualTime = (state) => Math.max(Date.now(), ...Object.values(state.script
 export const scriptProgressKey = (target, script, slot = "routine") => `${target.type}:${target.id}:${slot}:${script.id ?? script.stateId ?? "script"}`;
 export function initialScriptProgress(script) {
   return { stepId: script.steps.length ? 1 : null, status: script.steps.length && script.enabled !== false ? "ready" : "done", sequence: 0,
-    action: null, nextStepId: null, emoji: "", emojiAt: 0, bubble: null, bubbleAt: 0, messageIds: [], deleteMessages: false, combat: null };
+    action: null, nextStepId: null, emoji: "", emojiSize: DEFAULT_EMOTION_SIZE, emojiAt: 0, bubble: null, bubbleAt: 0, messageIds: [], dialogueSessions: [], deleteMessages: false, combat: null };
 }
 const duration = (step, action) => {
   if (action?.movement) return action.movement.remainingMs / 1000;
@@ -22,6 +25,8 @@ const duration = (step, action) => {
 function actionFor(scene, object, step) {
   const p = step.parameters;
   if (step.kind === "move") return { stepId: step.id, phase: "duration", movement: planScriptMovement(scene, object, p), remainingMs: 0 };
+  if (step.kind === "approach") return { stepId: step.id, phase: "duration", movement: planScriptApproach(scene, object, p), remainingMs: 0 };
+  if (step.kind === "follow") return { stepId: step.id, phase: "duration", follow: planScriptFollow(scene, object, p), remainingMs: 0 };
   if (step.kind === "wait" || step.kind === "emotion") return { stepId: step.id, phase: "duration", remainingMs: (p.seconds ?? p.duration) * 1000 };
   if (["signal", "macro"].includes(step.kind)) return { stepId: step.id, phase: "before", remainingMs: p.before * 1000 };
   return { stepId: step.id, phase: "effect", remainingMs: 0 };
@@ -59,7 +64,7 @@ export class ObjectScriptRuntime {
   async tick(scene, initial, object, script, elapsed, { slot = "routine" } = {}) {
     const target = targetOf(object), key = scriptProgressKey(target, script, slot), jobKey = `${scene.id}:${initial.runId}:${key}`;
     let state = this.state(scene, initial.runId);
-    if (!state || !this.current(scene, initial.runId, target) || script.enabled === false) return;
+    if (!state || !this.current(scene, initial.runId, target, { scriptKey: key }) || script.enabled === false) return;
     state.scriptStates ??= {};
     const progress = state.scriptStates[key] ??= initialScriptProgress(script);
     if (progress.status === "pending") {
@@ -80,7 +85,7 @@ export class ObjectScriptRuntime {
     if (["done", "uncertain", "failed"].includes(progress.status)) return;
     let available = combat ? progress.combat.remaining : Math.max(0, elapsed);
     for (let index = 0; index < LIMIT; index++) {
-      if (!this.current(scene, state.runId, target) || !sameTurn(combat, this.combat.context(scene, object))) return;
+      if (!this.current(scene, state.runId, target, { scriptKey: key }) || !sameTurn(combat, this.combat.context(scene, object))) return;
       if (combat && progress.combat.remaining <= 0) return;
       const step = script.steps.find((entry) => entry.id === progress.stepId);
       if (!step) { progress.status = "done"; await this.save(scene, state); return; }
@@ -93,15 +98,26 @@ export class ObjectScriptRuntime {
         const rounds = 1 + Math.ceil(Math.max(0, remaining - progress.combat.remaining) / script.combat.turnSeconds);
         return this.claim(scene, state, object, script, progress, key, "combat", step, { combat, rounds });
       }
-      if (step.kind === "emotion" && !action.started) { progress.emoji = params.emoji; progress.emojiAt = visualTime(state); action.started = true; }
+      if (step.kind === "emotion" && !action.started) {
+        progress.emoji = params.emoji; progress.emojiSize = params.size ?? DEFAULT_EMOTION_SIZE;
+        progress.emojiAt = visualTime(state); action.started = true;
+      }
       let consumed = 0;
-      if (step.kind === "move") {
-        const movement = await advanceScriptMovement(scene, object, action.movement, available, { isCurrent: () => this.current(scene, state.runId, target) });
+      if (["move", "approach", "follow"].includes(step.kind)) {
+        const options = { isCurrent: () => !globalThis.game?.paused && this.current(scene, state.runId, target, { scriptKey: key })
+          && sameTurn(combat, this.combat.context(scene, object)), ignoreObstacles: step.kind === "approach" };
+        const movement = step.kind === "follow" ? await advanceScriptFollow(scene, object, action.follow, params, available, options)
+          : await advanceScriptMovement(scene, object, action.movement, available, options);
         consumed = movement.consumed;
         if (combat) progress.combat.remaining = Math.max(0, progress.combat.remaining - consumed);
         available = Math.max(0, available - consumed);
         await this.save(scene, state);
         if (!movement.done) return;
+      } else if (step.kind === "dialogue" && action.phase === "dialogue") {
+        if (scriptDialoguesPending(state, action.sessions, Date.now(), params.waitMode)) {
+          if (combat) progress.combat.remaining = Math.max(0, progress.combat.remaining - available);
+          await this.save(scene, state); return;
+        }
       } else if (["duration", "before", "after"].includes(action.phase)) {
         consumed = Math.min(available, action.remainingMs / 1000);
         action.remainingMs = Math.max(0, action.remainingMs - consumed * 1000);
@@ -147,6 +163,26 @@ export class ObjectScriptRuntime {
       if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 });
       return {};
     }
+    if (step.kind === "state") {
+      await this.runtime.changeStates(scene, p.transitions, { originRunId: runId, admitted,
+        signalContext: { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 } });
+      return {};
+    }
+    if (step.kind === "dialogue") {
+      if (this.state(scene, runId)?.manual) throw new Error(text("Диалог скрипта доступен в переходах и рутине запущенной группы. Для ручного показа используйте окно диалогов.",
+        "Scripted dialogue is available in the transitions and routines of a running group. Use the Dialogues window for manual presentation."));
+      if (!this.runtime.startScriptDialogues) throw new Error(localizedMessage("Неизвестное действие скрипта."));
+      // Opening our first window pauses the object before the result references
+      // can be saved. Exclude only our confirmed windows while admitting the rest.
+      const isCurrent = (started = []) => {
+        const turn = this.combat.context(scene, object);
+        return !globalThis.game?.paused && this.current(scene, runId, target, { scriptKey: job.progressKey, excludeDialogueSessions: started })
+          && (!turn || script.combat.enabled && turn.isTurn);
+      };
+      const sessions = await this.runtime.startScriptDialogues({ sceneId: scene.id, groupId: job.groupId, runId, target, dialogueId: p.dialogueId, tokenUuids: clone(p.tokenUuids) },
+        { isCurrent, waitForAdmission: (started = []) => this.waitUntilAdmitted(job, () => isCurrent(started)) });
+      return { sessions };
+    }
     if (step.kind === "macro") {
       if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error(localizedMessage("Этот макрос не прикреплён к объекту скрипта."));
       try { await effects.macro(p.macroUuid, { scene, token: object, state: this.state(scene, runId)?.state, runId, stepId: step.id, isCurrent: admitted }); }
@@ -155,13 +191,32 @@ export class ObjectScriptRuntime {
     }
     throw new Error(localizedMessage("Неизвестное действие скрипта."));
   }
+  /** A partially opened dialogue batch keeps its claimed job and exact views.
+   * Pauses/turn changes wait in place; losing the run releases the wait entirely. */
+  waitUntilAdmitted(job, isCurrent) {
+    if (isCurrent()) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let timer, unsubscribe, settled = false;
+      const finish = (error) => {
+        if (settled) return; settled = true; clearInterval(timer); unsubscribe?.(); this.cancels.delete(cancel);
+        if (error) reject(error); else resolve();
+      };
+      const cancel = () => finish(new Error(text("Исполнение скрипта остановлено.", "Script execution was stopped.")));
+      const check = () => {
+        if (!this.current(job.scene, job.runId, job.target, { ignoreInteractionPause: true })) cancel();
+        else if (isCurrent()) finish();
+      };
+      unsubscribe = onExecutionChange(job.scene, check); this.cancels.add(cancel);
+      timer = setInterval(check, 100); check();
+    });
+  }
   async execute(job) {
     const { scene, runId, target, sequence, step, script } = job;
-    const current = () => this.current(scene, runId, target), owned = () => this.current(scene, runId, target, { ignoreInteractionPause: true });
+    const current = () => this.current(scene, runId, target, { scriptKey: job.progressKey }), owned = () => this.current(scene, runId, target, { ignoreInteractionPause: true });
     let dispose, cancel;
     const cancelled = new Promise((resolve) => { cancel = () => resolve({ stale: true }); dispose = onExecutionChange(scene, (reason) => { if (reason === "canvas-teardown" || !owned()) cancel(); }); this.cancels.add(cancel); });
     const admitted = () => {
-      if (current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
+      if (!globalThis.game?.paused && current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
       // A turn may change while the claimed job waits outside the scene queue.
       // Keep the action ready for its next admission; never start it off-turn.
       const error = new Error(localizedMessage("Скрипт ожидает своего хода или завершения взаимодействия.")); error.code = "script-deferred"; throw error;
@@ -183,7 +238,13 @@ export class ObjectScriptRuntime {
             else progress.combat.remaining = 0;
           }
         } else if (job.stage === "endTurn") { progress.status = progress.stepId === null ? "done" : "ready"; progress.combat.ended = true; }
-        else if (step.kind === "speech" && job.stage === "effect") {
+        else if (step.kind === "dialogue") {
+          const sessions = outcome.result?.sessions ?? [];
+          progress.dialogueSessions = [...(progress.dialogueSessions ?? []).filter(reference => scriptDialoguesPending(state, [reference])), ...sessions]
+            .filter((reference, index, entries) => entries.findIndex(other => other.sessionId === reference.sessionId) === index);
+          progress.status = "ready"; progress.action.phase = "dialogue"; progress.action.sessions = sessions;
+          if (step.parameters.waitMode === "none") this.advance(progress, this.next(script, step));
+        } else if (step.kind === "speech" && job.stage === "effect") {
           progress.messageIds = outcome.result.messageIds; progress.deleteMessages = step.parameters.chat.deleteAfter;
           progress.bubble = step.parameters.bubble.enabled ? { text: step.parameters.bubble.text, fontSize: step.parameters.bubble.fontSize } : null;
           progress.bubbleAt = visualTime(state);

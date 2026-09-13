@@ -1,4 +1,5 @@
 import { sceneObjectBounds, isSceneObjectHidden } from "../scene-object-geometry.js";
+import { DEFAULT_EMOTION_SIZE } from "../script-model.js";
 
 /** Canvas presentation adapter. No rules, Scene writes or script execution. */
 export function createObjectDecorations() {
@@ -24,8 +25,8 @@ export function createObjectDecorations() {
     label.visible = !isSceneObjectHidden(document) || globalThis.game?.user?.isGM === true;
   }
   return Object.freeze({
-    update(document, { emoji = "", bubble = null }) {
-      updateLabel(emojiLabels, document, emoji, { fontSize: 32, fill: 0xffffff, dropShadow: true, dropShadowDistance: 2 }, 4);
+    update(document, { emoji = "", emojiSize = DEFAULT_EMOTION_SIZE, bubble = null }) {
+      updateLabel(emojiLabels, document, emoji, { fontSize: emojiSize, fill: 0xffffff, dropShadow: true, dropShadowDistance: 2 }, 4);
       updateLabel(speechLabels, document, bubble?.text, { fontSize: Number(bubble?.fontSize || 24), fill: 0xffffff,
         stroke: 0x111111, strokeThickness: 4, wordWrap: true, wordWrapWidth: 400, align: "center" }, 42);
     },

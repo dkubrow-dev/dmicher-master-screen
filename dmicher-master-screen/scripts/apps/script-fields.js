@@ -7,7 +7,7 @@ import { scriptActionOptions } from "../script-action-labels.js";
 const kinds = scriptActionOptions;
 
 /** Row order is presentation only. IDs and outgoing edges define execution. */
-export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, open = false, combatSupported = false } = {}) {
+export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false } = {}) {
   const blocks = scripts.map((script, index) => {
     const prefix = `script-${index}`;
     const check = (name, label, active) => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}"${active ? " checked" : ""}>${e(label)}</label>`;
@@ -17,7 +17,7 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
       <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция", "Function")}</th><th>${t("Параметры", "Parameters")}</th><th>${t("Переход", "Next")}</th><th></th></tr></thead><tbody>
       ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td><select aria-label="${t("Функция", "Function")}" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}">${kinds().map(([kind, name]) => `<option value="${kind}"${step.kind === kind ? " selected" : ""}>${e(name)}</option>`).join("")}</select>
         <button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}">JSON</button></td>
-        <td><div data-script-parameter-fields>${renderScriptParameters(step, { index, stepIndex, document, ownerKey, catalog })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false">${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
+        <td><div data-script-parameter-fields>${renderScriptParameters(step, { index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false">${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
         <td><input name="${prefix}-step-${stepIndex}-next" aria-label="${t("Следующие шаги", "Next steps")}" value="${e(step.next.join(", "))}" placeholder="—"></td>
         <td><button type="button" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></td></tr>`).join("")}
       </tbody></table></div>

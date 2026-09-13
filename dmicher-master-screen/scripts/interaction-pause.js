@@ -1,6 +1,6 @@
 import { getRuntimes } from "./store.js";
 import { objectReferenceKey } from "./object-reference.js";
-import { shopSessionIsLive, dialogueSessionIsLive } from "./interaction-session-model.js";
+import { shopSessionIsLive, dialogueSessionIsLive, dialogueSessionMatchesReference } from "./interaction-session-model.js";
 
 const pending = new WeakMap();
 
@@ -19,14 +19,15 @@ export function beginInteractionPause(scene, target) {
   };
 }
 
-export function isInteractionPaused(scene, target, now = Date.now()) {
+export function isInteractionPaused(scene, target, now = Date.now(), { excludeDialogueSessions = [] } = {}) {
   const objectKey = objectReferenceKey(target);
   if (!objectKey) return false;
   if (pending.get(scene)?.get(objectKey)) return true;
   return getRuntimes(scene).some((runtime) => {
     const ownsSession = (session) => session?.runId === runtime.runId && objectReferenceKey(session.target) === objectKey;
     return Object.values(runtime.shopSessions ?? {}).some((session) => shopSessionIsLive(session, now) && ownsSession(session))
-      || Object.values(runtime.dialogueSessions ?? {}).some((session) => dialogueSessionIsLive(session, now) && ownsSession(session));
+      || Object.values(runtime.dialogueSessions ?? {}).some((session) => dialogueSessionIsLive(session, now) && ownsSession(session)
+        && !excludeDialogueSessions.some((reference) => dialogueSessionMatchesReference(session, reference)));
   });
 }
 

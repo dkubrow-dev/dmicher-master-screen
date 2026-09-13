@@ -85,9 +85,9 @@ test("all built-in action kinds expose compact tables and a collapsed synchroniz
   globalThis.game = { i18n: { lang: "en" } };
   const steps = SCRIPT_STEP_KINDS.map((kind, index) => ({ id: index + 1, ...scriptStepTemplate(kind) }));
   const html = buildScriptFields([{ name: "A", steps }], { states: [] }, "Token", { signals: [], macros: [] }, { document: token, ownerKey: "Token:t" });
-  assert.equal((html.match(/data-script-json aria-expanded="false"/g) ?? []).length, 8);
-  assert.equal((html.match(/data-script-json-value hidden/g) ?? []).length, 8);
-  assert.equal((html.match(/data-script-parameter-fields/g) ?? []).length, 8);
+  assert.equal((html.match(/data-script-json aria-expanded="false"/g) ?? []).length, SCRIPT_STEP_KINDS.length);
+  assert.equal((html.match(/data-script-json-value hidden/g) ?? []).length, SCRIPT_STEP_KINDS.length);
+  assert.equal((html.match(/data-script-parameter-fields/g) ?? []).length, SCRIPT_STEP_KINDS.length);
   assert.ok(html.includes('data-param-group="chat"'));
   assert.ok(html.includes('data-param-group="bubble"'));
   assert.ok(html.includes(param(["volume"])));

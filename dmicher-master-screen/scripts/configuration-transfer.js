@@ -33,3 +33,35 @@ export function remapBindingSignals(binding, mapping) {
   }
   return next;
 }
+
+/** A group import owns all its states; a single-state import owns only the
+ * mapped pair. Other destinations remain external references, even when their
+ * state ID happens to match an imported state in another group. */
+export function remapBindingStateTransitions(binding, { sourceGroupId, groupId, stateMapping = new Map() }) {
+  const next = structuredClone(binding);
+  for (const step of bindingScriptSteps(next)) {
+    if (step.kind !== "state") continue;
+    for (const transition of step.parameters.transitions) {
+      if (transition.groupId !== sourceGroupId || stateMapping.size && !stateMapping.has(transition.stateId)) continue;
+      transition.groupId = groupId;
+      transition.stateId = stateMapping.get(transition.stateId) ?? transition.stateId;
+    }
+  }
+  return next;
+}
+
+/** Native objects keep their embedded IDs in scoped imports. Remap only these
+ * actions' declared references; signal payloads and macro source are opaque. */
+export function remapBindingActionReferences(binding, { assetMapping, sourceSceneUuid, sceneUuid }) {
+  const next = structuredClone(binding);
+  const sceneReference = (uuid) => typeof uuid === "string" && sourceSceneUuid && sceneUuid
+    && uuid.startsWith(`${sourceSceneUuid}.`) ? sceneUuid + uuid.slice(sourceSceneUuid.length) : uuid;
+  for (const step of bindingScriptSteps(next)) {
+    if (step.kind === "dialogue") {
+      step.parameters.dialogueId = assetMapping.get(`Dialogue:${step.parameters.dialogueId}`) ?? step.parameters.dialogueId;
+      step.parameters.tokenUuids = step.parameters.tokenUuids.map(sceneReference);
+    }
+    if (step.kind === "approach" || step.kind === "follow") step.parameters.targetUuid = sceneReference(step.parameters.targetUuid);
+  }
+  return next;
+}

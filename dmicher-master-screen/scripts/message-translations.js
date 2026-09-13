@@ -63,7 +63,6 @@ export const MESSAGE_TRANSLATIONS = Object.freeze({
   "Откройте карту сцены": "Open a scene map",
   "Объект больше не существует.": "The object no longer exists.",
   "Сцена предпросмотра изменилась.": "The preview scene has changed.",
-  "Состояние больше не существует.": "The state no longer exists.",
   "Группа не найдена": "Group not found",
   "Состояние не найдено": "State not found",
   "Сцена изменилась. Вернитесь к сцене редактируемого черновика.": "The scene has changed. Return to the scene of the draft being edited.",

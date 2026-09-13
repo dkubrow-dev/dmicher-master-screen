@@ -6,6 +6,7 @@ import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitio
 import { getRuntime, saveRuntime } from "../dmicher-master-screen/scripts/store.js";
 import { scriptProgressKey } from "../dmicher-master-screen/scripts/script-runtime.js";
 import { beginInteractionPause, isInteractionPaused } from "../dmicher-master-screen/scripts/interaction-pause.js";
+import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
 const clone = structuredClone;
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
 const script = (steps, extra = {}) => ({ name: "Script", enabled: true, repeat: false, steps, ...extra });
@@ -65,4 +66,232 @@ test("native document failure stops the script and does not repeat its write eve
   const old = console.error; console.error = () => {};
   try { await f.tick(); await f.tick(); } finally { console.error = old; }
   assert.equal(writes, 1); assert.equal(f.progress().status, "failed");
+});
+test("canvas refresh restores the saved emotion size and selects it with the latest emotion", async () => {
+  const f = await fixture({ routine: script([step(1, "emotion", { emoji: "!", size: 47.5 })]) });
+  await f.runtime.enter(f.scene, "calm"); await f.tick();
+  assert.equal(f.progress().emojiSize, 47.5);
+  const rendered = new Map(), replacement = new GroupRuntime({ visuals: { update: (object, value) => rendered.set(object.id, value) } });
+  replacement.refresh(f.scene);
+  assert.equal(rendered.get("npc").emoji, "!"); assert.equal(rendered.get("npc").emojiSize, 47.5);
+  const at = f.progress().emojiAt;
+  replacement.manualVisuals.set("manual", { sceneId: f.scene.id, scriptStates: {
+    "Token:npc:initial:manual": { emoji: "?", emojiSize: 18.25, emojiAt: at + 1 },
+    "Token:npc:routine:speech": { bubble: { text: "Hello", fontSize: 20 }, bubbleAt: at + 2 }
+  } });
+  replacement.refreshObject(f.npc);
+  assert.equal(rendered.get("npc").emoji, "?"); assert.equal(rendered.get("npc").emojiSize, 18.25);
+  assert.equal(rendered.get("npc").bubble.text, "Hello");
+  replacement.manualVisuals.clear(); await f.runtime.haltAll(f.scene); replacement.refresh(f.scene);
+  assert.equal(rendered.get("npc").emoji, "");
+});
+const addGroup = (f, groupId) => { f.flags.groupDefinitions[groupId] = { ...defaultDefinition(), groupId, groupName: groupId }; };
+test("a state step transitions selected groups, preserves stopped status and retires its own run last", async () => {
+  const transitions = [{ groupId: "main", stateId: "tension" }, { groupId: "east", stateId: "tension" }, { groupId: "west", stateId: "tension" }];
+  const f = await fixture({ routine: script([step(1, "state", { transitions }, [2]), step(2, "visibility", { visible: false })]) });
+  addGroup(f, "east"); addGroup(f, "west");
+  await f.runtime.enter(f.scene, "calm", { groupId: "east" }); await f.runtime.halt(f.scene, { groupId: "west" });
+  await f.runtime.enter(f.scene, "calm"); const oldRun = getRuntime(f.scene).runId; f.calls.length = 0;
+  await f.tick(); await f.tick();
+  assert.equal(getRuntime(f.scene).stateId, "tension"); assert.notEqual(getRuntime(f.scene).runId, oldRun);
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).stateId, "tension");
+  const west = getRuntime(f.scene, { groupId: "west" }); assert.equal(west.stateId, "tension"); assert.equal(west.halted, true); assert.equal(west.runId, "");
+  assert.equal(f.npc.hidden, false); assert.equal(f.runtime.owns(f.scene, oldRun), false);
+  assert.deepEqual(f.calls.filter(([kind, signal]) => kind === "signal" && signal.name === "transitioned").map(([, signal]) => signal.emitterKey), ["Group:east", "Group:west", "Group:main"]);
+});
+test("state selection resolves all pairs and validation refusals before changing any group", async () => {
+  let rejectEast = false;
+  const f = await fixture({ emitSignal: async (_scene, signal) => rejectEast && signal.name === "validateTransition" && signal.emitterKey === "Group:east" ? { allowed: false, messages: ["east refused"] } : { allowed: true } });
+  addGroup(f, "east"); await f.runtime.enter(f.scene, "calm"); await f.runtime.enter(f.scene, "calm", { groupId: "east" });
+  const before = clone(f.flags);
+  await assert.rejects(f.runtime.changeStates(f.scene, [{ groupId: "main", stateId: "tension" }, { groupId: "east", stateId: "missing" }]));
+  assert.deepEqual(f.flags, before);
+  rejectEast = true; const original = console.error; console.error = () => {};
+  try { await assert.rejects(f.runtime.changeStates(f.scene, [{ groupId: "main", stateId: "tension" }, { groupId: "east", stateId: "tension" }]), /east refused/); }
+  finally { console.error = original; }
+  assert.deepEqual(f.flags, before);
+});
+test("manual state selection keeps the global stop and same-state or empty selections are no-ops", async () => {
+  const f = await fixture(); addGroup(f, "east"); await f.runtime.enter(f.scene, "calm"); await f.runtime.haltAll(f.scene);
+  await f.runtime.changeStates(f.scene, [{ groupId: "main", stateId: "tension" }, { groupId: "east", stateId: "tension" }]);
+  assert.equal(f.flags.automationHalted, true); assert.equal(getRuntime(f.scene).halted, true); assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, true);
+  const before = clone(f.flags); f.calls.length = 0;
+  await f.runtime.changeStates(f.scene, []); await f.runtime.changeStates(f.scene, [{ groupId: "main", stateId: "tension" }]);
+  assert.deepEqual(f.flags, before); assert.equal(f.calls.length, 0);
+});
+test("late validation cannot perform state transitions after the originating group stops", async () => {
+  let started, finish;
+  const ready = new Promise(resolve => { started = resolve; });
+  const f = await fixture({ routine: script([step(1, "state", { transitions: [{ groupId: "east", stateId: "tension" }] })]),
+    emitSignal: async (_scene, signal) => {
+      if (signal.name === "validateTransition" && signal.emitterKey === "Group:east") { started(); return new Promise(resolve => { finish = resolve; }); }
+      return { allowed: true };
+    } });
+  addGroup(f, "east"); await f.runtime.enter(f.scene, "calm", { groupId: "east" }); await f.runtime.enter(f.scene, "calm");
+  const ticking = f.tick(); await ready; await f.runtime.halt(f.scene); await ticking;
+  finish({ allowed: true }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).stateId, "calm"); assert.equal(getRuntime(f.scene).halted, true);
+});
+test("intervention between selected transitions preserves completed changes and prevents remaining changes", async () => {
+  let runtime;
+  const f = await fixture({ emitSignal: async (scene, signal) => {
+    if (signal.name === "transitioned" && signal.emitterKey === "Group:east") await runtime.halt(scene);
+    return { allowed: true };
+  } });
+  runtime = f.runtime; addGroup(f, "east"); addGroup(f, "west");
+  await runtime.enter(f.scene, "calm"); const originRunId = getRuntime(f.scene).runId;
+  await assert.rejects(runtime.changeStates(f.scene, [{ groupId: "east", stateId: "tension" }, { groupId: "west", stateId: "tension" }], { originRunId }));
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).stateId, "tension"); assert.equal(getRuntime(f.scene, { groupId: "west" }).stateId, null);
+});
+test("a state step in initial restoration retires its manual script without starting a stopped group", async () => {
+  const f = await fixture({ initial: script([step(1, "state", { transitions: [{ groupId: "main", stateId: "tension" }] }, [2]), step(2, "visibility", { visible: false })]) });
+  await f.runtime.haltAll(f.scene);
+  const runId = await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" });
+  await f.tick(); await f.tick();
+  assert.equal(f.runtime.manualRuns.has(runId), false); assert.equal(f.npc.hidden, false);
+  assert.equal(getRuntime(f.scene).stateId, "tension"); assert.equal(getRuntime(f.scene).halted, true); assert.equal(f.flags.automationHalted, true);
+});
+test("halting an already transitioned target stops the rest of a multi-group state action", async () => {
+  let runtime;
+  const f = await fixture({ emitSignal: async (scene, signal) => {
+    if (signal.name === "transitioned" && signal.emitterKey === "Group:east") await runtime.halt(scene, { groupId: "east" });
+    return { allowed: true };
+  } });
+  runtime = f.runtime; addGroup(f, "east"); addGroup(f, "west");
+  await runtime.enter(f.scene, "calm"); await runtime.enter(f.scene, "calm", { groupId: "east" }); await runtime.enter(f.scene, "calm", { groupId: "west" });
+  const originRunId = getRuntime(f.scene).runId;
+  await assert.rejects(runtime.changeStates(f.scene, [{ groupId: "east", stateId: "tension" }, { groupId: "west", stateId: "tension" }], { originRunId }));
+  assert.equal(getRuntime(f.scene, { groupId: "east" }).stateId, "tension"); assert.equal(getRuntime(f.scene, { groupId: "east" }).halted, true);
+  assert.equal(getRuntime(f.scene, { groupId: "west" }).stateId, "calm"); assert.equal(runtime.owns(f.scene, originRunId), true);
+});
+test("follow records target corners between ticks and keeps them through interaction pause and reconnect", async () => {
+  const f = await fixture({ routine: script([step(1, "follow", { targetUuid: "Scene.scene.Tile.tile", maxDistance: 0, finishOn: "state-change" })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = []; f.tile.x = 500;
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); assert.equal(f.npc.x, 50);
+  const release = beginInteractionPause(f.scene, { type: "Token", id: "npc" });
+  f.tile.y = 500; const first = f.runtime.recordFollowTarget(f.tile);
+  f.tile.x = 1000; const second = f.runtime.recordFollowTarget(f.tile); await first; await second;
+  assert.deepEqual(f.progress().action.follow.points, [{ x: 550, y: 50 }, { x: 550, y: 550 }, { x: 1050, y: 550 }]);
+  await f.tick(60000); assert.equal(f.npc.x, 50); release();
+  await f.tick(60000); assert.equal(f.npc.x, 50); await f.tick(); assert.equal(f.npc.x, 100); assert.equal(f.npc.y, 0);
+  const replacement = new GroupRuntime({ effects: {}, now: f.now });
+  replacement.tickTimes.set("scene:main", f.now() - 500); await replacement.tick();
+  assert.equal(f.npc.x, 150); assert.equal(f.npc.y, 0); assert.equal(f.progress().action.follow.points.length, 3);
+});
+test("follow arrival advances once whereas state-change following keeps the next step pending", async () => {
+  for (const finishOn of ["arrival", "state-change"]) {
+    const f = await fixture({ routine: script([step(1, "follow", { targetUuid: "Scene.scene.Tile.tile", finishOn }, [2]), step(2, "visibility", { visible: false })]) });
+    f.flags.objectBindings.bindings["Tile:tile"].scripts = []; f.tile.x = 110;
+    await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+    assert.equal(f.npc.hidden, finishOn === "arrival");
+    if (finishOn === "state-change") assert.equal(f.progress().stepId, 1);
+  }
+});
+test("native update hooks capture rapid follow turns and release on dispose", async () => {
+  const f = await fixture({ routine: script([step(1, "follow", { targetUuid: "Scene.scene.Tile.tile", finishOn: "state-change" })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = []; f.tile.x = 500;
+  await f.runtime.enter(f.scene, "calm"); await f.tick();
+  const hooks = new Map(); let serial = 0;
+  globalThis.Hooks = { on(name, callback) { hooks.set(++serial, { name, callback }); return serial; }, off(_name, id) { hooks.delete(id); } };
+  f.runtime.start();
+  try {
+    const update = [...hooks.values()].find(hook => hook.name === "updateTile").callback;
+    f.tile.y = 300; update(f.tile); f.tile.x = 800; update(f.tile);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(f.progress().action.follow.points.slice(-2), [{ x: 550, y: 350 }, { x: 850, y: 350 }]);
+  } finally { f.runtime.dispose(); }
+  assert.equal(hooks.size, 0);
+});
+test("dialogue wait modes advance only on their condition and ignore only this script's sessions", async () => {
+  for (const waitMode of ["all", "first", "none"]) {
+    const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: ["Scene.scene.Token.pc"], waitMode }, [2]), step(2, "visibility", { visible: false })]) });
+    f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+    let starts = 0;
+    const refs = [1, 2].map(i => ({ sessionId: `session${i}`, userId: `player${i}`, actorTokenId: `pc${i}` }));
+    f.runtime.startScriptDialogues = async (_command, { isCurrent }) => {
+      starts++; assert.equal(isCurrent(), true);
+      const run = getRuntime(f.scene);
+      for (const ref of refs) run.dialogueSessions[ref.sessionId] = { ...ref, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+      await saveRuntime(f.scene, run); assert.equal(isCurrent(refs), true); return refs;
+    };
+    await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+    assert.equal(starts, 1); assert.equal(f.npc.hidden, waitMode === "none");
+    if (waitMode === "none") continue;
+    let run = getRuntime(f.scene); run.dialogueSessions.session2.status = "left"; await saveRuntime(f.scene, run);
+    await f.tick(); assert.equal(f.npc.hidden, waitMode === "first");
+    if (waitMode === "all") {
+      run = getRuntime(f.scene); run.dialogueSessions.session1.status = "left";
+      run.dialogueSessions.foreign = { ...refs[0], sessionId: "foreign", runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+      await saveRuntime(f.scene, run); await f.tick(); assert.equal(f.npc.hidden, false);
+      run = getRuntime(f.scene); run.dialogueSessions.foreign.status = "left"; await saveRuntime(f.scene, run); await f.tick(); assert.equal(f.npc.hidden, true);
+    }
+  }
+});
+test("follow stops additional corners when the world pauses or the combat turn changes during an update", async () => {
+  for (const interruption of ["pause", "turn"]) {
+    let turn = 1;
+    const combat = interruption === "turn" ? { context: () => ({ id: "fight", turnKey: `turn${turn}`, isTurn: turn === 1 }), notify: async () => {}, confirmAction: async () => "continue" } : undefined;
+    const f = await fixture({ combat, routine: script([step(1, "follow", { targetUuid: "Scene.scene.Tile.tile", maxDistance: 0, finishOn: "state-change" })], { combat: { enabled: true, turnSeconds: 6 } }) });
+    f.flags.objectBindings.bindings["Tile:tile"].scripts = []; f.tile.x = interruption === "turn" ? 500 : 20;
+    await f.runtime.enter(f.scene, "calm"); await f.tick();
+    f.tile.y = 500; await f.runtime.recordFollowTarget(f.tile); f.tile.x = 1000; await f.runtime.recordFollowTarget(f.tile);
+    let updates = 0; f.npc.update = async changes => { Object.assign(f.npc, changes); updates++; if (interruption === "pause") game.paused = true; else turn = 2; };
+    await f.tick(1000); assert.equal(updates, 1); assert.equal(f.npc.y, 0);
+    game.paused = false;
+  }
+});
+test("a paused dialogue batch keeps one claimed start and resumes without treating its partial result as completion", async () => {
+  const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "none" }, [2]), step(2, "visibility", { visible: false })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  let started, starts = 0, deliveries = 0;
+  const ready = new Promise(resolve => { started = resolve; });
+  f.runtime.startScriptDialogues = async (_command, { waitForAdmission }) => {
+    starts++; game.paused = true; started(); await waitForAdmission([]); deliveries++; return [];
+  };
+  await f.runtime.enter(f.scene, "calm"); const ticking = f.tick(); await ready;
+  assert.equal(f.progress().status, "pending"); assert.equal(deliveries, 0); assert.equal(f.npc.hidden, false);
+  game.paused = false; notifyExecutionChange(f.scene, "resume"); await ticking; await f.tick();
+  assert.equal(starts, 1); assert.equal(deliveries, 1); assert.equal(f.npc.hidden, true);
+});
+test("a held dialogue batch is released by halt and its late continuation never delivers", async () => {
+  const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "none" })]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  let started, deliveries = 0; const ready = new Promise(resolve => { started = resolve; });
+  f.runtime.startScriptDialogues = async (_command, { waitForAdmission }) => { game.paused = true; started(); await waitForAdmission([]); deliveries++; return []; };
+  await f.runtime.enter(f.scene, "calm"); const ticking = f.tick(); await ready; await f.runtime.haltAll(f.scene); await ticking;
+  game.paused = false; notifyExecutionChange(f.scene, "resume"); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(deliveries, 0); assert.equal(f.runtime.scripts.cancels.size, 0);
+});
+test("initial restoration refuses scripted dialogue before service calls without launching its group", async () => {
+  const f = await fixture({ initial: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [] })]) });
+  let calls = 0; f.runtime.startScriptDialogues = async () => { calls++; return []; };
+  const runId = await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" }); await f.tick();
+  assert.equal(calls, 0); assert.equal(getRuntime(f.scene).runId, "");
+  assert.ok(Object.values(f.runtime.manualRuns.get(runId).scriptStates).every(progress => progress.status === "failed"));
+});
+test("a held dialogue batch resumes in the next own combat turn without reopening its first session", async () => {
+  let turn = 1, started, deliveries = 0, starts = 0;
+  const ready = new Promise(resolve => { started = resolve; });
+  const combat = { context: () => ({ id: "fight", turnKey: `turn${turn}`, isTurn: turn !== 2 }), notify: async () => {}, confirmAction: async () => "continue" };
+  const f = await fixture({ combat, routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "none" })], { combat: { enabled: true } }) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  f.runtime.startScriptDialogues = async (_command, { waitForAdmission }) => { starts++; turn = 2; started(); await waitForAdmission([]); deliveries++; return []; };
+  await f.runtime.enter(f.scene, "calm"); await f.tick();
+  const ticking = f.tick(); await ready; assert.equal(deliveries, 0); assert.equal(f.progress().status, "pending");
+  turn = 3; notifyExecutionChange(f.scene, "turn"); await ticking;
+  assert.equal(starts, 1); assert.equal(deliveries, 1); assert.equal(f.progress().status, "done");
+});
+test("repeated dialogue steps discard closed exclusions while retaining exact live participant references", async () => {
+  const f = await fixture({ routine: script([step(1, "dialogue", { dialogueId: "talk", tokenUuids: [], waitMode: "none" }, [1])]) });
+  f.flags.objectBindings.bindings["Tile:tile"].scripts = [];
+  const ref = id => ({ sessionId: id, userId: `user-${id}`, actorTokenId: `token-${id}` });
+  let call = 0;
+  f.runtime.startScriptDialogues = async () => {
+    const references = ++call === 1 ? [ref("closed"), ref("live")] : [ref("new")], run = getRuntime(f.scene);
+    for (const reference of references) run.dialogueSessions[reference.sessionId] = { ...reference, runId: run.runId,
+      target: { type: "Token", id: "npc" }, status: reference.sessionId === "closed" ? "left" : "active", expiresAt: Date.now() + 60000 };
+    await saveRuntime(f.scene, run); return references;
+  };
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+  assert.deepEqual(f.progress().dialogueSessions, [ref("live"), ref("new")]);
 });

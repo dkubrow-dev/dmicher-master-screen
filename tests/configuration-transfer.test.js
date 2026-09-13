@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { remapStateSignals, remapDialogueSignals, remapBindingSignals } from "../dmicher-master-screen/scripts/configuration-transfer.js";
+import { remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences } from "../dmicher-master-screen/scripts/configuration-transfer.js";
 
 const mapping = new Map([["source", "destination"]]);
 const payload = { signalId: "source", nested: [{ signalId: "source" }], text: "source" };
@@ -34,4 +34,49 @@ test("object import remaps signal actions in each script purpose, preserving cus
     assert.equal(saved.steps[1].parameters.text, "source");
   }
   assert.equal(binding.initialScript.steps[0].parameters.signalId, "source");
+});
+
+test("group imports remap state destinations in every script purpose without scanning author JSON", () => {
+  const transitions = [{ groupId: "source", stateId: "calm" }, { groupId: "external", stateId: "calm" }];
+  const script = { steps: [
+    { id: 1, kind: "state", parameters: { transitions: structuredClone(transitions) } },
+    { id: 2, kind: "signal", parameters: { parameters: { transitions, kind: "state", parameters: { transitions } } } }
+  ] };
+  const binding = { initialScript: structuredClone(script), transitionScripts: { calm: structuredClone(script) }, scripts: [structuredClone(script)] };
+  const before = structuredClone(binding), result = remapBindingStateTransitions(binding, { sourceGroupId: "source", groupId: "destination" });
+  for (const saved of [result.initialScript, result.transitionScripts.calm, ...result.scripts]) {
+    assert.deepEqual(saved.steps[0].parameters.transitions, [{ groupId: "destination", stateId: "calm" }, transitions[1]]);
+    assert.deepEqual(saved.steps[1], script.steps[1]);
+  }
+  assert.deepEqual(binding, before);
+});
+
+test("single-state imports remap only their owned pair, retaining other states and groups", () => {
+  const pair = (groupId, stateId) => ({ steps: [{ kind: "state", parameters: { transitions: [{ groupId, stateId }] } }] });
+  const binding = { scripts: [pair("source", "calm"), pair("source", "alarm"), pair("external", "calm")] };
+  const result = remapBindingStateTransitions(binding, { sourceGroupId: "source", groupId: "destination", stateMapping: new Map([["calm", "copy"]]) });
+  assert.deepEqual(result.scripts.map((script) => script.steps[0].parameters.transitions[0]), [
+    { groupId: "destination", stateId: "copy" }, { groupId: "source", stateId: "alarm" }, { groupId: "external", stateId: "calm" }
+  ]);
+});
+
+test("dialogue and movement imports remap only typed catalog and native action references", () => {
+  const actions = [
+    { kind: "dialogue", parameters: { dialogueId: "shared", tokenUuids: ["Scene.source.Token.pc", "Scene.external.Token.pc"] } },
+    { kind: "approach", parameters: { targetUuid: "Scene.source.Tile.counter" } },
+    { kind: "follow", parameters: { targetUuid: "Scene.source.Token.pc" } },
+    { kind: "signal", parameters: { parameters: { dialogueId: "shared", tokenUuids: ["Scene.source.Token.pc"], targetUuid: "Scene.source.Token.pc" } } },
+    { kind: "macro", parameters: { macroUuid: "Macro.original" } }
+  ];
+  const binding = { initialScript: { steps: structuredClone(actions) }, transitionScripts: { state: { steps: structuredClone(actions) } }, scripts: [{ steps: structuredClone(actions) }] };
+  const before = structuredClone(binding), result = remapBindingActionReferences(binding, {
+    assetMapping: new Map([["Shop:shared", "shopCopy"], ["Dialogue:shared", "dialogueCopy"]]), sourceSceneUuid: "Scene.source", sceneUuid: "Scene.target"
+  });
+  for (const script of [result.initialScript, result.transitionScripts.state, ...result.scripts]) {
+    assert.deepEqual(script.steps[0].parameters, { dialogueId: "dialogueCopy", tokenUuids: ["Scene.target.Token.pc", "Scene.external.Token.pc"] });
+    assert.equal(script.steps[1].parameters.targetUuid, "Scene.target.Tile.counter");
+    assert.equal(script.steps[2].parameters.targetUuid, "Scene.target.Token.pc");
+    assert.deepEqual(script.steps.slice(3), actions.slice(3));
+  }
+  assert.deepEqual(binding, before);
 });

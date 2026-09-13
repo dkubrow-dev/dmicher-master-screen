@@ -5,3 +5,18 @@ export const INTERACTION_LEASE_MS = 120_000;
 export const shopSessionIsLive = (session, now = Date.now()) => Boolean(session && (session.status === "pending" || session.expiresAt > now));
 export const dialogueSessionIsLive = (session, now = Date.now()) => Boolean(session
   && ["active", "processing", "finished"].includes(session.status) && session.expiresAt > now);
+
+export const dialogueSessionMatchesReference = (session, reference) => Boolean(session && reference
+  && session.sessionId === reference.sessionId && session.userId === reference.userId && session.actorTokenId === reference.actorTokenId);
+
+/** An explicit script wait also covers an interrupted conversation: interruption
+ * is not completion. Leave or an expired window lease releases the waiting step. */
+export function scriptDialoguesPending(runtime, references, now = Date.now(), mode = "all") {
+  if (mode === "none" || !references?.length) return false;
+  const sessions = Object.values(runtime?.dialogueSessions ?? {});
+  const pending = (reference) => sessions.some((session) => session.runId === runtime.runId
+    && ["active", "processing", "interrupted", "finished"].includes(session.status) && session.expiresAt > now
+    && dialogueSessionMatchesReference(session, reference));
+  // "First" means any participant may finish first, not the first array entry.
+  return mode === "first" ? references.every(pending) : references.some(pending);
+}

@@ -64,6 +64,23 @@
 .dmicher-master-screen .ms-signal-field-table button { height: 23px; min-height: 23px; padding: 1px 6px; margin-right: 3px; }
 .dmicher-master-screen .ms-script-value, .dmicher-master-screen .ms-script-inline-actions { display: flex; align-items: center; gap: 4px; }
 .dmicher-master-screen .ms-script-value > input { flex: 1; min-width: 30px; }
+.dmicher-master-screen .ms-emotion-value > button { flex: 0 0 22px; width: 22px; height: 22px; padding: 0; justify-content: center; font-size: 17px; }
+.dmicher-master-screen .ms-state-pairs { width: 100%; table-layout: fixed; border: 0; margin: 0 0 3px; font-size: 11px; }
+.dmicher-master-screen .ms-state-pairs :is(th, td) { padding: 1px 2px; }
+.dmicher-master-screen .ms-state-pairs :is(th, td):last-child { width: 22px; }
+.dmicher-master-screen .ms-state-pairs select { width: 100%; min-width: 0; }
+.dmicher-master-screen .ms-emoji-picker { position: fixed; inset: auto; margin: 0; padding: 5px; width: 178px; max-width: calc(100vw - 8px); border: 1px solid var(--dmicher-border); border-radius: 5px; color: var(--dmicher-text); background: var(--dmicher-content-bg); box-shadow: 0 4px 18px #0008; }
+.dmicher-master-screen .ms-emoji-picker:not(:popover-open) { display: none; }
+.dmicher-master-screen .ms-emoji-picker nav { display: flex; gap: 3px; padding-bottom: 4px; border-bottom: 1px solid var(--dmicher-border-muted); }
+.dmicher-master-screen .ms-emoji-picker nav a { display: flex; align-items: center; justify-content: center; width: 29px; height: 27px; font-size: 20px; text-decoration: none; border-radius: 3px; }
+.dmicher-master-screen .ms-emoji-scroll { max-height: min(239px, calc(100vh - 56px)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dmicher-master-screen .ms-emoji-scroll section { padding-top: 4px; }
+.dmicher-master-screen .ms-emoji-scroll h4 { margin: 0 0 3px; padding: 0; font-size: 11px; font-family: inherit; line-height: 16px; }
+.dmicher-master-screen .ms-emoji-scroll table { margin: 0 0 4px; width: 100%; table-layout: fixed; border: 0; border-spacing: 0; background: transparent; }
+.dmicher-master-screen .ms-emoji-scroll tr { background: transparent; }
+.dmicher-master-screen .ms-emoji-scroll td { padding: 0; text-align: center; }
+.dmicher-master-screen .ms-emoji-scroll button { display: inline-flex; align-items: center; justify-content: center; width: 29px; min-height: 29px; height: 29px; margin: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; font-size: 21px; line-height: 1; }
+.dmicher-master-screen .ms-emoji-picker :is(button, a):is(:hover, :focus-visible) { background: var(--dmicher-row-hover); outline: 1px solid var(--dmicher-accent); box-shadow: none; }
 .dmicher-master-screen .ms-script-unit { flex: 0 0 auto; white-space: nowrap; font-size: 11px; opacity: .8; }
 .dmicher-master-screen .ms-script-inline-actions { flex-wrap: wrap; }
 .dmicher-master-screen .ms-script-parameter-group > summary { display: flex; align-items: center; gap: 5px; cursor: pointer; min-height: 23px; font-weight: 600; }

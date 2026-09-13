@@ -1,6 +1,12 @@
 # dmicher 🎬 Master screen — 0.0.1
 
-Разработка от 12 сентября 2026 для Foundry 13/14. Обязательная зависимость — Generics 1.0.0. Номер версии сохранён; это сборка ветки разработки, не публикация удалённого релиза.
+Разработка от 13 сентября 2026 для Foundry 13/14. Обязательная зависимость — Generics 1.0.0. Номер версии сохранён; это сборка ветки разработки, не публикация удалённого релиза.
+
+- Эмоция выбирается кнопкой рядом с полем из компактного окна: 140 символов, четыре группы по 5×7, навигация сверху и прокрутка. Выбор синхронизируется с JSON; клик снаружи и Escape закрывают окно. Размер эмоции допускает положительные дробные значения, по умолчанию 32 px карты.
+- Новая функция скрипта «Состояние» переключает выбранные пары группа–состояние, сохраняя статус запуска групп. Все назначения и разрешения проверяются до переключения. Собственная группа меняется последней и завершает прежний скрипт. Ссылки учитываются при импорте и копировании подготовки.
+- «Диалог» открывает собственный прикреплённый диалог выбранным персонажам по UUID. Можно дождаться всех разговоров (по умолчанию), первого завершившегося или продолжить без ожидания. Остальные окна остаются открытыми. Права, доступность и общая кратность проверяются до открытия набора.
+- «Приблизиться» перемещает к объекту на заданное расстояние за длительность или со скоростью, игнорируя препятствия. «Следовать» поддерживает траекторию и прямую до препятствия, диапазон расстояний, скорость и завершение по достижению цели либо смене состояния. Таблицы параметров, JSON и справка RU/EN описывают оба действия.
+- Исправлен первый клик по кнопкам таблицы после изменения JSON: неизменившиеся поля не пересоздаются при потере фокуса редактором.
 
 - Разделены предметные модели, запись документов и представления. Формы и таблицы используют общие компоненты; старые перекрывающие стили и заменённые исполнители удалены. Отображение эмоций и облачков отделено от выполнения скриптов.
 - Исправлены ссылки при совпадении ID магазина и диалога, перенос и удаление объявлений сигналов больше не принимают произвольные JSON-поля за ссылки. Последняя страница диалога корректно удерживает рутину до закрытия. Журнал показывает текущие сигналы вместо старого источника данных.
@@ -26,3 +32,7 @@ Groups and states now share emitter-owned typed signals and reusable object scri
 Script parameters and signal fields now use compact expandable tables synchronized with JSON. Mode changes preserve inactive values. The signal tree separates scene services, groups and native object types. Selecting an automation object focuses and outlines it on its native canvas layer. Context menus, scripts and interactions also support drawings, walls, lights, sounds, notes, templates and regions within their native capabilities.
 
 Domain models, document persistence and presentation now have separate responsibilities. Shared form controls and lifecycle replace duplicated code. Imports distinguish shop and dialogue identities and preserve opaque signal payloads. Final dialogue pages retain the routine pause until closed, and the journal reads current signal history. Interface text, templates, errors and help now cover Russian and English.
+
+Emotion now has an inline Unicode picker with four 5-column by 7-row groups, anchor navigation, scrolling and outside-click dismissal. Its positive fractional font size defaults to 32 map pixels. The State script action changes selected group/state pairs after validation, preserves automation status, and changes its own group last to retire the previous script. Preparation transfer remaps these declared references while preserving unrelated JSON.
+
+Dialogue opens an attached dialogue for character token UUIDs after checking owners, availability and the batch quota. Wait for all conversations (default), the first to finish, or none; other windows stay open. Approach moves to a target gap using duration or speed and deliberately ignores obstacles. Follow supports the target's trajectory or a straight line up to obstacles, minimum/maximum distances, speed, and completion on arrival or state change. Tables, JSON and RU/EN help cover all modes. Redundant JSON blur events no longer consume the first click on a table button.

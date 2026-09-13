@@ -1,9 +1,10 @@
 import { text } from "./localization.js";
 
 const labels = Object.freeze({
-  wait: ["Ожидание", "Wait"], move: ["Перемещение", "Move"], visibility: ["Видимость", "Visibility"],
+  wait: ["Ожидание", "Wait"], move: ["Перемещение", "Move"], approach: ["Приблизиться", "Approach"], visibility: ["Видимость", "Visibility"],
   speech: ["Реплика", "Speech"], emotion: ["Эмоция", "Emotion"], sound: ["Звук", "Sound"],
-  signal: ["Сигнал", "Signal"], macro: ["Макрос", "Macro"]
+  signal: ["Сигнал", "Signal"], macro: ["Макрос", "Macro"], state: ["Состояние", "State"],
+  dialogue: ["Диалог", "Dialogue"], follow: ["Следовать", "Follow"]
 });
 
 /** The editor and combat prompts must use the same names for script actions. */

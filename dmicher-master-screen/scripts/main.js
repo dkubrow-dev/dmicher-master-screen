@@ -63,6 +63,7 @@ Hooks.once("ready", () => {
   on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
   on("createChatMessage", (message, _options, userId) => {
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
+    void Promise.resolve().then(() => controller.dialogues.processScriptInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
     void controller.dialogues.processCommand(message, userId).catch(notifyError);
   });

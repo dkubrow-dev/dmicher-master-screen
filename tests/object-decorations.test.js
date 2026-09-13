@@ -17,13 +17,16 @@ test("canvas decorations reuse labels, obey hidden visibility and release each o
   first.update(document, { emoji: "!", bubble: { text: "Hello", fontSize: 20 } });
   second.update(document, { emoji: "?" });
   assert.equal(created.length, 3); assert.ok(created.every(label => label.visible === false));
+  assert.equal(created[0].style.fontSize, 32); assert.equal(created[2].style.fontSize, 32);
   game.user.isGM = true;
-  first.update(document, { emoji: "!", bubble: { text: "Updated", fontSize: 22 } });
+  first.update(document, { emoji: "!", emojiSize: 45.5, bubble: { text: "Updated", fontSize: 22 } });
   assert.equal(created.length, 3); assert.equal(created[1].text, "Updated");
+  assert.equal(created[0].style.fontSize, 45.5); assert.equal(created[2].style.fontSize, 32);
   assert.equal(created[1].style.fontSize, 22); assert.equal(created[0].visible, true);
   document.object = { addChild(label) { label.parent = this; }, toLocal: point => point };
   first.update(document, { emoji: "!", bubble: { text: "Updated", fontSize: 22 } });
   assert.equal(created.length, 3); assert.equal(created[0].parent, document.object);
+  assert.equal(created[0].style.fontSize, 32);
   first.remove(document); first.clear();
   assert.equal(created[0].destroyed, true); assert.equal(created[1].destroyed, true);
   assert.equal(created[2].destroyed, undefined);
