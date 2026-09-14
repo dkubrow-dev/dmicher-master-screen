@@ -252,6 +252,78 @@ test("scene restoration runs only prepared object initials, selects entry states
   assert.deepEqual(getRuntime(f.scene).shops, old.shops); assert.deepEqual(getRuntime(f.scene).tradeRequests, old.tradeRequests); assert.deepEqual(getRuntime(f.scene).disabledObjects, old.disabledObjects);
   assert.deepEqual(f.calls, []); assert.equal(f.flags.automationHalted, true);
 });
+
+test("one restore survives a clock tick after Foundry applies entry states but before its write resolves", async () => {
+  for (const all of [true, false]) for (const prepared of [false, true]) {
+    const f = await fixture({ initial: script([step(1, "move", { duration: 0, position: { x: 0, y: 0 } })]) });
+    await f.runtime.enter(f.scene, "tension");
+    if (prepared) { await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.tick(); }
+    f.npc.x = 200;
+    let begin, release, intercepted = false;
+    const written = new Promise(resolve => { begin = resolve; }), pending = new Promise(resolve => { release = resolve; });
+    const save = f.scene.setFlag.bind(f.scene);
+    f.scene.setFlag = async (scope, key, value) => {
+      await save(scope, key, value);
+      if (key === "groupRuntimes.main" && value.runId === "" && f.runtime.restorations.size && !intercepted) {
+        intercepted = true; begin(); await pending;
+      }
+    };
+    const restoring = all ? f.runtime.restoreAllInitial(f.scene) : f.runtime.restoreGroupInitial(f.scene, "main");
+    await written;
+    const ticking = f.tick();
+    await new Promise(resolve => setImmediate(resolve));
+    release();
+    const [runs] = await Promise.all([restoring, ticking]);
+    assert.equal(runs.length, 1, "the first click must queue the initial script");
+    for (let index = 0; index < 4; index++) await f.tick();
+    assert.equal(f.npc.x, 0, "the initial position is restored without another click");
+    assert.equal(getRuntime(f.scene).halted, true);
+    assert.equal(f.runtime.isRestoringInitial(f.scene), false);
+  }
+});
+
+test("an older tick cannot finish a restore while its scripts are still being prepared", async () => {
+  const f = await fixture({ initial: script([step(1, "move", { duration: 0, position: { x: 0, y: 0 } })]) });
+  await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.tick(); f.npc.x = 200;
+  let begin, release;
+  const written = new Promise(resolve => { begin = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const save = f.scene.setFlag.bind(f.scene);
+  f.scene.setFlag = async (scope, key, value) => {
+    await save(scope, key, value);
+    if (key === "groupRuntimes.main" && value.runId === "" && f.runtime.restorations.size) { begin(); await pending; }
+  };
+  const restoring = f.runtime.restoreAllInitial(f.scene); await written;
+  const batch = [...f.runtime.restorations.values()][0];
+  const finishing = f.runtime.finishRestoration(f.scene, batch);
+  await new Promise(resolve => setImmediate(resolve)); release();
+  const [runs] = await Promise.all([restoring, finishing]);
+  assert.equal(runs.length, 1);
+  assert.equal(f.runtime.restorations.get(batch.id), batch, "preparation cannot be mistaken for a completed batch");
+  await f.tick(); await f.tick();
+  assert.equal(f.npc.x, 0); assert.equal(f.runtime.isRestoringInitial(f.scene), false);
+});
+
+test("emergency stop cancels restore preparation immediately while its native save is pending", async () => {
+  const f = await fixture({ initial: script([step(1, "move", { duration: 0, position: { x: 0, y: 0 } })]) });
+  await f.runtime.enter(f.scene, "tension"); f.npc.x = 200;
+  let begin, release, intercepted = false;
+  const written = new Promise(resolve => { begin = resolve; }), pending = new Promise(resolve => { release = resolve; });
+  const save = f.scene.setFlag.bind(f.scene);
+  f.scene.setFlag = async (scope, key, value) => {
+    await save(scope, key, value);
+    if (key === "groupRuntimes.main" && value.runId === "" && f.runtime.restorations.size && !intercepted) {
+      intercepted = true; begin(); await pending;
+    }
+  };
+  const restoring = f.runtime.restoreAllInitial(f.scene); await written;
+  const stopping = f.runtime.haltAll(f.scene);
+  assert.equal(f.runtime.isRestoringInitial(f.scene), false, "Stop cancels locally without waiting for persistence");
+  release();
+  const [runs] = await Promise.all([restoring, stopping]);
+  assert.deepEqual(runs, []);
+  await f.tick(); await f.tick();
+  assert.equal(f.npc.x, 200); assert.equal(getRuntime(f.scene).halted, true);
+});
 test("scene restoration returns to group entries after state actions in initial scripts without starting groups", async () => {
   const f = await fixture({ initial: script([step(1, "state", { transitions: [{ groupId: "main", stateId: "tension" }] }, [2]), step(2, "visibility", { visible: false })]) });
   await f.runtime.restoreAllInitial(f.scene); await f.tick(); await f.tick();
@@ -297,7 +369,7 @@ test("an old restoration callback cannot cancel its replacement and ungrouped pr
   f.flags.objectBindings.bindings["Token:npc"].groupId = null;
   await f.runtime.restoreAllInitial(f.scene); const old = [...f.runtime.restorations.values()][0];
   await f.runtime.restoreAllInitial(f.scene); const replacement = [...f.runtime.restorations.values()][0];
-  assert.notEqual(replacement.id, old.id); assert.equal(await f.runtime.selectInitialStates(f.scene, old), false); assert.equal(f.runtime.restorations.get(replacement.id), replacement);
+  assert.notEqual(replacement.id, old.id); await f.runtime.finishRestoration(f.scene, old); assert.equal(f.runtime.restorations.get(replacement.id), replacement);
   await f.tick(); await f.tick(); await f.tick(); await f.tick();
   assert.equal(f.npc.hidden, true); assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.flags.automationHalted, true);
 });

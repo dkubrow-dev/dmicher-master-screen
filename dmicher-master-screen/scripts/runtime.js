@@ -572,42 +572,48 @@ export class GroupRuntime {
     const halt = this.halt(scene, { all, groupId }), generation = sceneExecutionGeneration(scene);
     const generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
     await halt;
-    if (sceneExecutionGeneration(scene) !== generation || all && !isSceneAutomationHalted(scene)
-      || groups.some(group => executionGeneration(scene, group.groupId) !== generations.get(group.groupId) || !getRuntime(scene, { groupId: group.groupId }).halted)) return [];
-    const restoration = { id: randomId(), sceneId: scene.id, generation, all, groups, runIds: new Set(), states: new Map(groups.map(group => [group.groupId, this.restorationState(scene, group.groupId)])) };
-    this.restorations.set(restoration.id, restoration);
-    try {
-      if (!await this.selectInitialStates(scene, restoration)) return [];
-      for (const binding of Object.values(getObjectBindings(scene).bindings)) {
-        if ((!all || binding.groupId) && !groups.some(group => group.groupId === binding.groupId) || binding.playerCharacter || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
-        this.queueInitialRestoration(scene, { type: binding.type, id: binding.id }, binding, restoration);
-      }
-      if (!restoration.runIds.size) await this.finishRestoration(scene, restoration);
-      this.refresh(scene); return [...restoration.runIds];
-    } catch (error) { this.cancelRestoration(scene, restoration); throw error; }
-  }
-  async selectInitialStates(scene, restoration) {
+    // Preparing entry states and queueing initial scripts is one transaction.
+    // A clock tick must never see a half-saved signature or an empty batch that
+    // merely has not queued its scripts yet. Emergency cancellation stays local.
     return withSceneLock(scene, async () => {
-      this.requireAuthority(scene);
-      if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
-      if (restoration.all && scene.getFlag(MODULE_ID, "initialContinuations")?.length) await scene.setFlag(MODULE_ID, "initialContinuations", []);
-      for (const group of restoration.groups) {
-        if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
-        const run = getRuntime(scene, { groupId: group.groupId });
-        Object.assign(run, { stateId: group.entryStateId, state: materializeState(scene, group, getState(group, group.entryStateId)), runId: "", halted: true,
-          haltedAt: this.now(), enteredAt: 0, definitionRevision: group.revision, effects: {}, scriptStates: {}, interactionClocks: {}, error: "", manualInterruption: false, initialContinuations: [] });
-        await saveRuntime(scene, run);
-        restoration.states.set(group.groupId, this.restorationState(scene, group.groupId));
-      }
-      return this.restorationCurrent(scene, restoration);
+      if (sceneExecutionGeneration(scene) !== generation || all && !isSceneAutomationHalted(scene)
+        || groups.some(group => executionGeneration(scene, group.groupId) !== generations.get(group.groupId) || !getRuntime(scene, { groupId: group.groupId }).halted)) return [];
+      const restoration = { id: randomId(), sceneId: scene.id, generation, all, groups, runIds: new Set(), states: new Map(groups.map(group => [group.groupId, this.restorationState(scene, group.groupId)])) };
+      this.restorations.set(restoration.id, restoration);
+      try {
+        if (!await this.selectInitialStates(scene, restoration)) return [];
+        for (const binding of Object.values(getObjectBindings(scene).bindings)) {
+          if ((!all || binding.groupId) && !groups.some(group => group.groupId === binding.groupId) || binding.playerCharacter || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
+          this.queueInitialRestoration(scene, { type: binding.type, id: binding.id }, binding, restoration);
+        }
+        if (!restoration.runIds.size) this.restorations.delete(restoration.id);
+        this.refresh(scene); return [...restoration.runIds];
+      } catch (error) { this.cancelRestoration(scene, restoration); throw error; }
     });
   }
+  /** Caller holds the scene queue through both the native write and its signature. */
+  async selectInitialStates(scene, restoration) {
+    this.requireAuthority(scene);
+    if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
+    if (restoration.all && scene.getFlag(MODULE_ID, "initialContinuations")?.length) await scene.setFlag(MODULE_ID, "initialContinuations", []);
+    for (const group of restoration.groups) {
+      if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return false; }
+      const run = getRuntime(scene, { groupId: group.groupId });
+      Object.assign(run, { stateId: group.entryStateId, state: materializeState(scene, group, getState(group, group.entryStateId)), runId: "", halted: true,
+        haltedAt: this.now(), enteredAt: 0, definitionRevision: group.revision, effects: {}, scriptStates: {}, interactionClocks: {}, error: "", manualInterruption: false, initialContinuations: [] });
+      await saveRuntime(scene, run);
+      restoration.states.set(group.groupId, this.restorationState(scene, group.groupId));
+    }
+    return this.restorationCurrent(scene, restoration);
+  }
   async finishRestoration(scene, restoration) {
-    if (!restoration || restoration.sceneId !== scene?.id) return;
-    if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return; }
-    if ([...restoration.runIds].some(runId => this.manualRuns.has(runId))) return;
-    try { await this.selectInitialStates(scene, restoration); }
-    finally { this.restorations.delete(restoration.id); this.refresh(scene); }
+    return withSceneLock(scene, async () => {
+      if (!restoration || restoration.sceneId !== scene?.id) return;
+      if (!this.restorationCurrent(scene, restoration)) { this.cancelRestoration(scene, restoration); return; }
+      if ([...restoration.runIds].some(runId => this.manualRuns.has(runId))) return;
+      try { await this.selectInitialStates(scene, restoration); }
+      finally { this.restorations.delete(restoration.id); this.refresh(scene); }
+    });
   }
   async once(scene, runId, key, operation) {
     const claimed = await withSceneLock(scene, async () => {
@@ -712,7 +718,9 @@ export class GroupRuntime {
       .finally(() => { this.cleanupTask = null; });
     this.busy = true; const jobs = [];
     try {
-      for (const restoration of this.restorations.values()) if (!this.restorationCurrent(scene, restoration)) this.cancelRestoration(scene, restoration);
+      if (this.restorations.size) await withSceneLock(scene, () => {
+        for (const restoration of this.restorations.values()) if (!this.restorationCurrent(scene, restoration)) this.cancelRestoration(scene, restoration);
+      });
       if (this.commandExecutor) {
         const now = this.now(), clockKey = `${scene.id}:commands`;
         const elapsed = Math.min(1, Math.max(0, (now - (this.tickTimes.get(clockKey) ?? now)) / 1000));
