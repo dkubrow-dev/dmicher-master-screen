@@ -1,12 +1,13 @@
 import { message as localizedMessage, text } from "./localization.js";
 import { withSceneLock } from "./store.js";
 import { notifyExecutionChange, createExecutionScope } from "./execution.js";
-import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } from "./script-movement.js";
+import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities, stopObjectAnimation } from "./script-movement.js";
 import { createCombatAdapter } from "./combat-adapter.js";
 import { DEFAULT_EMOTION_SIZE } from "./script-model.js";
 import { planScriptApproach, planScriptFollow, advanceScriptFollow } from "./script-target-movement.js";
 import { scriptDialoguesPending } from "./interaction-session-model.js";
 import { debugTrace, debugError } from "./debug.js";
+import { interruptScriptProgress, resumeScriptProgress, scriptHasActivity, clearScriptPresentation } from "./script-interruptions.js";
 
 const clone = structuredClone;
 const LIMIT = 16;
@@ -20,7 +21,8 @@ export const scriptProgressKey = (target, script, slot = "routine") => `${target
 export function initialScriptProgress(script) {
   return { stepId: script.steps.length ? 1 : null, status: script.steps.length && script.enabled !== false ? "ready" : "done", sequence: 0,
     action: null, nextStepId: null, emoji: "", emojiSize: DEFAULT_EMOTION_SIZE, emojiAt: 0, emojiEffect: null, bubble: null, bubbleAt: 0,
-    speechEffect: null, messageIds: [], dialogueSessions: [], deleteMessages: false, combat: null };
+    speechEffect: null, messageIds: [], dialogueSessions: [], deleteMessages: false, combat: null,
+    generation: 0, errorRetries: 0, interruption: null };
 }
 const duration = (step, action) => {
   if (["speech", "emotion"].includes(step.kind) && parallel(step)) return 0;
@@ -48,16 +50,99 @@ const sameTurn = (expected, current) => expected
 export class ObjectScriptRuntime {
   constructor(runtime, { random = Math.random } = {}) {
     this.runtime = runtime; this.random = random; this.jobs = new Map(); this.cancels = new Set();
+    this.persistenceFailures = new WeakMap();
     this.combat = runtime.combat ?? createCombatAdapter();
   }
   state(scene, runId) { return this.runtime.scriptState(scene, runId); }
   save(scene, state) { return this.runtime.saveScriptState(scene, state); }
-  current(scene, runId, target, options) { return this.runtime.currentObject(scene, runId, target, options); }
+  current(scene, runId, target, options) {
+    return !this.persistenceFailures.get(scene)?.has(`${runId}:${options?.scriptKey}`)
+      && this.runtime.currentObject(scene, runId, target, options);
+  }
   next(script, step) { return step.next.length ? step.next[Math.min(step.next.length - 1, Math.floor(this.random() * step.next.length))] : script.repeat ? 1 : null; }
   advance(progress, next) {
     progress.stepId = next; progress.status = next === null ? "done" : "ready";
     // Explicit null is essential: Foundry recursively merges flag objects.
     progress.action = null; progress.nextStepId = null;
+  }
+  resumeManualProgress(script, previous) {
+    if (!previous) return initialScriptProgress(script);
+    const progress = { ...initialScriptProgress(script), stepId: previous.stepId, status: previous.status,
+      sequence: Number(previous.sequence ?? 0) + 1, generation: Number(previous.generation ?? 0) + 1,
+      errorRetries: Number(previous.errorRetries ?? 0) };
+    if (["done", "stopped", "failed", "uncertain"].includes(progress.status)) return progress;
+    interruptScriptProgress(progress, script, "manual", { now: this.now(), next: step => this.next(script, step) });
+    resumeScriptProgress(progress, this.now());
+    return progress;
+  }
+  now() { return this.runtime.now?.() ?? Date.now(); }
+  interruptionSource(scene, object, script) {
+    const external = this.runtime.scriptInterruptionSource?.(scene, targetOf(object), script);
+    if (external) return external;
+    if (!script.combat.enabled && this.combat.context(scene, object)) return "combat";
+    return null;
+  }
+  generationCurrent(scene, runId, key, generation) {
+    return Number(this.state(scene, runId)?.scriptStates?.[key]?.generation ?? 0) === generation;
+  }
+  scriptForKey(state, object, key) {
+    if (state.manual) return state.script;
+    const target = targetOf(object);
+    for (const [slot, scripts] of [["transition", state.state?.transitions], ["routine", state.state?.scripts]]) {
+      const script = scripts?.find(script => scriptProgressKey(target, script, slot) === key
+        && script.target?.type === target.type && script.target?.id === target.id);
+      if (script) return script;
+    }
+    return null;
+  }
+  async interrupt(scene, state, object, script, key, source, error) {
+    const progress = state.scriptStates[key];
+    const presentationOnly = progress?.status === "done" && scriptHasActivity(progress);
+    if (presentationOnly) {
+      // An effect can outlive its script. Cancelling it never reopens completed
+      // foreground work, whether observed by the clock or an asynchronous job.
+      clearScriptPresentation(progress, this.now()); progress.generation = Number(progress.generation ?? 0) + 1;
+    } else if (!interruptScriptProgress(progress, script, source, { now: this.now(), next: step => this.next(script, step) })) return false;
+    if (!presentationOnly) stopObjectAnimation(object);
+    this.runtime.effects.stop?.(scene, { runIds: [state.runId], target: targetOf(object), scriptKey: key });
+    if (error) {
+      state.error = localizedMessage("Скрипт «{0}»: {1}", [script.name || object.name, error.message ?? String(error)]);
+      globalThis.ui?.notifications?.error?.(state.error);
+      debugError("script", "action.failed", error, () => traceContext(scene, state, object, script,
+        script.steps.find(step => step.id === progress.stepId), { source, retry: progress.errorRetries, interruption: progress.interruption }));
+    }
+    debugTrace("script", "interrupted", () => traceContext(scene, state, object, script,
+      script.steps.find(step => step.id === progress.stepId), { source, interruption: progress.interruption, retry: progress.errorRetries }));
+    try { await this.save(scene, state); }
+    catch (persistenceError) {
+      // A failed progress write cannot persist the retry budget. Stop locally
+      // instead of replaying the same failure on every simulation tick.
+      let failed = this.persistenceFailures.get(scene);
+      if (!failed) this.persistenceFailures.set(scene, failed = new Map());
+      for (const [id, runId] of failed) if (this.runtime.owns && !this.runtime.owns(scene, runId)) failed.delete(id);
+      failed.set(`${state.runId}:${key}`, state.runId);
+      notifyExecutionChange(scene, "script-persistence-failed");
+      debugError("script", "persistence.failed", persistenceError, () => traceContext(scene, state, object, script, null, { stoppedLocally: true }));
+      throw persistenceError;
+    }
+    notifyExecutionChange(scene, "script-interrupted");
+    this.runtime.refreshObject(object); this.runtime.onChange(scene);
+    return true;
+  }
+  async fail(scene, state, object, script, key, error) {
+    if (!this.current(scene, state.runId, targetOf(object), { ignoreInteractionPause: true, scriptKey: key })) return false;
+    state.scriptStates[key] ??= initialScriptProgress(script);
+    return this.interrupt(scene, state, object, script, key, "error", error);
+  }
+  async recordCancelledJob(job) {
+    if (!job.interruptedBy) return;
+    await withSceneLock(job.scene, async () => {
+      if (!this.current(job.scene, job.runId, job.target, { ignoreInteractionPause: true, scriptKey: job.progressKey })) return;
+      const state = this.state(job.scene, job.runId), progress = state?.scriptStates?.[job.progressKey];
+      if (!progress || Number(progress.generation ?? 0) !== job.generation
+        || (job.background ? progress.speechEffect?.id !== job.sequence : progress.sequence !== job.sequence)) return;
+      await this.interrupt(job.scene, state, job.object, job.script, job.progressKey, job.interruptedBy);
+    });
   }
   replaceEffect(state, object, field) {
     const prefix = `${object.documentName}:${object.id}:`;
@@ -96,7 +181,7 @@ export class ObjectScriptRuntime {
     if (step.kind === "speech" && stage === "effect") this.replaceEffect(state, object, "speechEffect");
     progress.sequence = Number(progress.sequence ?? 0) + 1; progress.status = "pending";
     const job = { key: `${scene.id}:${state.runId}:${key}`, progressKey: key, scene, object, target: targetOf(object), runId: state.runId,
-      groupId: state.groupId, script: clone(script), step: clone(step), sequence: progress.sequence, stage,
+      groupId: state.groupId, script: clone(script), step: clone(step), sequence: progress.sequence, generation: Number(progress.generation ?? 0), stage,
       combat: this.combat.context(scene, object), ...extra };
     this.jobs.set(job.key, job);
     debugTrace("script", "action.claim", () => traceContext(scene, state, object, script, step, { stage, sequence: progress.sequence }));
@@ -114,6 +199,16 @@ export class ObjectScriptRuntime {
     if (!state || !this.current(scene, runId, target, { ignoreInteractionPause: true })) return jobs;
     let changed = false, visualChanged = false;
     const turn = this.combat.context(scene, object), prefix = `${target.type}:${target.id}:`;
+    // Completed foreground work may still own a timed presentation. Cancelling
+    // that presentation must not reopen the completed transition or its routine.
+    for (const [key, progress] of Object.entries(state.scriptStates ?? {})) {
+      if (!key.startsWith(prefix) || !scriptHasActivity(progress)
+        || !this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: key })) continue;
+      const script = this.scriptForKey(state, object, key);
+      const source = script && this.interruptionSource(scene, object, script);
+      if (!source) continue;
+      await this.interrupt(scene, state, object, script, key, source);
+    }
     // With no following action, the remaining turn can still carry a timed
     // effect. Spend this once, exactly as a trailing wait, not on every poll.
     if (idle && turn?.isTurn) for (const [key, progress] of Object.entries(state.scriptStates ?? {})) {
@@ -162,7 +257,8 @@ export class ObjectScriptRuntime {
         if (effect.step.parameters.duration > 0) { progress.bubble = null; visualChanged = true; }
         effect.status = "pending";
         const job = { key: `${scene.id}:${runId}:${key}:speech:${effect.id}`, progressKey: key, scene, object, target, runId,
-          groupId: state.groupId, script: clone(effect.script), step: clone(effect.step), sequence: effect.id, stage: "speechEnd",
+          groupId: state.groupId, script: clone(this.scriptForKey(state, object, key) ?? effect.script), step: clone(effect.step), sequence: effect.id,
+          generation: Number(progress.generation ?? 0), stage: "speechEnd",
           combat: turn, background: clone(effect) };
         this.jobs.set(job.key, job); jobs.push(job);
         debugTrace("script", "speech.expired", () => traceContext(scene, state, object, effect.script, effect.step));
@@ -180,9 +276,22 @@ export class ObjectScriptRuntime {
   async tick(scene, initial, object, script, elapsed, { slot = "routine" } = {}) {
     const target = targetOf(object), key = scriptProgressKey(target, script, slot), jobKey = `${scene.id}:${initial.runId}:${key}`;
     let state = this.state(scene, initial.runId);
-    if (!state || !this.current(scene, initial.runId, target, { scriptKey: key }) || script.enabled === false) return;
+    if (!state || !this.current(scene, initial.runId, target, { ignoreInteractionPause: true, scriptKey: key }) || script.enabled === false) return;
     state.scriptStates ??= {};
+    const source = this.interruptionSource(scene, object, script);
+    // A script which has not started is merely unavailable in this context.
+    // Do not manufacture an interrupted run while opening a scene in combat.
+    if (source && !state.scriptStates[key]) return;
     const progress = state.scriptStates[key] ??= initialScriptProgress(script);
+    if (source) { await this.interrupt(scene, state, object, script, key, source); return; }
+    if (!this.current(scene, initial.runId, target, { scriptKey: key })) return;
+    if (progress.status === "interrupted") {
+      if (progress.interruption?.source === "manual" || !resumeScriptProgress(progress, this.now())) return;
+      debugTrace("script", "resumed", () => traceContext(scene, state, object, script,
+        script.steps.find(step => step.id === progress.stepId), { retry: progress.errorRetries }));
+      await this.save(scene, state); return;
+    }
+    if (["stopped", "failed", "uncertain"].includes(progress.status)) return;
     if (progress.status === "pending") {
       if (!this.jobs.has(jobKey)) { progress.status = "uncertain"; state.error = localizedMessage("Скрипт «{0}»: исход прежнего действия неизвестен. Проверьте результат и явно перезапустите состояние.", [script.name || object.name]);
         debugError("script", "action.uncertain", new Error(state.error), () => traceContext(scene, state, object, script, script.steps.find(step => step.id === progress.stepId)));
@@ -233,16 +342,31 @@ export class ObjectScriptRuntime {
       }
       let consumed = 0;
       if (["move", "approach", "follow"].includes(step.kind)) {
+        if (!action.started) {
+          action.started = true;
+          // Record the begun step before yielding to native I/O so even a short
+          // interaction during its first movement has a progress to interrupt.
+          await this.save(scene, state);
+        }
         // Foundry owns the submitted document update. The scene queue must not
         // wait for its animation/network promise after this execution is revoked.
-        const scope = createExecutionScope(scene, { isCurrent: () => !globalThis.game?.paused
-          && this.current(scene, state.runId, target, { scriptKey: key }) && sameTurn(combat, this.combat.context(scene, object)) });
+        const generation = Number(progress.generation ?? 0);
+        let interruptedBy = null;
+        const scope = createExecutionScope(scene, { isCurrent: () => {
+          interruptedBy ??= this.interruptionSource(scene, object, script);
+          return !interruptedBy && !globalThis.game?.paused && this.generationCurrent(scene, state.runId, key, generation)
+            && this.current(scene, state.runId, target, { scriptKey: key }) && sameTurn(combat, this.combat.context(scene, object));
+        } });
         const options = { isCurrent: scope.current, signal: scope.signal, ignoreObstacles: step.kind === "approach" };
         let outcome;
         try { outcome = await scope.run(() => step.kind === "follow" ? advanceScriptFollow(scene, object, action.follow, params, available, options)
           : advanceScriptMovement(scene, object, action.movement, available, options)); }
         finally { scope.dispose(); }
-        if (outcome.stale) return;
+        if (outcome.stale) {
+          if (interruptedBy && this.current(scene, state.runId, target, { ignoreInteractionPause: true })
+            && this.generationCurrent(scene, state.runId, key, generation)) await this.interrupt(scene, state, object, script, key, interruptedBy);
+          return;
+        }
         const movement = outcome.value;
         consumed = movement.consumed;
         if (combat) { progress.combat.remaining = Math.max(0, progress.combat.remaining - consumed); this.consumeEffectTime(scene, state, object, consumed, progress); }
@@ -305,7 +429,11 @@ export class ObjectScriptRuntime {
       if (admitted()) await object.update({ hidden: !p.visible }); return {};
     }
     if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume, { scene, runId, target, groupId: job.groupId, manual: this.state(scene, runId)?.manual === true,
-      isCurrent: () => executionCurrent() && this.current(scene, runId, target, { ignoreInteractionPause: true }) }); return {}; }
+      scriptKey: job.progressKey, scriptGeneration: job.generation,
+      // Sound may outlive its step. Only its script generation and ownership,
+      // not the next step's sequence number, can end this presentation.
+      isCurrent: () => this.generationCurrent(scene, runId, job.progressKey, job.generation)
+        && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey }) && !this.interruptionSource(scene, object, script) }); return {}; }
     if (step.kind === "signal") {
       if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 });
       return {};
@@ -332,10 +460,7 @@ export class ObjectScriptRuntime {
     }
     if (step.kind === "macro") {
       if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error(localizedMessage("Этот макрос не прикреплён к объекту скрипта."));
-      try { await effects.macro(p.macroUuid, { scene, token: object, state: this.state(scene, runId)?.state, runId, stepId: step.id, isCurrent: admitted }); }
-      catch (error) { if (error.code === "script-deferred") throw error; console.error("dmicher-master-screen | script macro", error);
-        debugError("script", "macro.failed", error, () => traceContext(scene, { runId, groupId: job.groupId }, object, script, step));
-        globalThis.ui?.notifications?.error(localizedMessage("Макрос скрипта: {0}", [error.message ?? error])); }
+      await effects.macro(p.macroUuid, { scene, token: object, state: this.state(scene, runId)?.state, runId, stepId: step.id, isCurrent: admitted });
       return {};
     }
     throw new Error(localizedMessage("Неизвестное действие скрипта."));
@@ -357,7 +482,12 @@ export class ObjectScriptRuntime {
     const { scene, runId, target, sequence, step, script } = job;
     const sameEffect = () => !job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.speechEffect?.id === sequence;
     const current = () => sameEffect() && this.current(scene, runId, target, { scriptKey: job.progressKey });
-    const owned = () => sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true });
+    const owned = () => {
+      job.interruptedBy ??= this.interruptionSource(scene, job.object, script);
+      return !job.interruptedBy && sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey })
+        && this.generationCurrent(scene, runId, job.progressKey, job.generation)
+        && (job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.sequence === sequence);
+    };
     const scope = createExecutionScope(scene, { isCurrent: owned });
     this.cancels.add(scope.cancel);
     const admitted = () => {
@@ -372,7 +502,10 @@ export class ObjectScriptRuntime {
         catch (error) { return { error }; }
       });
       const outcome = result.stale ? result : result.value;
-      if (outcome.stale || !owned()) { debugTrace("script", "action.cancelled", () => traceContext(scene, { runId, groupId: job.groupId }, job.object, script, step, { stage: job.stage })); return; }
+      if (outcome.stale || !owned()) {
+        await this.recordCancelledJob(job);
+        debugTrace("script", "action.cancelled", () => traceContext(scene, { runId, groupId: job.groupId }, job.object, script, step, { stage: job.stage })); return;
+      }
       await withSceneLock(scene, async () => {
         if (!owned()) return;
         const state = this.state(scene, runId), progress = state?.scriptStates?.[job.progressKey];
@@ -383,9 +516,10 @@ export class ObjectScriptRuntime {
           else {
             progress.speechEffect = null;
             if (outcome.error) {
-              state.error = localizedMessage("Скрипт «{0}»: {1}", [script.name || job.object.name, outcome.error.message]);
-              globalThis.ui?.notifications?.error(state.error);
-              debugError("script", "speech.completion.failed", outcome.error, () => traceContext(scene, state, job.object, script, step));
+              // A delayed "after" message belongs to its original speech step.
+              // Retrying it follows that script's policy, never the next step's.
+              progress.stepId = step.id; progress.status = "ready";
+              await this.fail(scene, state, job.object, script, job.progressKey, outcome.error); return;
             } else {
               progress.messageIds = outcome.result?.messageIds ?? [];
               debugTrace("script", "speech.complete", () => traceContext(scene, state, job.object, script, step));
@@ -395,8 +529,7 @@ export class ObjectScriptRuntime {
         }
         if (progress?.status !== "pending" || progress.sequence !== sequence) return;
         if (outcome.error?.code === "script-deferred") progress.status = "ready";
-        else if (outcome.error) { progress.status = "failed"; state.error = localizedMessage("Скрипт «{0}»: {1}", [script.name || job.object.name, outcome.error.message]); globalThis.ui?.notifications?.error(state.error);
-          debugError("script", "action.failed", outcome.error, () => traceContext(scene, state, job.object, script, step, { stage: job.stage })); }
+        else if (outcome.error) { await this.fail(scene, state, job.object, script, job.progressKey, outcome.error); return; }
         else if (job.stage === "combat") {
           progress.status = "ready";
           if (progress.combat?.turnKey === job.combat.turnKey) {
@@ -435,5 +568,5 @@ export class ObjectScriptRuntime {
       });
     } finally { scope.dispose(); this.cancels.delete(scope.cancel); if (this.jobs.get(job.key) === job) this.jobs.delete(job.key); }
   }
-  dispose() { for (const cancel of this.cancels) cancel(); this.cancels.clear(); this.jobs.clear(); }
+  dispose() { for (const cancel of this.cancels) cancel(); this.cancels.clear(); this.jobs.clear(); this.persistenceFailures = new WeakMap(); }
 }

@@ -23,15 +23,24 @@ const groupStamp = (scene, groupId) => {
   const run = getRuntime(scene, { groupId });
   return JSON.stringify([run.runId, run.stateId, run.halted, run.haltedAt]);
 };
+const hasScriptScope = data => data.scriptKey != null;
+const validScriptScope = data => !hasScriptScope(data) ? data.scriptGeneration == null
+  : typeof data.scriptKey === "string" && Boolean(objectReferenceKey(data.target))
+    && data.scriptKey.startsWith(`${objectReferenceKey(data.target)}:`)
+    && Number.isSafeInteger(data.scriptGeneration ?? 0) && (data.scriptGeneration ?? 0) >= 0;
 
 export function scriptAudioIsCurrent(scene, data) {
-  if (!scene) return false;
+  if (!scene || !validScriptScope(data)) return false;
   const key = data.target && objectReferenceKey(data.target);
   const binding = key && scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[key];
   if (data.target && (!key || !scene[SCENE_OBJECT_COLLECTIONS[data.target.type]]?.get(data.target.id) || !binding || binding.playerCharacter)) return false;
+  // Manual initial runs are local to the GM. Their existing scene/group stamps
+  // gate remote admission; scoped stop deletes the delivery for every listener.
   if (data.manual) return data.manualHaltId === haltId(scene) && data.manualGroupStamp === groupStamp(scene, data.groupId);
   const run = getRuntimeForRun(scene, data.runId);
-  return Boolean(run && !isExecutionHalted(scene, run) && (!key || binding.groupId === run.groupId && !run.disabledObjects.includes(key)));
+  const progress = hasScriptScope(data) && run?.scriptStates?.[data.scriptKey];
+  const scriptCurrent = !hasScriptScope(data) || progress && (progress.generation ?? 0) === (data.scriptGeneration ?? 0);
+  return Boolean(run && scriptCurrent && !isExecutionHalted(scene, run) && (!key || binding.groupId === run.groupId && !run.disabledObjects.includes(key)));
 }
 
 /** One native sound per authenticated technical message. Generics owns delivery;
@@ -77,6 +86,7 @@ export class ScriptAudioService {
       || !isAudioMessage(message)
       || !data || typeof data.src !== "string" || !data.src || typeof data.runId !== "string"
       || typeof data.manual !== "boolean" || data.groupId != null && !/^[a-zA-Z0-9_-]{1,64}$/.test(data.groupId)
+      || !validScriptScope(data)
       || typeof data.playbackId !== "string" || !Number.isFinite(data.volume) || data.volume < 0 || data.volume > 1) return;
     this.handled.add(message.id);
     if (this.handled.size > 1024) this.handled.delete(this.handled.values().next().value);
@@ -92,10 +102,10 @@ export class ScriptAudioService {
   async playRecord(record) {
     const sound = record.sound = this.create(record.data.src);
     await sound.load({ autoplay: false });
-    if (!this.valid(record)) { this.mute(sound, record.data); return; }
+    if (!this.valid(record)) { this.mute(sound, record.data); this.stopRecord(record); return; }
     if (sound.failed) throw new Error(localizedMessage("Проигрывание звука Foundry недоступно."));
     await sound.play({ volume: record.data.volume, loop: false, onended: () => this.stopRecord(record) });
-    if (!this.valid(record)) this.mute(sound, record.data);
+    if (!this.valid(record)) { this.mute(sound, record.data); this.stopRecord(record); }
   }
   mute(sound, data) {
     if (!sound) return;
@@ -115,19 +125,25 @@ export class ScriptAudioService {
   checkScene(scene) {
     for (const record of this.records.values()) if (record.scene?.id === scene.id && !this.valid(record)) this.stopRecord(record);
   }
-  stop(scene, { runIds } = {}) {
+  stop(scene, { runIds, target, scriptKey } = {}) {
     if (!scene) return;
-    const matches = data => data.sceneId === scene.id && (!runIds || runIds.includes(data.runId));
+    const targetKey = target && objectReferenceKey(target);
+    if (target && !targetKey) return;
+    const matches = data => data.sceneId === scene.id && (!runIds || runIds.includes(data.runId))
+      && (!targetKey || objectReferenceKey(data.target) === targetKey)
+      && (scriptKey == null || data.scriptKey === scriptKey);
     for (const record of [...this.records.values()]) if (matches(record.data)) this.stopRecord(record);
     for (const request of this.requests.values()) if (matches(request.data)) request.cancelled = true;
   }
-  async sound(src, volume = 1, { scene, runId, groupId, isCurrent = () => true, signal, manual = false, target } = {}) {
+  async sound(src, volume = 1, { scene, runId, groupId, isCurrent = () => true, signal, manual = false, target, scriptKey, scriptGeneration = 0 } = {}) {
     if (!this.messages) throw new Error(localizedMessage("Общий сервис чата Generics недоступен."));
     if (!scene || !runId || this.disposed || signal?.aborted || !isCurrent()) return;
     this.start();
     const data = { sceneId: scene.id, runId, src, volume, manual: Boolean(manual),
       ...(manual ? { groupId: groupId ?? null, manualHaltId: haltId(scene), manualGroupStamp: groupStamp(scene, groupId) } : {}),
+      ...(scriptKey != null ? { scriptKey, scriptGeneration } : {}),
       playbackId: globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID(), ...(target ? { target: structuredClone(target) } : {}) };
+    if (!validScriptScope(data)) return;
     const request = { data, signal, isCurrent, cancelled: false };
     const current = () => !this.disposed && !request.cancelled && !signal?.aborted && isCurrent();
     request.cancel = () => { request.cancelled = true; for (const record of [...this.records.values()]) if (record.data.playbackId === data.playbackId) this.stopRecord(record); };

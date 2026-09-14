@@ -111,7 +111,7 @@ test("a start pressed before stop persistence finishes reads the committed stopp
 });
 test("a delayed expired-chat cleanup neither blocks the clock nor accumulates jobs", async () => {
   let release, cleanups = 0;
-  const f = await fixture({ routine: script([step(1, "wait", { seconds: 3 })]), effects: {
+  const f = await fixture({ routine: script([step(1, "wait", { seconds: 3 })], { interruptions: { manual: "restart-step" } }), effects: {
     cleanupSpeech: () => { cleanups++; return new Promise(resolve => { release = resolve; }); }
   } });
   try {
@@ -555,7 +555,7 @@ test("dialogue wait modes advance only on their condition and ignore only this s
     f.runtime.startScriptDialogues = async (_command, { isCurrent }) => {
       starts++; assert.equal(isCurrent(), true);
       const run = getRuntime(f.scene);
-      for (const ref of refs) run.dialogueSessions[ref.sessionId] = { ...ref, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+      for (const ref of refs) run.dialogueSessions[ref.sessionId] = { ...ref, runId: run.runId, origin: "script", target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
       await saveRuntime(f.scene, run); assert.equal(isCurrent(refs), true); return refs;
     };
     await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
@@ -567,7 +567,8 @@ test("dialogue wait modes advance only on their condition and ignore only this s
       run = getRuntime(f.scene); run.dialogueSessions.session1.status = "left";
       run.dialogueSessions.foreign = { ...refs[0], sessionId: "foreign", runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
       await saveRuntime(f.scene, run); await f.tick(); assert.equal(f.npc.hidden, false);
-      run = getRuntime(f.scene); run.dialogueSessions.foreign.status = "left"; await saveRuntime(f.scene, run); await f.tick(); assert.equal(f.npc.hidden, true);
+      run = getRuntime(f.scene); run.dialogueSessions.foreign.status = "left"; await saveRuntime(f.scene, run); await f.tick();
+      assert.equal(f.npc.hidden, false); assert.equal(f.progress().status, "stopped");
     }
   }
 });
@@ -577,7 +578,7 @@ test("waiting for an open dialogue does not rewrite runtime on every poll and re
   const reference = { sessionId: "session", userId: "player", actorTokenId: "pc" };
   f.runtime.startScriptDialogues = async () => {
     const run = getRuntime(f.scene);
-    run.dialogueSessions.session = { ...reference, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+    run.dialogueSessions.session = { ...reference, runId: run.runId, origin: "script", target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
     await saveRuntime(f.scene, run); return [reference];
   };
   await f.runtime.enter(f.scene, "calm"); await f.tick();
@@ -621,7 +622,7 @@ test("dialogue waiting still spends combat time and persists leaving combat only
   const reference = { sessionId: "session", userId: "player", actorTokenId: "pc" };
   f.runtime.startScriptDialogues = async () => {
     const run = getRuntime(f.scene);
-    run.dialogueSessions.session = { ...reference, runId: run.runId, target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
+    run.dialogueSessions.session = { ...reference, runId: run.runId, origin: "script", target: { type: "Token", id: "npc" }, status: "active", expiresAt: Date.now() + 60000 };
     await saveRuntime(f.scene, run); return [reference];
   };
   await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
@@ -694,7 +695,7 @@ test("repeated dialogue steps discard closed exclusions while retaining exact li
   let call = 0;
   f.runtime.startScriptDialogues = async () => {
     const references = ++call === 1 ? [ref("closed"), ref("live")] : [ref("new")], run = getRuntime(f.scene);
-    for (const reference of references) run.dialogueSessions[reference.sessionId] = { ...reference, runId: run.runId,
+    for (const reference of references) run.dialogueSessions[reference.sessionId] = { ...reference, runId: run.runId, origin: "script",
       target: { type: "Token", id: "npc" }, status: reference.sessionId === "closed" ? "left" : "active", expiresAt: Date.now() + 60000 };
     await saveRuntime(f.scene, run); return references;
   };

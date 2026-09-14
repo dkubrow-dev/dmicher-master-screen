@@ -1,11 +1,41 @@
 import { text as t } from "../localization.js";
 import { moveScriptStep } from "../script-editing.js";
-import { escapeHTML as e, formValue } from "./form-fields.js";
+import { escapeHTML as e, formValue, parameterRow, selectOptions } from "./form-fields.js";
+import { normalizeScriptInterruptions } from "../script-interruption-model.js";
 import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
 import { scriptActionOptions } from "../script-action-labels.js";
 import { generics } from "../generics.js";
 
 const kinds = scriptActionOptions;
+
+function interruptionFields(script, prefix) {
+  const settings = normalizeScriptInterruptions(script.interruptions);
+  const modes = [
+    { id: "stop", name: t("Прервать", "Stop") },
+    { id: "restart-step", name: t("Продолжить с начала текущего шага", "Restart the current step") },
+    { id: "next-step", name: t("Перейти к следующему шагу", "Go to the next step") },
+    { id: "restart-script", name: t("Продолжить с начала скрипта", "Restart the script") }
+  ];
+  const rows = [
+    ["combat", t("Боем", "Combat")], ["interaction", t("Взаимодействием с игроком", "Player interaction")],
+    ["manual", t("Ручной остановкой", "Manual stop")], ["error", t("Ошибкой", "Error")]
+  ].map(([source, label]) => parameterRow(label, `<select name="${prefix}-interruption-${source}" aria-label="${e(label)}"${source === "error" ? " data-script-error-mode" : ""}>${selectOptions(modes, source === "error" ? settings.error.mode : settings[source])}</select>`));
+  const disabled = settings.error.mode === "stop" ? " disabled" : "";
+  const retriesLabel = t("Повторов после ошибки", "Retries after an error");
+  const delayLabel = t("Таймаут повторений, с", "Retry delay, seconds");
+  rows.push(parameterRow(retriesLabel, `<input type="number" name="${prefix}-interruption-retries" aria-label="${e(retriesLabel)}" min="1" max="10" step="1" value="${settings.error.retries}" data-script-error-setting${disabled}>`));
+  rows.push(parameterRow(delayLabel, `<input type="number" name="${prefix}-interruption-delay" aria-label="${e(delayLabel)}" min="0.1" max="60" step="any" value="${settings.error.delaySeconds}" data-script-error-setting${disabled}>`));
+  return `<fieldset class="ms-script-interruptions"><legend>${t("При прерывании скрипта", "When the script is interrupted")}</legend><table class="ms-parameter-table"><tbody>${rows.join("")}</tbody></table></fieldset>`;
+}
+
+/** Error retry fields retain their values while Stop makes them inactive. */
+export function bindScriptInterruptions(root, options) {
+  root.addEventListener("change", event => {
+    if (!event.target.matches?.("[data-script-error-mode]")) return;
+    const disabled = event.target.value === "stop";
+    for (const field of event.target.closest(".ms-script-interruptions").querySelectorAll("[data-script-error-setting]")) field.disabled = disabled;
+  }, options);
+}
 
 /** Row order is presentation only. IDs and outgoing edges define execution. */
 export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false } = {}) {
@@ -25,6 +55,7 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
       <p class="ms-note">${t("Перетаскивание меняет только порядок строк. Запуск начинается с шага 1; номера и переходы сохраняются.", "Dragging changes row order only. Execution starts at step 1; IDs and transitions stay unchanged.")}</p>
       <button type="button" data-screen-action="add-script-step" data-index="${index}">+ ${t("Шаг", "Step")}</button>
       ${check("repeat", t("Повторять", "Repeat"), script.repeat)}
+      ${interruptionFields(script, prefix)}
       ${combatSupported ? `<fieldset class="ms-script-combat"><legend>${t("Использование в бою", "Combat use")}</legend>${check("combat-enabled", t("Использовать", "Use in combat"), combat.enabled)}${check("combat-confirm", t("Подтверждать действие", "Confirm action"), combat.confirm !== false)}<div>${check("combat-warning", t("Предупреждение", "Warning"), combat.notifyWarning !== false)}${check("combat-chat", t("В чате мастеру", "In GM chat"), combat.notifyChat)}${check("combat-end-turn", t("Завершать ход", "End turn"), combat.endTurn)}</div><label>${t("Длительность хода, с", "Turn duration, seconds")}<input type="number" min="0.01" step="any" name="${prefix}-combat-seconds" value="${e(combat.turnSeconds ?? 6)}"></label></fieldset>` : ""}
       <div class="ms-script-block-actions"><button type="button" data-screen-action="save">${t("Сохранить", "Save")}</button>${generics.components.renderJSONControls({ id: `script-block-${index}`, importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}</div></details>`;
   }).join("");
@@ -40,7 +71,11 @@ export function readScriptFields(root, scripts) {
     const prefix = `script-${index}`;
     const on = (name) => root.querySelector(`[name="${prefix}-${name}"]`)?.checked === true;
     const combat = root.querySelector(`[name="${prefix}-combat-enabled"]`) ? { enabled: on("combat-enabled"), confirm: on("combat-confirm"), notifyWarning: on("combat-warning"), notifyChat: on("combat-chat"), endTurn: on("combat-end-turn"), turnSeconds: Number(value(`${prefix}-combat-seconds`)) } : script.combat;
-    return { ...script, name: value(`${prefix}-name`), enabled: on("enabled"), repeat: on("repeat"), ...(combat ? { combat } : {}),
+    const interruptions = root.querySelector(`[name="${prefix}-interruption-combat"]`) ? {
+      combat: value(`${prefix}-interruption-combat`), interaction: value(`${prefix}-interruption-interaction`), manual: value(`${prefix}-interruption-manual`),
+      error: { mode: value(`${prefix}-interruption-error`), retries: Number(value(`${prefix}-interruption-retries`)), delaySeconds: Number(value(`${prefix}-interruption-delay`)) }
+    } : script.interruptions;
+    return { ...script, name: value(`${prefix}-name`), enabled: on("enabled"), repeat: on("repeat"), ...(combat ? { combat } : {}), interruptions,
       steps: script.steps.map((step, stepIndex) => {
         const key = `${prefix}-step-${stepIndex}`;
         let parameters;

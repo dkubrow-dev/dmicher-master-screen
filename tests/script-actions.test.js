@@ -214,11 +214,13 @@ test("emergency stop releases a never-settling external action and ignores its l
   const ticking = f.tick(); await ready; f.stop(); notifyExecutionChange(f.scene, "halt"); await ticking;
   finish(); await new Promise((resolve) => setImmediate(resolve)); assert.equal(f.object.hidden, false); assert.equal(f.progress().stepId, 1); assert.equal(f.executor.jobs.size, 0);
 });
-test("a GM macro failure is reported without breaking the following script actions", async () => {
+test("a GM macro failure follows the default stop policy and does not execute the next action", async () => {
   const f = fixture({ steps: [step(1, "macro", { macroUuid: "Macro.fail" }, [2]), step(2, "visibility", { visible: false })] });
-  const notices = [], original = console.error; console.error = (...args) => notices.push(args);
-  try { f.runtime.effects.macro = async () => { throw new Error("test failure"); }; await f.tick(); await f.tick(); await f.tick(); assert.equal(f.object.hidden, true); assert.equal(notices.length, 1); }
-  finally { console.error = original; }
+  let calls = 0;
+  f.runtime.effects.macro = async () => { calls++; throw new Error("test failure"); };
+  await f.tick(); await f.tick(); await f.tick();
+  assert.equal(f.object.hidden, false); assert.equal(calls, 1);
+  assert.equal(f.progress().status, "failed"); assert.match(f.state().error, /test failure/);
 });
 test("native combat adapter emits start, round, turn and end once on authoritative updates", async () => {
   const listeners = new Map(), emitted = [], gm = { id: "gm", role: 4, isGM: true, active: true };

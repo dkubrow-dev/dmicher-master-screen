@@ -96,6 +96,86 @@ test("a stop while technical delivery is pending deletes the late message withou
   assert.equal(f.sounds.length, 0); assert.equal(f.messages.size, 0); assert.equal(f.service.requests.size, 0); f.service.dispose();
 });
 
+test("script stop isolates run, object type and script while retaining scene audio", async () => {
+  const f = fixture(), target = { type: "Token", id: "npc" }, scriptKey = "Token:npc:routine:calm";
+  const inputs = [
+    { target, scriptKey, scriptGeneration: 2 },
+    { target, scriptKey: "Token:npc:transition:calm", scriptGeneration: 2 },
+    { target: { type: "Token", id: "other" }, scriptKey: "Token:other:routine:calm" },
+    { target: { type: "Tile", id: "npc" }, scriptKey: "Tile:npc:routine:calm" },
+    { target, scriptKey, runId: "other-run" },
+    {}
+  ];
+  for (const [index, options] of inputs.entries()) await f.service.sound(`${index}.ogg`, 1, { ...f.options, ...options });
+  await flush();
+  f.service.stop(f.scene, { runIds: ["run"], target, scriptKey });
+  assert.equal(f.sounds[0].volume, 0);
+  assert.deepEqual(f.sounds.slice(1).map(sound => sound.volume), [1, 1, 1, 1, 1]);
+  assert.equal(f.service.records.size, 5); await flush(); assert.equal(f.messages.size, 5);
+  f.service.dispose();
+});
+
+test("scoped stop invalidates only matching deliveries that are still waiting", async () => {
+  const f = fixture(), pending = deferred(), original = f.service.messages.create, target = { type: "Token", id: "npc" };
+  f.service.messages.create = async (...args) => { await pending.promise; return original(...args); };
+  const stopped = f.service.sound("stopped.ogg", 1, { ...f.options, target, scriptKey: "Token:npc:routine:calm" });
+  const retained = f.service.sound("retained.ogg", 1, { ...f.options, target, scriptKey: "Token:npc:transition:calm" });
+  f.service.stop(f.scene, { runIds: ["run"], target, scriptKey: "Token:npc:routine:calm" });
+  pending.resolve(); await Promise.all([stopped, retained]); await flush();
+  assert.deepEqual(f.sounds.map(sound => sound.src), ["retained.ogg"]);
+  assert.equal(f.service.records.size, 1); f.service.dispose();
+});
+
+async function scopedWorld() {
+  const world = sceneFixture(), group = await world.editor.createGroup();
+  await world.objects.save(descriptor, { groupId: group.groupId });
+  const scriptKey = "Token:npc:routine:calm", run = getRuntime(world.scene, { groupId: group.groupId });
+  run.runId = "run"; run.stateId = group.entryStateId; run.halted = false;
+  run.scriptStates[scriptKey] = { stepId: 1, sequence: 1, generation: 0, status: "ready" };
+  await saveRuntime(world.scene, run);
+  return { ...world, run, scriptKey, data: { sceneId: world.scene.id, runId: run.runId, manual: false, target: descriptor, scriptKey, scriptGeneration: 0 } };
+}
+
+test("script audio generation ignores normal step progress and rejects stale or mismatched script ownership", async () => {
+  const f = await scopedWorld();
+  assert.equal(scriptAudioIsCurrent(f.scene, f.data), true);
+  Object.assign(f.run.scriptStates[f.scriptKey], { stepId: 2, sequence: 2, status: "done" });
+  await saveRuntime(f.scene, f.run); assert.equal(scriptAudioIsCurrent(f.scene, f.data), true);
+  f.run.scriptStates[f.scriptKey].generation = 1;
+  await saveRuntime(f.scene, f.run); assert.equal(scriptAudioIsCurrent(f.scene, f.data), false);
+  assert.equal(scriptAudioIsCurrent(f.scene, { ...f.data, scriptGeneration: 1 }), true);
+  for (const changes of [{ scriptGeneration: -1 }, { scriptGeneration: 0.5 }, { scriptGeneration: "1" },
+    { scriptKey: "Token:pc:routine:calm" }, { scriptKey: "Token:npc:routine:missing" }, { target: { type: "Tile", id: "npc" } }]) {
+    assert.equal(scriptAudioIsCurrent(f.scene, { ...f.data, scriptGeneration: 1, ...changes }), false);
+  }
+  delete f.run.scriptStates[f.scriptKey].generation; await saveRuntime(f.scene, f.run);
+  assert.equal(scriptAudioIsCurrent(f.scene, f.data), true);
+});
+
+test("remote scoped audio checks its saved generation after loading and during playback", async () => {
+  for (const duringLoad of [true, false]) {
+    const f = fixture(), world = await scopedWorld(), pending = deferred(); f.service.dispose();
+    const service = new ScriptAudioService(f.chat, { getScene: () => world.scene, create: src => {
+      const sound = f.create(src); if (duringLoad) sound.load = () => pending.promise; return sound;
+    } });
+    service.start();
+    const message = { id: "remote", author: "gm", flags: {
+      "dmicher-generics": { chat: { apiVersion: 1, ownerId: "dmicher-master-screen", channel: "script-audio", technical: true } },
+      "dmicher-master-screen": { scriptAudio: { ...world.data, src: "remote.ogg", volume: 0.7, playbackId: "remote-playback" } }
+    } };
+    service.receive(message); await flush();
+    Object.assign(world.run.scriptStates[world.scriptKey], { stepId: 2, sequence: 2 });
+    await saveRuntime(world.scene, world.run); notifyExecutionChange(world.scene);
+    assert.equal(service.records.size, 1);
+    world.run.scriptStates[world.scriptKey].generation = 1; await saveRuntime(world.scene, world.run);
+    if (duringLoad) pending.resolve(); else notifyExecutionChange(world.scene);
+    await flush();
+    assert.equal(f.sounds[0].plays.length, duringLoad ? 0 : 1);
+    assert.equal(f.sounds[0].volume, 0); assert.equal(service.records.size, 0);
+    service.dispose();
+  }
+});
+
 test("manual audio cannot survive a later full stop, even for an object outside groups", async () => {
   const f = sceneFixture(); await f.objects.save(descriptor, {});
   const data = { manual: true, runId: "manual", target: descriptor, manualHaltId: null, manualGroupStamp: null, groupId: null };

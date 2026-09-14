@@ -1,5 +1,6 @@
 import { message as localizedMessage, text } from "./localization.js";
 import { normalizeGroupSymbol } from "./model.js";
+import { normalizeScriptInterruptions } from "./script-interruption-model.js";
 
 const fail = (message) => { throw new Error(message); };
 const record = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -115,7 +116,7 @@ export function normalizeScript(raw) {
   const steps = raw.steps.map(normalizeScriptStep), ids = new Set(steps.map((step) => step.id));
   if (ids.size !== steps.length) fail(localizedMessage("ID шагов не должны повторяться."));
   if (steps.length && !ids.has(1)) fail(localizedMessage("Непустой скрипт должен содержать начальный шаг ID 1."));
-  return { ...(raw.id === undefined ? {} : { id: id(raw.id) }), ...(raw.stateId === undefined ? {} : { stateId: id(raw.stateId) }), name: requireText(raw.name ?? "", 200, localizedMessage("Название скрипта")), enabled: bool(raw.enabled, true, localizedMessage("Включить скрипт")), repeat: bool(raw.repeat, false, localizedMessage("Повторять")), combat: normalizeScriptCombat(raw.combat), steps: steps.map((step) => ({ ...step, next: step.next.filter((target) => ids.has(target)) })) };
+  return { ...(raw.id === undefined ? {} : { id: id(raw.id) }), ...(raw.stateId === undefined ? {} : { stateId: id(raw.stateId) }), name: requireText(raw.name ?? "", 200, localizedMessage("Название скрипта")), enabled: bool(raw.enabled, true, localizedMessage("Включить скрипт")), repeat: bool(raw.repeat, false, localizedMessage("Повторять")), combat: normalizeScriptCombat(raw.combat), interruptions: normalizeScriptInterruptions(raw.interruptions), steps: steps.map((step) => ({ ...step, next: step.next.filter((target) => ids.has(target)) })) };
 }
 export function normalizeScripts(raw = []) {
   if (!Array.isArray(raw) || raw.length > 100) fail(localizedMessage("Допустимо до 100 скриптов объекта."));

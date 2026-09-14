@@ -32,7 +32,7 @@ const colorStyle = (entry) => {
 export function renderSceneControls(showResumeAll) {
   const hidden = (visible) => visible ? "" : "hidden";
   const controls = button("haltScene", `■ ${t("Остановить всё", "Stop all")}`, `data-scene-control="stop" class="ms-ide-emergency" ${hidden(!showResumeAll)} title="${t("Остановить всю автоматизацию всех групп", "Stop all automation in all groups")}"`)
-    + button("resumeAll", `▶ ${t("Продолжить всё", "Resume all")}`, `data-scene-control="resume" ${hidden(showResumeAll)} title="${t("Заново запустить все группы в текущих состояниях", "Restart all groups in their current states")}"`)
+    + button("resumeAll", `▶ ${t("Продолжить всё", "Resume all")}`, `data-scene-control="resume" ${hidden(showResumeAll)} title="${t("Продолжить остановленные группы согласно настройкам прерывания скриптов", "Resume stopped groups according to script interruption settings")}"`)
     + button("restoreAllInitial", `↶ ${t("Вернуть в исходное состояние", "Restore initial state")}`, `data-scene-control="restore" ${hidden(showResumeAll)} title="${t("Восстановить исходные скрипты объектов и выбрать начальные состояния групп; оставить автоматизацию остановленной", "Run object initial scripts and select group entry states; leave automation stopped")}"`);
   return `<span class="ms-scene-commands" role="group" aria-label="${t("Управление автоматизацией сцены", "Scene automation controls")}">${controls}</span>`;
 }
@@ -54,7 +54,7 @@ const groupStatus = ({ restoring, halted, started }) => restoring ? t("Восс�
   : halted ? t("Остановлена", "Stopped") : started ? t("Работает", "Running") : t("Не запущена", "Not started");
 function renderGroupControls(groupId, state) {
   const titles = [
-    ["startGroup", "▶", t("Запустить группу", "Start group"), t("Заново запустить текущее состояние только этой группы; для нового запуска используется состояние входа", "Restart only this group in its current state; a first start uses its entry state")],
+    ["startGroup", "▶", t("Запустить группу", "Start group"), t("После остановки продолжить скрипты по их настройкам; для новой группы использовать состояние входа", "After a stop, resume scripts according to their settings; a new group uses its entry state")],
     ["haltGroup", "■", t("Остановить группу", "Stop group"), t("Немедленно остановить автоматизацию только этой группы", "Immediately stop only this group's automation")],
     ["restoreGroupInitial", "↶", t("Вернуть группу в исходное состояние", "Restore group initial state"), t("Восстановить исходные скрипты объектов этой группы, выбрать состояние входа и оставить группу остановленной", "Run this group's object initial scripts, select its entry state and leave the group stopped")]
   ];

@@ -139,7 +139,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
             session.status = "active"; session.step++; signals.push(interactionSignal(scene, "Dialogue", dialogue.id, session, "opened"));
           }
           if (scriptStart) session.origin = "script";
-          freezeInteractionClock(state, dialogue.target);
+          freezeInteractionClock(state, dialogue.target, Date.now(), { external: !scriptStart });
         } else {
           session = Object.values(state.dialogueSessions).find((entry) => entry?.sessionId === command.sessionId);
           if (!session) fail(localizedMessage("Разговор не найден или принадлежит другому игроку."));

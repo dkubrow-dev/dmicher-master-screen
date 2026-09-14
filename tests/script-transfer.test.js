@@ -14,7 +14,8 @@ function references() {
 }
 
 test("a script block round trip preserves row order, graph, timing and options without exporting its state slot", () => {
-  const original = { name: "Patrol", stateId: "calm", enabled: false, repeat: true, combat: { enabled: true, turnSeconds: 9 },
+  const interruptions = { combat: "restart-script", interaction: "next-step", manual: "restart-step", error: { mode: "restart-script", retries: 10, delaySeconds: 0.25 } };
+  const original = { name: "Patrol", stateId: "calm", enabled: false, repeat: true, combat: { enabled: true, turnSeconds: 9 }, interruptions,
     steps: [wait(8, [1]), wait(1, [8])] }, before = structuredClone(original), refs = references();
   const envelope = exportScriptBlock(original, refs);
   assert.equal(envelope.format, "dmicher-master-screen"); assert.equal(envelope.version, 1); assert.equal(envelope.kind, "script");
@@ -22,6 +23,7 @@ test("a script block round trip preserves row order, graph, timing and options w
   const imported = importScriptBlock(envelope, { stateId: "destination" }, refs);
   assert.equal(imported.stateId, "destination"); assert.equal(imported.enabled, false); assert.equal(imported.repeat, true);
   assert.equal(imported.combat.turnSeconds, 9);
+  assert.deepEqual(imported.interruptions, interruptions);
   assert.deepEqual(imported.steps.map(({ id, next }) => [id, next]), [[8, [1]], [1, [8]]]);
   assert.deepEqual(original, before);
 });
@@ -41,6 +43,9 @@ test("transfer rejects other object envelopes and invalid actions instead of int
   }
   assert.throws(() => importScriptBlock({ ...good, data: { steps: [wait(9)] } }, {}, refs));
   assert.throws(() => importScriptBlock({ ...good, data: { steps: [{ ...wait(1), parameters: { seconds: "7" } }] } }, {}, refs));
+  for (const interruptions of [{ combat: "pause" }, { error: { retries: "3" } }, { error: { delaySeconds: 0 } }]) {
+    assert.throws(() => importScriptBlock({ ...good, data: { ...good.data, interruptions } }, {}, refs));
+  }
 });
 
 test("import and export require the destination object's registered dialogues, macros and signals", () => {

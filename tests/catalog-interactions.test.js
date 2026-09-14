@@ -23,7 +23,7 @@ test("interaction pause uses the same typed key as routine execution", () => {
   freezeInteractionClock(state, { type: "Drawing", id: "notice" }, 100);
   freezeInteractionClock(state, { type: "Drawing", id: "notice" }, 200);
   freezeInteractionClock(state, { type: "Token", id: "notice" }, 300);
-  assert.deepEqual(state.interactionClocks, { "Drawing:notice": { pausedAt: 100 }, "Token:notice": { pausedAt: 300 } });
+  assert.deepEqual(state.interactionClocks, { "Drawing:notice": { pausedAt: 100, external: true }, "Token:notice": { pausedAt: 300, external: true } });
 });
 
 for (const [type, geometry] of Object.entries({

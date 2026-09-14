@@ -9,7 +9,7 @@ import { getInteractionCatalog } from "../scene-assets.js";
 import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
 import { normalizeConditions } from "../model.js";
 import { buildConditionFields, readConditionFields, splitTags } from "./condition-fields.js";
-import { buildScriptFields, readScriptFields, bindScriptSorting } from "./script-fields.js";
+import { buildScriptFields, readScriptFields, bindScriptSorting, bindScriptInterruptions } from "./script-fields.js";
 import { appendScriptStep, removeScriptStep } from "../script-editing.js";
 import { changedScriptWarnings } from "../script-warnings.js";
 import { escapeHTML as e, formValue as value, actionButton as button, textInput as input, selectOptions } from "./form-fields.js";
@@ -323,6 +323,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
     await super._onRender(context, options); const listeners = { signal: this.events.signal };
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
     bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
+    bindScriptInterruptions(this.element, listeners);
     if (this.activeScript() && this.element.querySelector('[data-dmicher-json-id="script-block-0"]')) {
       const dispose = this.createScriptTransfer().bind(this.element, "script-block-0");
       this.events.signal.addEventListener("abort", dispose, { once: true });

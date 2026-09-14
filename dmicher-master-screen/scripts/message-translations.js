@@ -297,7 +297,6 @@ export const MESSAGE_TRANSLATIONS = Object.freeze({
   "Скрипт «{0}»: исход прежнего действия неизвестен. Проверьте результат и явно перезапустите состояние.": "Script “{0}”: the previous action's outcome is unknown. Check the result and explicitly restart the state.",
   "Этот объект не поддерживает скрытие.": "This object does not support hiding.",
   "Этот макрос не прикреплён к объекту скрипта.": "This macro is not attached to the script's object.",
-  "Макрос скрипта: {0}": "Script macro: {0}",
   "Неизвестное действие скрипта.": "Unknown script action.",
   "Скрипт ожидает своего хода или завершения взаимодействия.": "The script is waiting for its turn or for the interaction to end.",
   "Скрипт «{0}»: {1}": "Script “{0}”: {1}",

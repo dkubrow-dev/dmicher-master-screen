@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readScriptFields, buildScriptFields } from "../dmicher-master-screen/scripts/apps/script-fields.js";
+import { readScriptFields, buildScriptFields, bindScriptInterruptions } from "../dmicher-master-screen/scripts/apps/script-fields.js";
 import { appendScriptStep, removeScriptStep, moveScriptStep } from "../dmicher-master-screen/scripts/script-editing.js";
 import { normalizeScript, scriptStepTemplate, SCRIPT_STEP_KINDS } from "../dmicher-master-screen/scripts/script-model.js";
 import { completeScriptParameters, renderScriptParameters, setScriptParameter } from "../dmicher-master-screen/scripts/apps/script-parameters.js";
@@ -46,6 +46,59 @@ test("step form preserves branching identities through normalization and rejects
   assert.equal(result.repeat, true);
   fields["script-0-step-0-next"] = "1,,2";
   assert.throws(() => readScriptFields(root, scripts), /positive step numbers/);
+});
+
+test("script interruption fields share the editor, localize both languages and retain disabled limits", () => {
+  const previous = globalThis.game;
+  try {
+    for (const [lang, title, combat, interaction, manual, error, next] of [
+      ["ru", "При прерывании скрипта", "Боем", "Взаимодействием с игроком", "Ручной остановкой", "Ошибкой", "Перейти к следующему шагу"],
+      ["en", "When the script is interrupted", "Combat", "Player interaction", "Manual stop", "Error", "Go to the next step"]
+    ]) {
+      globalThis.game = { i18n: { lang } };
+      for (const combatSupported of [false, true]) {
+        const script = normalizeScript({ steps: [], interruptions: { error: { retries: 7, delaySeconds: 2.5 } } });
+        const html = buildScriptFields([script], { states: [] }, "Token", {}, { combatSupported });
+        for (const label of [title, combat, interaction, manual, error, next]) assert.ok(html.includes(label), label);
+        assert.equal((html.match(/name="script-0-interruption-(combat|interaction|manual|error)"/g) ?? []).length, 4);
+        assert.equal((html.match(/value="stop" selected/g) ?? []).length, 4);
+        assert.ok(html.includes('min="1" max="10" step="1" value="7" data-script-error-setting disabled'));
+        assert.ok(html.includes('min="0.1" max="60" step="any" value="2.5" data-script-error-setting disabled'));
+        script.interruptions.error.mode = "restart-step";
+        assert.ok(!buildScriptFields([script], { states: [] }, "Token", {}, { combatSupported }).includes("data-script-error-setting disabled"));
+      }
+    }
+  } finally { globalThis.game = previous; }
+});
+
+test("changing error behavior toggles only its own limits without recreating controls or losing input", () => {
+  let listener;
+  const fields = [{ disabled: true, value: "9" }, { disabled: true, value: "0.25" }];
+  const root = { addEventListener(type, callback) { assert.equal(type, "change"); listener = callback; } };
+  const target = { value: "restart-script", matches: () => true, closest: () => ({ querySelectorAll: () => fields }) };
+  bindScriptInterruptions(root);
+  listener({ target });
+  assert.deepEqual(fields.map(field => field.disabled), [false, false]);
+  target.value = "stop"; listener({ target });
+  assert.deepEqual(fields.map(field => field.disabled), [true, true]);
+  assert.deepEqual(fields.map(field => field.value), ["9", "0.25"]);
+});
+
+test("saving script interruption options includes disabled limits and rejects invalid user input", () => {
+  const script = normalizeScript({ steps: [] });
+  const fields = {
+    "script-0-name": "Watch", "script-0-enabled": true, "script-0-repeat": false,
+    "script-0-interruption-combat": "restart-step", "script-0-interruption-interaction": "next-step", "script-0-interruption-manual": "restart-script",
+    "script-0-interruption-error": "stop", "script-0-interruption-retries": "10", "script-0-interruption-delay": "0.1"
+  };
+  const root = { querySelector(selector) {
+    const name = selector.match(/name="([^"]+)"/)[1];
+    return Object.hasOwn(fields, name) ? { value: fields[name], checked: fields[name] === true } : null;
+  } };
+  const saved = normalizeScript(readScriptFields(root, [script])[0]);
+  assert.deepEqual(saved.interruptions, { combat: "restart-step", interaction: "next-step", manual: "restart-script", error: { mode: "stop", retries: 10, delaySeconds: 0.1 } });
+  fields["script-0-interruption-retries"] = "1.5";
+  assert.throws(() => normalizeScript(readScriptFields(root, [script])[0]));
 });
 
 const token = { documentName: "Token", x: 325, y: 210, rotation: 45, width: 2, height: 3, depth: 4, parent: { grid: { size: 100 } } };
