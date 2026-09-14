@@ -12,11 +12,28 @@ try {
     await page.goto(`${fixture.origin}/?version=${version}&lang=${lang}`); await page.waitForFunction(() => globalThis.ready);
     await page.evaluate(() => controller.openObjectBehavior({ type: "Token", id: "guard" }));
     const app = page.locator(".ms-object-behavior");
+    const checkInterruptionHelp = async (hasScript = false) => {
+      const rows = await app.locator('.ms-script-interruptions tr').evaluateAll(rows => rows.map(row => ({
+        name: row.querySelector('input,select').name,
+        links: [...row.querySelectorAll('[data-dmicher-setting-help]')].map(link => ({
+          key: link.dataset.dmicherSettingHelp, tabIndex: link.tabIndex, hint: link.title
+        }))
+      })));
+      assert.equal(rows.length, hasScript ? 13 : 6);
+      for (const { name, links } of rows) {
+        const source = name.split('-interruption-')[1];
+        const key = name.startsWith('command-') ? `settings-commands#${source}` : `settings-scripts#interruption-${source}`;
+        assert.equal(links.length, 1, `${name} must have one contextual help link`);
+        assert.equal(links[0].key, key, `${name} must explain its own command or script semantics`);
+        assert.equal(links[0].tabIndex, -1); assert.ok(links[0].hint);
+      }
+    };
     await app.locator('[data-screen-action="tab"][data-tab="commands"]').click();
     assert.equal(await app.locator("[data-command-enabled]").count(), 12);
     assert.equal(await app.locator("[data-command-enabled]:checked").count(), 0);
     await app.locator('[data-screen-action="edit-command"][data-command-id="come"]').click();
     await app.locator('[data-command-fields="come"]').waitFor();
+    await checkInterruptionHelp();
     await app.locator('[data-command-enabled="come"]').check();
     await app.locator('[name="command-allow"]').fill("trusted");
     await app.locator('[name="command-param-duration"]').fill("3.5");
@@ -26,11 +43,14 @@ try {
     assert.equal(await app.locator('[name="command-state"]').first().isDisabled(), true);
     await group.check(); await app.locator('[name="command-state"]').first().check();
     await app.locator('[data-screen-action="edit-command-script"][data-phase="beforeScript"]').click();
+    await checkInterruptionHelp(true);
     assert.equal(await app.locator('[name="script-0-interruption-command"]').inputValue(), "ignore");
     assert.equal(await app.locator('[data-dmicher-json-id="script-block-0"]').count(), 1);
     await app.locator('[data-screen-action="add-script-step"]').click();
+    await checkInterruptionHelp(true);
     await app.locator('[name="script-0-name"]').fill("Before come");
     await app.locator('[data-screen-action="edit-command-script"][data-phase="afterScript"]').click();
+    await checkInterruptionHelp(true);
     await app.locator('[name="script-0-name"]').fill("After come");
     const transfer = app.locator('[data-dmicher-json-id="script-block-0"]');
     const downloadReady = page.waitForEvent("download"); await transfer.locator('[data-dmicher-json="export"]').click();
@@ -43,6 +63,7 @@ try {
     await (await chooserReady).setFiles({ name: "command-script.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(envelope)) });
     await page.waitForFunction(() => document.querySelector('.ms-object-behavior [name="script-0-name"]')?.value === "Imported after come");
     assert.equal(await page.evaluate(() => JSON.stringify(scene.flags)), beforeImport);
+    await checkInterruptionHelp(true);
     await app.locator('[data-screen-action="edit-command"][data-command-id="wait"]').click();
     await app.locator('[data-command-enabled="wait"]').check();
     await app.locator('[name="command-param-seconds"]').fill("2.5");
