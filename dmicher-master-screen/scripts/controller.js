@@ -13,13 +13,11 @@ import { createShopService } from "./shop.js";
 import { SceneSignals } from "./signals.js";
 import { createDialogueService } from "./dialogues.js";
 import { MasterScreenApplication } from "./apps/ide.js";
-import { ActorViewApplication } from "./apps/actor-view.js";
 import { ShopApplication } from "./apps/shop-window.js";
 import { ShopsManagerApplication } from "./apps/shops-manager.js";
 import { DialogueApplication } from "./apps/dialogue-window.js";
 import { DialogueCatalogApplication } from "./apps/dialogue-catalog.js";
 import { HelpApplication } from "./apps/help.js";
-import { InteractionApplication } from "./apps/interaction-window.js";
 import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
@@ -82,16 +80,11 @@ export class ScreenController {
   }
   async setMode(mode) {
     requireGM();
-    if (!["constructor", "director", "actor"].includes(mode)) throw new Error(localizedMessage("Неизвестный режим ширмы"));
+    if (!["constructor", "director"].includes(mode)) throw new Error(localizedMessage("Неизвестный режим ширмы"));
     if (!currentScene()) throw new Error(localizedMessage("Откройте карту сцены"));
-    if (mode === "actor") {
-      this.actor = generics.windows.openSingletonApplication(this.actor, () => new ActorViewApplication(this), { moduleId: MODULE_ID });
-      if (!this.mode) this.mode = "actor";
-    } else {
-      if (!this.editor?.rendered) { this.openScreen("panel", { mode }); await this.editorOpening; }
-      else if (await this.editor.changeMode(mode) === false) return;
-      this.mode = mode;
-    }
+    if (!this.editor?.rendered) { this.openScreen("panel", { mode }); await this.editorOpening; }
+    else if (await this.editor.changeMode(mode) === false) return;
+    this.mode = mode;
     this.refreshConstructorFrame();
     return this.mode;
   }
@@ -284,14 +277,6 @@ export class ScreenController {
     this.shopWindows.set(key, app);
     return app;
   }
-  async interact(tokenId, sourceTokenId, { targetType = "Token", groupId } = {}) {
-    const scene = currentScene(), target = { type: targetType, id: tokenId };
-    sourceTokenId = this.getActingTokenId(sourceTokenId, targetType === "Token" ? tokenId : undefined);
-    const choices = this.getAvailableInteractions(scene, target, scene?.tokens.get(sourceTokenId)).filter((entry) => !groupId || entry.groupId === groupId);
-    if (!choices.length) throw new Error(localizedMessage("Взаимодействие недоступно для этого персонажа."));
-    this.interaction = new InteractionApplication(this, { sceneId: scene.id, tokenId, sourceTokenId, targetType, groupId });
-    return this.interaction.render({ force: true });
-  }
   getActingTokenId(actorTokenId, targetTokenId) {
     const allowed = (token) => token?.id !== targetTokenId && token?.actor && !token.hidden
       && (game.user.isGM || token.actor.testUserPermission(game.user, "OWNER"));
@@ -346,15 +331,6 @@ export class ScreenController {
     if (!actorTokenId) throw new Error(localizedMessage("Выберите персонажа игрока для взаимодействия."));
     return this.dialogues.requestInteraction({ sceneId: scene.id, groupId, interactionId, actorTokenId });
   }
-  async moveActorToken(tokenId, position) {
-    requireGM();
-    if (game.paused) throw new Error(localizedMessage("Игра на паузе"));
-    const token = this.getPlayerTokens().find((entry) => entry.id === tokenId);
-    if (!token) throw new Error(localizedMessage("Выберите персонажа игрока"));
-    const center = { x: position.x + token.object.w / 2, y: position.y + token.object.h / 2 };
-    if (token.object.checkCollision(center, { type: "move", mode: "any" })) throw new Error(localizedMessage("Путь пересекает стену"));
-    return token.update(position);
-  }
   pickPoint() {
     this.objectMenu.close();
     this.cancelPick?.();
@@ -385,7 +361,7 @@ export class ScreenController {
     this.dialogueMarkers.sync(scene);
     const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
     if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
-    for (const app of [this.editor, this.actor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered || app?.refreshTask) void Promise.resolve().then(() => {
         if (app.rendered || app.refreshTask) return app.refreshFromScene ? app.refreshFromScene(scene) : app.refresh?.();
       }).catch(notifyError);
@@ -400,7 +376,7 @@ export class ScreenController {
     if (dirty && !(await dirty.mayDiscard())) return;
     this.mode = null;
     this.objectMenu.close(); this.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas);
-    for (const app of [this.editor, this.actor, this.shops, this.interaction, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.shops, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) await app.close();
     }
     await this.workspace.close();

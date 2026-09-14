@@ -73,13 +73,9 @@
 .dmicher-master-screen .ms-status { border-left: 3px solid var(--dmicher-accent); background: var(--dmicher-surface-raised); padding: 12px; margin: 12px 0; line-height: 1.5; }
 .dmicher-master-screen .ms-error { color: var(--dmicher-danger-text); border: 1px solid currentColor; border-radius: 6px; padding: 12px; white-space: pre-wrap; }
 .dmicher-master-screen pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.dmicher-master-screen .ms-actor-canvas { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; display: block; background: #080a0d; border-radius: 6px; }
 .dmicher-master-screen .ms-shop-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .dmicher-master-screen .ms-shop-columns > section { min-width: 0; }
-.dmicher-master-screen .ms-actor-view-content,
 .dmicher-master-screen .ms-shop-content { overflow: auto; height: 100%; padding: 16px; }
-.dmicher-master-screen .ms-actor-view-content { display: flex; flex-direction: column; gap: 10px; }
-.dmicher-master-screen .ms-actor-view-content .ms-toolbar { margin-bottom: 0; }
 .dmicher-master-screen :is(.ms-shop-columns, .ms-shop-catalog) .ms-list { list-style: none; padding: 0; }
 .dmicher-master-screen :is(.ms-shop-columns, .ms-shop-catalog) .ms-list li { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--dmicher-surface-muted); }
 .dmicher-master-screen .ms-shop-columns .ms-list li > span:first-of-type { flex: 1; overflow-wrap: anywhere; }

@@ -23,7 +23,7 @@ function attachCanvas() {
   const handleTap = (event) => {
     if (controller.cancelPick || event.button > 0 || event.shiftKey || event.ctrlKey || event.altKey) return;
     const constructorMode = controller.mode === "constructor" && game.user.isGM;
-    if (game.user.isGM && !constructorMode && !["director", "actor"].includes(controller.mode)) return;
+    if (game.user.isGM && !constructorMode && controller.mode !== "director") return;
     const target = findCanvasObject(canvas, event, { constructorMode });
     if (target) { try { controller.openObjectMenu(target, canvasPointerPosition(canvas, event)); } catch (error) { notifyError(error); } }
     else controller.objectMenu.close();
@@ -43,7 +43,7 @@ Hooks.once("init", () => {
   const api = Object.freeze({ apiVersion: 1, version: VERSION,
     openPanel: () => controller.openScreen("panel"), openWindow: () => controller.openScreen("window"),
     openConstructor: () => controller.setMode("constructor"), openDirector: () => controller.setMode("director"),
-    openActor: () => controller.setMode("actor"), openShops: () => controller.openShops(),
+    openShops: () => controller.openShops(),
     openDialogues: () => controller.openDialogues(),
     openHelp: (pageId, anchor) => { const app = controller.openHelp(); if (pageId) void app.navigate(pageId, anchor); return app; }, close: () => controller.closeScreen(),
     transition: (stateId, options) => controller.transition(stateId, options),
@@ -55,7 +55,7 @@ Hooks.once("init", () => {
     getState: () => controller.getContext(), setAutomation: (tokenId, enabled) => controller.setAutomation(tokenId, enabled) });
   game.modules.get(MODULE_ID).api = api;
   globalThis.InvokeDmicherMasterScreenSignal = api.InvokeDmicherMasterScreenSignal;
-  unregister = generics.modules.register(MODULE_ID, { apiVersion: 1, api, capabilities: ["openConstructor", "openDirector", "openActor", "openShops", "openHelp"] });
+  unregister = generics.modules.register(MODULE_ID, { apiVersion: 1, api, capabilities: ["openConstructor", "openDirector", "openShops", "openHelp"] });
 });
 
 Hooks.once("ready", () => {

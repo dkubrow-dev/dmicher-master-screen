@@ -38,7 +38,7 @@ test("a synchronous refresh failure is reported without preventing other open wi
   const updates = [], reports = [];
   console.error = (...args) => reports.push(args);
   try {
-    controller.actor = { rendered: true, refresh() { throw new Error("refresh failed"); } };
+    controller.dialogueCatalog = { rendered: true, refresh() { throw new Error("refresh failed"); } };
     controller.shops = { rendered: true, refresh() { updates.push("shops"); } };
     assert.doesNotThrow(() => controller.changed(f.scene));
     await new Promise(resolve => setImmediate(resolve));
@@ -53,7 +53,7 @@ test("scene changes reach an in-flight form refresh even while Foundry reports r
   const f = fixture(14), controller = new ScreenController(), updates = [];
   try {
     controller.editor = { rendered: false, refreshTask: Promise.resolve(), refresh() { updates.push("rendering"); } };
-    controller.actor = { rendered: false, refresh() { updates.push("closed"); } };
+    controller.dialogueCatalog = { rendered: false, refresh() { updates.push("closed"); } };
     controller.changed(f.scene); await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(updates, ["rendering"]); assert.deepEqual(f.scene.updates, []);
   } finally { await f.dispose(); }
@@ -176,7 +176,7 @@ for (const generation of [13, 14]) {
     assert.equal(f.stageEvents.size, 0);
   });
 
-  test(`Foundry ${generation} player has no GM menu and cannot open constructor/director/actor/shops`, async () => {
+  test(`Foundry ${generation} player has no GM menu and cannot open constructor/director/shops/dialogue catalog`, async () => {
     const f = fixture(generation, false);
     try {
       await import(`../dmicher-master-screen/scripts/main.js?bootstrap=player-${generation}`);
@@ -186,8 +186,9 @@ for (const generation of [13, 14]) {
       const controls = {};
       await f.hooks.emit("getSceneControlButtons", controls);
       assert.equal(controls[MODULE_ID].visible, false);
-      for (const name of ["openConstructor", "openDirector", "openActor"]) await assert.rejects(api[name]());
+      for (const name of ["openConstructor", "openDirector"]) await assert.rejects(api[name]());
       assert.throws(() => api.openShops());
+      assert.throws(() => api.openDialogues());
       assert.equal(instances.size, 0);
       assert.equal(f.scene.updates.length, 0);
     } finally { await f.dispose(); }
@@ -208,7 +209,7 @@ test("controller rejects an old state draft instead of replacing a newer state c
 });
 
 
-test("switching editor modes retains independent drafts; actor observation preserves the editor", async () => {
+test("switching editor modes retains independent drafts; opening shops preserves the editor", async () => {
   const f = fixture(14);
   try {
     const controller = new ScreenController();
@@ -221,9 +222,10 @@ test("switching editor modes retains independent drafts; actor observation prese
     editor.setDockVisible = (visible) => visibility.push(visible);
     editor.dirty = true;
     editor.mayDiscard = async () => { confirmations++; return true; };
-    await editor.handleAction("actor");
+    await editor.handleAction("shops");
     assert.equal(confirmations, 0);
     assert.equal(editor.rendered, true);
+    assert.equal(controller.shops.rendered, true);
     assert.deepEqual(visibility, []);
     await controller.setMode("constructor");
     assert.equal(controller.editor, editor);

@@ -346,7 +346,7 @@ export class EditorApplication extends ScreenFormApplication {
       draft.interactions.push({ id: randomId(), name: t("Взаимодействовать", "Interact"), enabled: true, target: { type: "Token", id: target?.id ?? "" }, range: 5, signalId: "", parameters: {} });
     });
     if (action === "deleteInteraction") return this.changeDraft((draft) => { draft.interactions.splice(Number(button.dataset.index), 1); });
-    if (["constructor", "director", "actor"].includes(action)) return this.controller.setMode(action);
+    if (["constructor", "director"].includes(action)) return this.controller.setMode(action);
     if (action === "close") return this.controller.closeScreen();
   }
 

@@ -17,6 +17,7 @@ try {
     page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) console.error(message.text()); });
     await page.goto(`${origin}/?version=${version}&lang=${language}`); await page.waitForFunction(() => globalThis.ready);
     const app = page.locator("#dmicher-master-screen-editor");
+    assert.deepEqual(await app.locator(".ms-ide-mode-buttons [data-screen-action]").evaluateAll(buttons => buttons.map(button => button.dataset.screenAction)), ["constructor", "director"]);
     assert.equal(await app.locator("[data-ide-parameters]").count(), 0, "a newly opened tab has no implicit selection");
     assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-group-badge]').count(), 1);
     assert.equal(await page.locator('#scene-navigation [data-scene-id="scene-empty"] [data-group-badge]').count(), 0);
@@ -408,7 +409,7 @@ try {
     await app.locator('[data-screen-action="director"]').click();
     await app.locator('[data-screen-action="haltScene"]').click();
     await app.locator('[data-screen-action="resumeAll"]').waitFor();
-    assert.equal(await app.locator('[data-screen-action="haltScene"]').count(), 0);
+    assert.equal(await app.locator('[data-screen-action="haltScene"]').isVisible(), false);
     await app.locator('[data-screen-action="restoreAllInitial"]').waitFor();
     await page.screenshot({path:path.join(output,`${version}-director-stopped.png`)});
     // The fixture's entry state has sample spawns. Choose quiet non-entry states
