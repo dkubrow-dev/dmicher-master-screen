@@ -318,6 +318,15 @@ export class ObjectCommandRuntime {
       await this.interrupt(scene, clone(snapshot), "manual");
     }
   }
+  /** A restoration abandons the old command, including a queued replacement.
+   * Unlike Halt, this is not an interruption that can later resume. The caller
+   * holds the scene queue until the replacement initial execution is prepared. */
+  async cancelForRestoration(scene, { groupIds, target } = {}) {
+    for (const run of this.runs(scene)) {
+      if (groupIds && !groupIds.includes(run.groupId) || target && objectKey(run.target) !== objectKey(target)) continue;
+      await this.finish(scene, run, { cancelled: true, reason: "initial-restoration" });
+    }
+  }
   activate(scene) { for (const run of this.runs(scene)) this.cancelled.delete(run.runId); }
   clear(scene) { for (const run of this.runs(scene)) this.stopPresentation(scene, run); this.cache.delete(scene); }
   dispose() { this.clear(globalThis.canvas?.scene); this.disposed = true; this.cancelled.clear(); }

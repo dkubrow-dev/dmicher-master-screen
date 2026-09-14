@@ -249,7 +249,7 @@ test("scene restoration runs only prepared object initials, selects entry states
   await f.tick(); assert.equal(f.npc.x, 100); await f.tick(); await f.tick();
   assert.equal(f.runtime.isRestoringInitial(f.scene), false); assert.equal(f.npc.x, 0); assert.equal(f.tile.hidden, true); assert.equal(f.npc.hidden, false);
   for (const groupId of ["main", "east"]) { const run = getRuntime(f.scene, { groupId }); assert.equal(run.stateId, "calm"); assert.equal(run.halted, true); assert.equal(run.runId, ""); }
-  assert.deepEqual(getRuntime(f.scene).shops, old.shops); assert.deepEqual(getRuntime(f.scene).tradeRequests, old.tradeRequests); assert.deepEqual(getRuntime(f.scene).disabledObjects, old.disabledObjects);
+  assert.deepEqual(getRuntime(f.scene).shops, old.shops); assert.deepEqual(getRuntime(f.scene).tradeRequests, old.tradeRequests); assert.deepEqual(getRuntime(f.scene).disabledObjects, [], "restoration explicitly re-enables object automation");
   assert.deepEqual(f.calls, []); assert.equal(f.flags.automationHalted, true);
 });
 

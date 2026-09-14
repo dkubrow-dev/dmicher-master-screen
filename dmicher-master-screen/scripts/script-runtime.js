@@ -60,6 +60,15 @@ export class ObjectScriptRuntime {
     return !this.persistenceFailures.get(scene)?.has(`${runId}:${options?.scriptKey}`)
       && this.runtime.currentObject(scene, runId, target, options);
   }
+  /** An explicit object reset may keep the group run ID. Release its local
+   * write-failure barrier only after the fresh progress is safely persisted. */
+  clearObjectFailures(scene, runId, target) {
+    const failures = this.persistenceFailures.get(scene);
+    if (!failures) return;
+    const prefix = `${runId}:${target.type}:${target.id}:`;
+    for (const key of failures.keys()) if (key.startsWith(prefix)) failures.delete(key);
+    if (!failures.size) this.persistenceFailures.delete(scene);
+  }
   next(script, step) { return step.next.length ? step.next[Math.min(step.next.length - 1, Math.floor(this.random() * step.next.length))] : script.repeat ? 1 : null; }
   advance(progress, next) {
     progress.stepId = next; progress.status = next === null ? "done" : "ready";
