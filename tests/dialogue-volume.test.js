@@ -17,7 +17,7 @@ class Element {
   }
 }
 
-for (const generation of [13, 14]) test(`Foundry ${generation}: dialogue slider is native, local, deduplicated and removed on revocation`, async () => {
+for (const generation of [13, 14]) test(`Foundry ${generation}: dialogue slider is native, local, deduplicated and disabled on revocation`, async () => {
   const old = { game: globalThis.game, document: globalThis.document, foundry: globalThis.foundry, Hooks: globalThis.Hooks };
   let allowed = false, settings;
   const saves = [], hooks = new Map(), list = new Element("ol"), root = new Element(); root.list = list;
@@ -34,16 +34,20 @@ for (const generation of [13, 14]) test(`Foundry ${generation}: dialogue slider 
   const controller = new DialogueVolumeController();
   try {
     registerDialogueVolume(); assert.equal(settings.scope, "client"); controller.install();
-    controller.render(null, root); assert.equal(list.children.length, 0);
+    controller.render(null, root); assert.equal(list.children.length, 1);
+    const initial = list.children[0]; assert.equal(initial.children[2].disabled, true);
+    assert.equal(initial.children[0].children[0].className, "dmicher-premium-badge");
+    assert.equal(initial.children[0].children[0].textContent, "Premium");
     allowed = true; registration.notifyChanged(); assert.equal(list.children.length, 1);
     const row = list.children[0], slider = row.children[2];
+    assert.equal(row, initial); assert.equal(slider.disabled, false);
     assert.equal(row.className, "flexrow"); assert.equal(slider.tagName, "RANGE-PICKER");
     assert.equal(slider.value, 0.5); assert.equal(slider.options.name, `dmicher-master-screen.${DIALOGUE_VOLUME_SETTING}`);
     assert.equal(row.children[0].textContent, generation === 13 ? "\u0414\u0438\u0430\u043b\u043e\u0433\u0438" : "Dialogues");
     controller.render(null, root); assert.equal(list.children.length, 1);
     slider.value = 0.8; slider.listeners.change(); await Promise.resolve();
     assert.deepEqual(saves[0], ["dmicher-master-screen", DIALOGUE_VOLUME_SETTING, 0.8 ** 2]);
-    allowed = false; registration.notifyChanged(); assert.equal(list.children.length, 0);
+    allowed = false; registration.notifyChanged(); assert.equal(list.children.length, 1); assert.equal(slider.disabled, true);
     slider.listeners.change(); assert.equal(saves.length, 1, "stale premium slider cannot save after revocation");
     root.isConnected = false; controller.render(null, new Element()); assert.equal(controller.roots.has(root), false);
   } finally { controller.dispose(); registration.dispose(); Object.assign(globalThis, old); }

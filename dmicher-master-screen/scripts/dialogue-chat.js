@@ -11,8 +11,9 @@ import { isExecutionHalted } from "./execution.js";
 import { requestGMReply } from "./gm-request.js";
 import { debugError } from "./debug.js";
 import { notifyError } from "./ui.js";
-import { renderDialogueMessages, renderDialogueResponses, dialogueResponseId, bindDialogueResponses } from "./dialogue-response-presentation.js";
+import { renderDialogueMessages, renderDialogueResponses, dialogueResponseId, bindDialogueResponses, dialogueChatTitle } from "./dialogue-response-presentation.js";
 import { ChatDialogueAudio } from "./apps/dialogue-chat-audio.js";
+import { escapeScriptText as esc } from "./script-text.js";
 
 const clone = structuredClone;
 const terminal = session => ["finished", "left"].includes(session?.status);
@@ -22,11 +23,13 @@ const sessionKey = packet => `${packet.sceneId}:${packet.sessionId}`;
 /** The GM writes transcript snapshots; the speaker sends the same authenticated
  * commands as a dialogue window. Public copies never contain response options. */
 export class DialogueChat {
-  constructor(service, { messages, requests, authority = isAuthority } = {}) {
+  constructor(service, { messages, requests, authority = isAuthority, openModerator } = {}) {
     this.service = service; this.authority = authority;
+    this.openModerator = openModerator;
     this.messages = messages ?? generics.chat.informer.createMessageService({ ownerId: MODULE_ID, channel: "dialogue-chat" });
     this.requests = requests ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "dialogue-publication" });
     this.tasks = new Map(); this.signatures = new Map(); this.messageIds = new Map(); this.active = new Map(); this.cards = new Map(); this.disposed = false;
+    this.managementCards = new Map();
     this.audio = new ChatDialogueAudio({ context: packet => this.context(packet), isCurrent: packet => Boolean(this.liveSession(packet)) });
   }
   context(packet) {
@@ -37,14 +40,50 @@ export class DialogueChat {
     return { ...current, scene, runtime, session };
   }
   packet(scene, session) {
+    const targetName = session.history?.find(entry => entry.role === "object")?.name ?? this.service.getContext(scene.id, session.dialogueId, session.groupId, session.target, { sessionId: session.sessionId }).target?.name ?? "";
+    const actorName = session.history?.find(entry => entry.role === "player")?.name ?? scene.tokens?.get(session.actorTokenId)?.name ?? game.users.get(session.userId)?.name ?? "";
     return { version: 1, sceneId: scene.id, groupId: session.groupId, sessionId: session.sessionId, runId: session.runId,
-      dialogueId: session.dialogueId, target: clone(session.target), actorTokenId: session.actorTokenId, userId: session.userId };
+      dialogueId: session.dialogueId, target: clone(session.target), actorTokenId: session.actorTokenId, userId: session.userId, targetName, actorName };
   }
   trusted(message) {
     const metadata = generics.chat.getChatMetadata(message), packet = flag(message);
     const author = game.users?.get(message.author?.id ?? message.author);
     return metadata?.ownerId === MODULE_ID && metadata.channel === "dialogue-chat" && packet?.version === 1
       && generics.chat.isManagedIdentityUser(author) ? packet : null;
+  }
+  /** One authoritative notice per conversation, independent of display mode.
+   * It contains identity and GM controls, never a second copy of the transcript. */
+  notifyStarted(packet) {
+    if (this.disposed || !this.authority() || !packet?.sessionId) return Promise.resolve();
+    const key = `${sessionKey(packet)}:notice`, previous = this.tasks.get(key);
+    if (previous) return previous.promise;
+    const task = {};
+    task.promise = this.writeNotice(packet, { create: true }).finally(() => this.tasks.delete(key));
+    this.tasks.set(key, task); return task.promise;
+  }
+  async writeNotice(packet, { create = false } = {}) {
+    if (this.disposed || !this.authority()) return;
+    const current = this.context(packet); if (!current) return;
+    const key = `${sessionKey(packet)}:gm-notice`, existing = this.messages.get(this.messageIds.get(key)) ?? this.messages.find({ key })[0];
+    if (!existing && !create) return;
+    const fresh = this.packet(current.scene, current.session);
+    // Preserve the names used by the original start notice on later updates.
+    packet = { ...fresh, targetName: flag(existing)?.targetName ?? fresh.targetName, actorName: flag(existing)?.actorName ?? fresh.actorName,
+      management: true, status: current.session.status };
+    const canFinish = ["active", "processing", "interrupted"].includes(packet.status);
+    const content = `<section class="dmicher-master-screen ms-dialogue-chat"><h3 class="ms-dialogue-chat-heading">${esc(dialogueChatTitle(packet.targetName, packet.actorName))}</h3><p>${canFinish ? text("Диалог начат.", "Dialogue started.") : text("Диалог завершён.", "Dialogue finished.")}</p><div class="ms-actions"><button type="button" data-dialogue-gm-action="join">${text("Подключиться", "Join")}</button>${canFinish ? `<button type="button" data-dialogue-gm-action="finish">${text("Завершить диалог", "Finish dialogue")}</button>` : ""}</div></section>`;
+    if (existing) {
+      this.messageIds.set(key, existing.id);
+      if (existing.content !== content || JSON.stringify(flag(existing)) !== JSON.stringify(packet)) await this.messages.update(existing.id, { content, moduleFlags: { dialogueChat: packet } });
+      return existing;
+    }
+    const userIds = Array.from(game.users.values()).filter(user => user.isGM && !generics.chat.isManagedIdentityUser(user)).map(user => user.id);
+    if (!userIds.length) return;
+    const [message] = await this.messages.create({ content, flags: { [MODULE_ID]: { dialogueChat: packet } } },
+      { audience: { type: "users", userIds }, kind: "dialogue-notice", key, technical: false,
+        enabled: () => !this.disposed && this.authority() });
+    if (message) this.messageIds.set(key, message.id);
+    return message;
   }
   /** Coalesce duplicate notifications. Only committed dialogue state, not script
    * clocks or console activity, requests transcript updates. */
@@ -70,7 +109,7 @@ export class DialogueChat {
     // private material because someone moves closer or changes roll mode later.
     const data = { ...packet, entry: entry ? clone(entry) : null, controls, responses: controls ? clone(responses) : [], status, prompt,
       ...(suffix === "primary" ? { observerUserIds: clone(existing ? flag(existing)?.observerUserIds ?? [] : observerUserIds) } : {}) };
-    const content = `<section class="dmicher-master-screen ms-dialogue-chat">${entry ? renderDialogueMessages([entry]) : ""}${prompt
+    const content = `<section class="dmicher-master-screen ms-dialogue-chat"><h3 class="ms-dialogue-chat-heading">${esc(dialogueChatTitle(packet.targetName, packet.actorName))}</h3>${entry ? renderDialogueMessages([entry], { layout: "chat" }) : ""}${prompt
       ? `<p>${text("Опубликовать завершённый диалог в чате?", "Publish the completed dialogue in chat?")}</p><div class="ms-actions">${generics.chat.renderActionButton({ id: "publish", label: text("Опубликовать", "Publish") })}${generics.chat.renderActionButton({ id: "decline", label: text("Не публиковать", "Do not publish") })}</div>`
       : controls ? renderDialogueResponses(responses, { actionAttribute: "data-dialogue-chat-action", canFinish: status === "active", groupName: key }) : ""}</section>`;
     if (existing) {
@@ -88,6 +127,7 @@ export class DialogueChat {
   }
   async publishCurrent(packet) {
     const current = this.context(packet); if (!current) return;
+    await this.writeNotice(packet);
     const { scene, runtime, session, dialogue, target } = current;
     const presentation = normalizeDialoguePresentation(session.presentation ?? dialogue?.presentation);
     const live = !isExecutionHalted(scene, runtime) && dialogueSessionIsLive(session) && session.status === "active";
@@ -119,13 +159,14 @@ export class DialogueChat {
     const runtimes = scene.getFlag(MODULE_ID, "groupRuntimes") ?? {};
     for (const run of Object.values(runtimes)) for (const session of Object.values(run.dialogueSessions ?? {})) {
       if (!session?.sessionId || session.runId !== run.runId) continue;
-      const packet = this.packet(scene, session), key = sessionKey(packet);
+      const key = `${scene.id}:${session.sessionId}`;
       // Script starts are presented only after their delivery admission succeeds.
       if (session.origin === "script" && !this.signatures.has(key)) continue;
       const signature = `${session.step}:${session.status}:${session.history?.length}:${run.halted}:${scene.getFlag(MODULE_ID, "automationHalted")}:${session.publicationApproved}`;
       if (this.signatures.get(key) === signature) continue;
       this.signatures.set(key, signature);
       if (this.signatures.size > 500) this.signatures.delete(this.signatures.keys().next().value);
+      const packet = this.packet(scene, session);
       void this.publish(packet).catch(error => this.report(error, packet));
     }
   }
@@ -197,11 +238,15 @@ export class DialogueChat {
     if (packet?.controls && packet.status === "active" && this.cardIsCurrent(packet)) this.track(packet);
   }
   created(message) { this.audio.created(message, this.trusted(message)); this.observe(message); }
-  liveSession(packet) {
+  storedSession(packet) {
     const scene = game.scenes?.get(packet.sceneId);
     const runtime = scene?.getFlag(MODULE_ID, "groupRuntimes")?.[packet.groupId];
-    if (!runtime || runtime.runId !== packet.runId || isExecutionHalted(scene, runtime)) return null;
+    if (!runtime || runtime.runId !== packet.runId) return null;
     return Object.values(runtime.dialogueSessions ?? {}).find(entry => entry?.sessionId === packet.sessionId && entry.runId === runtime.runId);
+  }
+  liveSession(packet) {
+    const session = this.storedSession(packet), scene = game.scenes?.get(packet.sceneId);
+    return session && !isExecutionHalted(scene, scene.getFlag(MODULE_ID, "groupRuntimes")[packet.groupId]) ? session : null;
   }
   cardIsCurrent(packet) {
     if (globalThis.canvas?.scene?.id !== packet.sceneId) return false;
@@ -210,6 +255,16 @@ export class DialogueChat {
       && session.status === "active" && dialogueSessionIsLive(session);
   }
   syncCards() {
+    for (const [id, card] of this.managementCards) {
+      if (card.root.isConnected === false) { this.managementCards.delete(id); continue; }
+      const session = game.user?.isGM && this.storedSession(card.packet);
+      for (const control of card.root.querySelectorAll("[data-dialogue-gm-action]")) {
+        control.disabled = !session || control.dataset.dialogueGmAction === "finish" && !["active", "processing", "interrupted"].includes(session.status);
+      }
+      // Archived notices retain Join, whose click rechecks the session. They
+      // need no clock-driven maintenance after their finish button is retired.
+      if (!session || terminal(session)) this.managementCards.delete(id);
+    }
     for (const [id, card] of this.cards) {
       if (card.root.isConnected === false) { this.cards.delete(id); continue; }
       if (!this.cardIsCurrent(card.packet)) {
@@ -221,6 +276,22 @@ export class DialogueChat {
     const packet = this.trusted(message), root = html?.querySelector ? html : html?.[0];
     if (!packet || !root || message.visible === false || message.isContentVisible === false) return;
     const leading = game.user.id === packet.userId;
+    if (packet.management) {
+      if (!game.user.isGM || generics.chat.isManagedIdentityUser(game.user)) {
+        for (const control of root.querySelectorAll("[data-dialogue-gm-action]")) control.remove();
+        return;
+      }
+      this.managementCards.set(message.id, { root, packet }); this.syncCards();
+      generics.chat.bindActions({ moduleId: MODULE_ID, message, root, key: "dialogue-management", onError: notifyError,
+        actions: [{ selector: "[data-dialogue-gm-action]", authorize: ({ message: fresh, user }) => Boolean(user.isGM && !generics.chat.isManagedIdentityUser(user) && this.trusted(fresh)?.management),
+          handle: async ({ message: fresh, control }) => {
+            const command = this.trusted(fresh), view = this.service.inspectSession(command);
+            if (!view) throw new Error(text("Этот диалог больше недоступен.", "This dialogue is no longer available."));
+            if (control.dataset.dialogueGmAction === "finish") return this.service.requestModeratorFinish(command);
+            return this.openModerator?.(command, view);
+          } }] });
+      return;
+    }
     if (!leading) for (const control of root.querySelectorAll("[data-dialogue-responses], [data-dmicher-chat-action]")) control.remove();
     if (packet.controls) {
       if (leading && this.cardIsCurrent(packet)) this.cards.set(message.id, { root, packet });
@@ -279,7 +350,7 @@ export class DialogueChat {
   }
   report(error, packet) { debugError("dialogue", "chat.failed", error, packet); notifyError(error); }
   dispose() {
-    this.disposed = true; clearInterval(this.timer); this.timer = null; this.active.clear(); this.signatures.clear(); this.messageIds.clear(); this.cards.clear();
+    this.disposed = true; clearInterval(this.timer); this.timer = null; this.active.clear(); this.signatures.clear(); this.messageIds.clear(); this.cards.clear(); this.managementCards.clear();
     this.audio.dispose();
   }
 }

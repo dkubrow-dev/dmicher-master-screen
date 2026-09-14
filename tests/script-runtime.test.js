@@ -34,6 +34,17 @@ function recordScriptWrites(runtime) {
   runtime.saveScriptState = async (scene, state) => { writes.push(clone(state)); return save(scene, state); };
   return writes;
 }
+test("Focus is claimed once through the effect adapter and advances to the following step", async () => {
+  const calls = [];
+  const f = await fixture({ routine: script([step(1, "focus", { audience: "gm" }, [2]), step(2, "wait", { seconds: 10 })]),
+    effects: { focus: async (...args) => calls.push(args) } });
+  f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+  await f.runtime.enter(f.scene, "calm"); await f.tick(); await f.tick();
+  assert.equal(calls.length, 1); assert.equal(calls[0][0], f.scene); assert.equal(calls[0][1], f.npc); assert.equal(calls[0][2], "gm");
+  assert.equal(calls[0][3].scriptGeneration, 0); assert.ok(calls[0][3].scriptKey.startsWith("Token:npc:routine:"));
+  assert.equal(f.progress().stepId, 2);
+  await f.runtime.haltAll(f.scene); assert.equal(calls[0][3].isCurrent(), false);
+});
 async function settlesWithoutRelease(operation) {
   let timer;
   try { return await Promise.race([operation, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Cancellation waited for the old operation")), 1000); })]); }
@@ -213,6 +224,18 @@ test("explicit initial restoration pauses regular automation and works after gro
   assert.equal(f.runtime.currentObject(f.scene, getRuntime(f.scene).runId, { type: "Token", id: "npc" }), false);
   await f.tick(); await f.tick(); assert.equal(f.npc.x, 0); await f.tick(); assert.equal(f.runtime.manualRuns.has(id), false);
   await f.runtime.haltAll(f.scene); f.npc.x = 50; await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" }); await f.tick(); await f.tick(); assert.equal(f.npc.x, 0); assert.equal(getRuntime(f.scene).halted, true);
+});
+test("individual initial restoration notifies visible projections after retiring its completed run", async () => {
+  const observed = [];
+  const f = await fixture({ initial: script([step(1, "wait", { seconds: 0.1 })]),
+    onChange: () => observed.push(f.runtime.manualRuns.size) });
+  await f.runtime.enter(f.scene, "calm"); await f.runtime.haltAll(f.scene);
+  await f.runtime.restoreInitial(f.scene, { type: "Token", id: "npc" });
+  observed.length = 0;
+  await f.tick(); await f.tick();
+  assert.ok(observed.includes(1), "the executing initial is visible");
+  assert.equal(f.runtime.manualRuns.size, 0);
+  assert.equal(observed.at(-1), 0, "the final notification sees the retired run, even while the scene stays stopped");
 });
 test("scene restoration runs only prepared object initials, selects entry states and preserves resources while stopped", async () => {
   const f = await fixture({ initial: script([step(1, "move", { duration: 1, position: { x: 0, y: 0 } })]),

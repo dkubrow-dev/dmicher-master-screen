@@ -100,6 +100,59 @@ test("private dialogue writes only the speaker/GM card with managed-author NPC a
   assert.equal(f.messages.find().some(entry => entry.whisper.includes(f.observer.id)), false);
 });
 
+test("chat places full-width art after safe text and before response controls, under the participant heading", async () => {
+  const f = fixture(); await f.chat.publish(f.packet());
+  const message = f.messages.find()[0], content = message.content;
+  assert.match(content, /Dialogue between Innkeeper and Hero/);
+  assert.match(content, /class="ms-dialogue-chat-image"/);
+  assert.doesNotMatch(content, /class="ms-dialogue-avatar/);
+  assert.ok(content.indexOf("ms-dialogue-text") < content.indexOf("ms-dialogue-chat-image"));
+  assert.ok(content.indexOf("ms-dialogue-chat-image") < content.indexOf("data-dialogue-responses"));
+});
+
+test("one GM-only start notice is independent of chat publication and remains actionable only until finish", async () => {
+  for (const mode of ["chat", "window"]) {
+    const f = fixture({ mode, visibility: "private", windowChat: "none" });
+    await Promise.all([f.chat.notifyStarted(f.packet()), f.chat.notifyStarted(f.packet())]);
+    await f.chat.notifyStarted(f.packet());
+    const notices = f.messages.find().filter(message => metadata(message).management);
+    assert.equal(notices.length, 1);
+    const notice = notices[0];
+    assert.deepEqual(notice.whisper, [f.gm.id]); assert.equal(notice.author, f.informer.id);
+    assert.match(notice.content, /Dialogue between Innkeeper and Hero/);
+    assert.match(notice.content, /data-dialogue-gm-action="join"/);
+    assert.match(notice.content, /data-dialogue-gm-action="finish"/);
+    assert.doesNotMatch(notice.content, /Hello|SECRET_CHOICE|data-dialogue-chat-action/);
+    f.session().status = "finished";
+    await f.chat.publish(f.packet());
+    assert.doesNotMatch(notice.content, /data-dialogue-gm-action="finish"/);
+    assert.match(notice.content, /data-dialogue-gm-action="join"/);
+    if (mode === "window") assert.equal(f.messages.find().length, 1, "GM notice does not enable transcript publication");
+  }
+});
+
+test("new publisher reuses the persisted GM start notice instead of duplicating it after reload", async () => {
+  const f = fixture(); await f.chat.notifyStarted(f.packet());
+  const recovered = new DialogueChat({ getContext: (...args) => f.chat.service.getContext(...args) }, { messages: f.messages, requests: {}, authority: () => true });
+  await recovered.notifyStarted(f.packet());
+  assert.equal(f.messages.find().filter(message => metadata(message).management).length, 1);
+  recovered.dispose(); f.chat.dispose();
+});
+
+test("GM notice maintenance reads no transcript or catalogue and retires completed rows", () => {
+  const f = fixture(), packet = f.packet();
+  f.scene.getFlag = (_scope, key) => f.flags[key];
+  f.chat.context = () => assert.fail("notice maintenance must not normalize a dialogue context");
+  Object.defineProperty(f.session(), "history", { get: () => assert.fail("notice maintenance must not read transcript history") });
+  const join = { dataset: { dialogueGmAction: "join" } }, finish = { dataset: { dialogueGmAction: "finish" } };
+  const root = { isConnected: true, querySelectorAll: () => [join, finish] };
+  f.chat.managementCards.set("notice", { root, packet });
+  f.chat.syncCards(); assert.equal(join.disabled, false); assert.equal(finish.disabled, false);
+  f.session().status = "finished";
+  f.chat.syncCards(); assert.equal(join.disabled, false); assert.equal(finish.disabled, true);
+  assert.equal(f.chat.managementCards.size, 0);
+});
+
 test("public observer copies never contain choices or controls in HTML or flags", async () => {
   const f = fixture({ mode: "chat", visibility: "public" }); await f.chat.publish(f.packet());
   const records = f.messages.find(); assert.equal(records.length, 2);

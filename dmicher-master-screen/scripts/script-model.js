@@ -29,13 +29,15 @@ function json(value = {}) {
   };
   visit(value); return structuredClone(value);
 }
-export const SCRIPT_STEP_KINDS = Object.freeze(["wait", "move", "approach", "visibility", "speech", "emotion", "sound", "signal", "macro", "state", "dialogue", "follow"]);
+export const SCRIPT_STEP_KINDS = Object.freeze(["wait", "move", "approach", "visibility", "focus", "speech", "emotion", "sound", "signal", "macro", "state", "dialogue", "follow"]);
 /** Emoji font size in scene pixels, following canvas zoom rather than screen resolution. */
 export const DEFAULT_EMOTION_SIZE = 32;
+/** Stable identity shared by execution progress and its read-only projections. */
+export const scriptProgressKey = (target, script, slot = "routine") => `${target.type}:${target.id}:${slot}:${script.id ?? script.stateId ?? "script"}`;
 export function scriptStepTemplate(kind) {
   const templates = {
     wait: { seconds: 1 }, move: { timeMode: "duration", duration: 0, position: null, rotation: null, size: null },
-    approach: { targetUuid: "", distance: 0, timeMode: "duration", duration: 0, speed: 5 }, visibility: { visible: true },
+    approach: { targetUuid: "", distance: 0, timeMode: "duration", duration: 0, speed: 5 }, visibility: { visible: true }, focus: { audience: "all" },
     speech: { executionMode: "wait", duration: 0, chat: { enabled: true, timing: "before", text: "", allowTags: [], denyTags: [], range: 0, deleteAfter: true }, bubble: { enabled: true, text: "", fontSize: 24 } },
     emotion: { emoji: "", executionMode: "parallel", duration: 0, size: DEFAULT_EMOTION_SIZE }, sound: { src: "", volume: 1 }, signal: { signalId: "", parameters: {}, before: 0, after: 0 }, macro: { macroUuid: "", before: 0, after: 0 }, state: { transitions: [] },
     dialogue: { dialogueId: "", tokenUuids: [], waitMode: "all" },
@@ -77,6 +79,7 @@ export function normalizeScriptStep(raw) {
     case "approach": parameters = { targetUuid: requireText(p.targetUuid ?? "", 2048, text("UUID цели", "Target UUID")), distance: number(p.distance ?? 0, localizedMessage("Расстояние"), 0),
       timeMode: choice(p.timeMode, ["duration", "speed"], "duration"), duration: seconds(p.duration), speed: speed(p.speed ?? 5) }; break;
     case "visibility": parameters = { visible: bool(p.visible, true, localizedMessage("Видимость")) }; break;
+    case "focus": parameters = { audience: choice(p.audience, ["all", "players", "gm"], "all") }; break;
     case "speech": {
       const c = only(p.chat ?? {}, ["enabled", "timing", "text", "allowTags", "denyTags", "range", "deleteAfter"]), b = only(p.bubble ?? {}, ["enabled", "text", "fontSize"]);
       parameters = { executionMode: effectExecutionMode(p.executionMode, "wait"), duration: seconds(p.duration), chat: { enabled: bool(c.enabled, true, localizedMessage("Чат")), timing: choice(c.timing, ["before", "after"], "before"), text: requireText(c.text ?? "", 12000, localizedMessage("Текст чата")), allowTags: tags(c.allowTags), denyTags: tags(c.denyTags), range: number(c.range ?? 0, localizedMessage("Расстояние"), 0), deleteAfter: bool(c.deleteAfter, true, localizedMessage("Удалять сообщение")) }, bubble: { enabled: bool(b.enabled, true, localizedMessage("Пузырь")), text: requireText(b.text ?? "", 4000, localizedMessage("Текст пузыря")), fontSize: number(b.fontSize ?? 24, localizedMessage("Размер текста"), 1) } };

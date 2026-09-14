@@ -4,7 +4,7 @@ import { normalizeDialogueAsset } from "../dmicher-master-screen/scripts/interac
 import { dialogueObjectMessage, dialoguePlayerMessage, dialogueSessionView } from "../dmicher-master-screen/scripts/dialogue-history.js";
 import { manualDialogueData } from "../dmicher-master-screen/scripts/manual-dialogues.js";
 import { dialogueMessages, renderDialogueAudio, disposeDialogueAudio } from "../dmicher-master-screen/scripts/apps/dialogue-presentation.js";
-import { renderAssetForm, readAssetForm } from "../dmicher-master-screen/scripts/apps/asset-forms.js";
+import { renderAssetForm, readAssetForm, bindAssetPremiumControls } from "../dmicher-master-screen/scripts/apps/asset-forms.js";
 import { generics } from "../dmicher-master-screen/scripts/generics.js";
 import { sceneFixture, dialogueData } from "./fixtures/scene.js";
 import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
@@ -28,17 +28,23 @@ test("page audio is optional, validated, exported and snapshotted separately fro
   }
 });
 
-test("unlicensed authoring hides audio controls and preserves configured paths while editing other fields", () => {
+test("unlicensed authoring shows disabled Premium controls and preserves configured paths while editing other fields", () => {
   globalThis.game = { i18n: { lang: "en" } };
   const source = dialogueData(); source.pages[0].audio = "worlds/example/voice.ogg";
   const draft = normalizeDialogueAsset(source);
-  const html = renderAssetForm({ kind: "dialogue", draft, pageId: draft.pages[0].id, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
-  assert.doesNotMatch(html, /name="dialoguePageAudio"/);
+  for (const lang of ["ru", "en"]) {
+    game.i18n.lang = lang;
+    const html = renderAssetForm({ kind: "dialogue", draft, pageId: draft.pages[0].id, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
+    assert.match(html, /name="dialoguePageAudio" value="worlds\/example\/voice.ogg"/);
+    assert.match(html, /data-dialogue-audio-controls disabled/);
+    assert.match(html, /dmicher-premium-badge">Premium/);
+    assert.match(html, /data-field="dialoguePageAudio"/);
+  }
   const values = { assetName: "Updated name", assetDescription: "", dialogueStartPage: draft.startPageId,
     dialoguePageName: "Updated page", dialoguePageText: "Updated text", dialoguePageArt: "", dialoguePageImageAlignment: "right" };
   const root = {
     querySelector: (selector) => selector === "[data-asset-page]" ? { dataset: { assetPage: draft.pages[0].id } }
-      : selector === '[name="dialoguePageAudio"]' ? null : { value: values[selector.match(/name="([^"]+)"/)?.[1]] ?? "" },
+      : selector === '[name="dialoguePageAudio"]' ? { value: "forged.ogg" } : { value: values[selector.match(/name="([^"]+)"/)?.[1]] ?? "" },
     querySelectorAll: () => []
   };
   const result = readAssetForm(root, draft, "dialogue");
@@ -60,6 +66,7 @@ test("licensed authoring uses the Foundry audio picker field in both languages a
       globalThis.game = { i18n: { lang } };
       const html = renderAssetForm({ kind: "dialogue", draft, pageId: draft.pages[0].id, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
       assert.ok(html.includes(label)); assert.match(html, /data-field="dialoguePageAudio"/);
+      assert.match(html, /dmicher-premium-badge">Premium/); assert.doesNotMatch(html, /data-dialogue-audio-controls disabled/);
     }
     const values = { assetName: draft.name, assetDescription: "", dialogueStartPage: draft.startPageId,
       dialoguePageName: "Page", dialoguePageText: "Text", dialoguePageArt: "", dialoguePageImageAlignment: "left", dialoguePageAudio: "new.ogg" };
@@ -69,6 +76,26 @@ test("licensed authoring uses the Foundry audio picker field in both languages a
     licensed = false; registration.notifyChanged();
     assert.equal(readAssetForm(root, draft, "dialogue").pages[0].audio, "old.ogg");
   } finally { registration.dispose(); }
+});
+
+test("license updates toggle only their own fieldset without resetting the input or creating subscriptions on unrelated forms", () => {
+  let licensed = false;
+  const registration = generics.premium.registerProvider({ apiVersion: 1, hasAccess: () => licensed, extensions: [{
+    moduleId: "dmicher-master-screen", apiVersion: 1, methods: {
+      resolveDialogueAudioPickerOptions: (_base, current) => ({ type: "audio", current }),
+      resolveDialogueAudio: (_base, src, volume) => ({ src, volume, loop: false })
+    }
+  }] });
+  const fieldset = { isConnected: true, disabled: false }, outer = { disabled: true }, input = { value: "unsaved.ogg" };
+  const dispose = bindAssetPremiumControls({ querySelectorAll: () => [fieldset] });
+  try {
+    assert.equal(fieldset.disabled, true);
+    licensed = true; registration.notifyChanged(); assert.equal(fieldset.disabled, false);
+    assert.equal(outer.disabled, true); assert.equal(input.value, "unsaved.ogg");
+    licensed = false; registration.notifyChanged(); assert.equal(fieldset.disabled, true);
+    dispose(); licensed = true; registration.notifyChanged(); assert.equal(fieldset.disabled, true);
+    bindAssetPremiumControls({ querySelectorAll: () => [] })();
+  } finally { dispose(); registration.dispose(); }
 });
 
 test("shared replay control follows playback state without rerendering a dialogue window", () => {

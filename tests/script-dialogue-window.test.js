@@ -95,6 +95,32 @@ test("listener delivery is authorized by a fresh read and never exposes answer o
   await app.close(); assert.equal(left.listenerTokenId, "listener-token");
 });
 
+test("GM inspection has an explicit finish action, no player replies or heartbeat, and closing leaves the conversation active", async () => {
+  const f = fixture(); game.user = { id: "gm", isGM: true };
+  f.selection.moderator = true; f.selection.initialView = { ...f.view, role: "moderator" };
+  let finishes = 0, reads = 0;
+  f.service.refreshSession = async command => { reads++; assert.equal(command.moderator, true); return { ...f.view, role: "moderator" }; };
+  f.service.requestAnswer = f.service.requestStart = f.service.renewSession = f.service.leaveSession = () => assert.fail("GM inspection must not own the player lifecycle");
+  f.service.requestModeratorFinish = async command => { finishes++; assert.equal(command.runId, "run"); return { ...f.view, role: "moderator", status: "finished" }; };
+  const app = new DialogueApplication(f.service, f.selection), context = await app._prepareContext({});
+  assert.equal(reads, 1); assert.equal(context.canFinish, true); assert.deepEqual(context.responses, []);
+  assert.match(context.responsesHTML, /data-action="finish"/); assert.doesNotMatch(context.responsesHTML, /data-action="answer"/);
+  await app._onRender(context, {}); assert.equal(app.leaseTimer, null);
+  await DialogueApplication.answer.call(app, null, { dataset: { responseId: "answer" } });
+  await app.close(); assert.equal(finishes, 0);
+  const other = new DialogueApplication(f.service, f.selection); await other._prepareContext({});
+  await DialogueApplication.finish.call(other); assert.equal(finishes, 1);
+  assert.equal(other.isFinished, true); await other.close();
+});
+
+test("sequential conversations in the same run have separate GM transcript window identities", () => {
+  const f = fixture(); game.user = { id: "gm", isGM: true };
+  const first = new DialogueApplication(f.service, { ...f.selection, moderator: true });
+  const second = new DialogueApplication(f.service, { ...f.selection, moderator: true, initialView: { ...f.view, sessionId: "second-session" } });
+  assert.notEqual(first.options.id, second.options.id);
+  assert.ok(second.options.id.endsWith("-second-session"));
+});
+
 test("finishing keeps the same window and transcript visible until close", async () => {
   const f = fixture(), app = new DialogueApplication(f.service, f.selection);
   await app._prepareContext({}); app.rendered = true;

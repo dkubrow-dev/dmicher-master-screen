@@ -3,7 +3,8 @@ import { withSceneLock } from "./store.js";
 import { notifyExecutionChange, createExecutionScope } from "./execution.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities, stopObjectAnimation } from "./script-movement.js";
 import { createCombatAdapter } from "./combat-adapter.js";
-import { DEFAULT_EMOTION_SIZE } from "./script-model.js";
+import { DEFAULT_EMOTION_SIZE, scriptProgressKey } from "./script-model.js";
+export { scriptProgressKey } from "./script-model.js";
 import { planScriptApproach, planScriptFollow, advanceScriptFollow } from "./script-target-movement.js";
 import { scriptDialoguesPending } from "./interaction-session-model.js";
 import { debugTrace, debugError } from "./debug.js";
@@ -17,7 +18,6 @@ const traceContext = (scene, state, object, script, step, extra = {}) => ({ scen
   stateId: state.stateId ?? state.state?.id, stateName: state.state?.name, runId: state.runId, objectId: object.id, objectName: object.name,
   objectType: object.documentName, scriptName: script.name, stepId: step?.id, kind: step?.kind, ...extra });
 const visualTime = (state) => Math.max(Date.now(), ...Object.values(state.scriptStates ?? {}).flatMap((progress) => [Number(progress?.emojiAt ?? 0) + 1, Number(progress?.bubbleAt ?? 0) + 1]));
-export const scriptProgressKey = (target, script, slot = "routine") => `${target.type}:${target.id}:${slot}:${script.id ?? script.stateId ?? "script"}`;
 export function initialScriptProgress(script) {
   return { stepId: script.steps.length ? 1 : null, status: script.steps.length && script.enabled !== false ? "ready" : "done", sequence: 0,
     action: null, nextStepId: null, emoji: "", emojiSize: DEFAULT_EMOTION_SIZE, emojiAt: 0, emojiEffect: null, bubble: null, bubbleAt: 0,
@@ -429,6 +429,12 @@ export class ObjectScriptRuntime {
     if (step.kind === "visibility") {
       if (!scriptObjectCapabilities(object).visibility) throw new Error(localizedMessage("Этот объект не поддерживает скрытие."));
       if (admitted()) await object.update({ hidden: !p.visible }); return {};
+    }
+    if (step.kind === "focus") {
+      if (admitted()) await effects.focus(scene, object, p.audience, { runId, groupId: job.groupId,
+        manual: this.state(scene, runId)?.manual === true, scriptKey: job.progressKey, scriptGeneration: job.generation,
+        isCurrent: executionCurrent });
+      return {};
     }
     if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume, { scene, runId, target, groupId: job.groupId, manual: this.state(scene, runId)?.manual === true,
       scriptKey: job.progressKey, scriptGeneration: job.generation,

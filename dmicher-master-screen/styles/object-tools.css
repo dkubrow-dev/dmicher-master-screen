@@ -117,3 +117,5 @@
 .dmicher-master-screen [data-subscription-fields] label { display: grid; gap: 4px; }
 .dmicher-master-screen [data-signal-fields] > label { display: flex; flex-direction: column; gap: 4px; margin-block: 6px; }
 .dmicher-master-screen [data-signal-fields] > label > :is(input, textarea) { width: 100%; }
+.ms-object-info .ms-object-native-actions { display: flex; gap: 6px; margin-block: 6px; }
+.ms-object-info .ms-object-native-actions > button { flex: 1; width: auto; }

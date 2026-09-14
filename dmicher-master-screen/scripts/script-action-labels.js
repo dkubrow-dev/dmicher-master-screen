@@ -1,7 +1,7 @@
 import { text } from "./localization.js";
 
 const labels = Object.freeze({
-  wait: ["Ожидание", "Wait"], move: ["Перемещение", "Move"], approach: ["Приблизиться", "Approach"], visibility: ["Видимость", "Visibility"],
+  wait: ["Ожидание", "Wait"], move: ["Перемещение", "Move"], approach: ["Приблизиться", "Approach"], visibility: ["Видимость", "Visibility"], focus: ["Фокус", "Focus"],
   speech: ["Реплика", "Speech"], emotion: ["Эмоция", "Emotion"], sound: ["Звук", "Sound"],
   signal: ["Сигнал", "Signal"], macro: ["Макрос", "Macro"], state: ["Состояние", "State"],
   dialogue: ["Диалог", "Dialogue"], follow: ["Следовать", "Follow"]

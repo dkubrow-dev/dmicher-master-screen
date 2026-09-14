@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { dialogueUsesResponseButtons, renderDialogueResponses, dialogueResponseId, bindDialogueResponses,
-  dialogueMessages, renderDialogueMessages, dialogueWindowTitle } from "../dmicher-master-screen/scripts/dialogue-response-presentation.js";
+  dialogueMessages, renderDialogueMessages, dialogueWindowTitle, dialogueChatTitle } from "../dmicher-master-screen/scripts/dialogue-response-presentation.js";
 
 const responses = (...labels) => labels.map((label, index) => ({ id: `choice-${index}`, label, pageId: "page" }));
 
@@ -70,6 +70,7 @@ test("dialogue titles and reply controls are localized without translating the a
     globalThis.game = { i18n: { lang } };
     assert.equal(dialogueWindowTitle("Keeper. Greeting"), `${prefix}. Keeper. Greeting`);
     assert.equal(dialogueWindowTitle(), prefix);
+    assert.equal(dialogueChatTitle("Keeper", "Hero"), lang === "ru" ? "Диалог между Keeper и Hero" : "Dialogue between Keeper and Hero");
     const html = renderDialogueResponses(responses("Please tell me more"), { canFinish: true });
     assert.ok(html.includes(reply)); assert.ok(html.includes(finish));
   }

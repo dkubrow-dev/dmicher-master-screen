@@ -670,6 +670,7 @@ export class GroupRuntime {
         jobs.push(...await this.scripts.tickEffects(scene, run.runId, object, 0, { idle: true }));
         current = read(); if (!current || this.scripts.hasPendingEffects(current)) return jobs;
         this.manualVisuals.set(`${scene.id}:${key}`, current); this.manualRuns.delete(run.runId); this.tickTimes.delete(clockKey); this.refreshObject(object);
+        this.onChange(scene);
         return jobs;
       }
       script = run.state.scripts.find(entry => objectKey(entry.target) === key); slot = "routine";

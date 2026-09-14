@@ -6,7 +6,7 @@ export const DIALOGUE_VOLUME_SETTING = "dialogueVolume";
 const listeners = new Set();
 const clamp = (value) => Number.isFinite(Number(value)) ? Math.min(1, Math.max(0, Number(value))) : 1;
 const label = () => text("Диалоги", "Dialogues");
-const hint = () => text("Громкость озвучки диалогов для вас. Учитывает громкость интерфейса Foundry.", "Dialogue audio volume for you. Also respects Foundry interface volume.");
+const hint = () => text("Громкость озвучки диалогов для вас. Требует Premium. Учитывает громкость интерфейса Foundry.", "Dialogue audio volume for you. Requires Premium. Also respects Foundry interface volume.");
 const helper = () => globalThis.foundry?.audio?.AudioHelper;
 const toInput = (value) => helper()?.volumeToInput?.(value) ?? value;
 const fromInput = (value) => clamp(helper()?.inputToVolume?.(Number(value)) ?? value);
@@ -25,7 +25,7 @@ export function registerDialogueVolume() {
 }
 
 export class DialogueVolumeController {
-  constructor() { this.hooks = []; this.roots = new Set(); this.render = this.render.bind(this); }
+  constructor() { this.hooks = []; this.roots = new Set(); this.sliders = new WeakMap(); this.render = this.render.bind(this); }
   install() {
     for (const name of ["renderPlaylistDirectory", "renderPlaylistDirectoryHTML"]) this.hooks.push([name, Hooks.on(name, this.render)]);
     this.unsubscribe = subscribeDialogueAudioAccess(() => {
@@ -41,10 +41,15 @@ export class DialogueVolumeController {
     if (!root) return;
     this.roots.add(root);
     const old = root.querySelector("[data-dmicher-dialogue-volume]");
-    if (!isDialogueAudioAvailable()) { old?.remove(); return; }
+    if (old) { this.syncAvailability(old); return; }
     const list = root.querySelector("#global-volume .playlist-sounds") ?? root.querySelector(".global-volume .wrapper ol") ?? root.querySelector(".global-volume ol");
-    if (!list || old) return;
+    if (!list) return;
     list.append(this.createRow());
+  }
+  syncAvailability(row) {
+    const slider = this.sliders.get(row); if (!slider) return;
+    slider.disabled = !isDialogueAudioAvailable();
+    slider.setAttribute("aria-disabled", String(slider.disabled));
   }
   createRow() {
     const row = document.createElement("li");
@@ -52,6 +57,7 @@ export class DialogueVolumeController {
     row.dataset.dmicherDialogueVolume = ""; row.dataset.tooltip = hint();
     const title = document.createElement("label"), icon = document.createElement("i");
     title.textContent = label(); title.setAttribute("for", "dmicher-dialogue-volume-slider");
+    const badge = document.createElement("span"); badge.className = "dmicher-premium-badge"; badge.textContent = "Premium"; title.append(badge);
     icon.className = "volume-icon fa-fw fa-solid fa-volume-low";
     const RangePicker = globalThis.foundry?.applications?.elements?.HTMLRangePickerElement;
     const value = toInput(getDialogueVolume());
@@ -68,7 +74,7 @@ export class DialogueVolumeController {
       tooltip();
       if (isDialogueAudioAvailable()) void game.settings.set(MODULE_ID, DIALOGUE_VOLUME_SETTING, fromInput(slider.value));
     });
-    row.append(title, icon, slider); return row;
+    row.append(title, icon, slider); this.sliders.set(row, slider); this.syncAvailability(row); return row;
   }
   dispose() {
     for (const [name, id] of this.hooks) Hooks.off(name, id);

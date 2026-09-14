@@ -53,7 +53,7 @@ export function validateDialogueAccess({ scene, runtime, descriptor, target, ses
 export function createDialogueService({ emitSignal, onChange = () => {}, context = getDialogueContext,
   runtimeOf = getRuntime, save = saveRuntime, lock = withSceneLock, authority = isAuthority, validate = validateDialogueAccess,
   scriptContext = getScriptDialogueContext,
-  messageService, openScriptWindow, presentScriptChat, onSessionChange = () => {} } = {}) {
+  messageService, openScriptWindow, presentScriptChat, onSessionChange = () => {}, onDialogueStart = () => {} } = {}) {
   const chat = messageService ?? generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "scene-input" });
   const inFlight = new Map(), commands = new Map(), knownSessions = new Map();
   const slot = (userId, actorTokenId, dialogueId, target) => `${userId}:${actorTokenId}:${dialogueId}:${objectKey(target)}`;
@@ -65,7 +65,20 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
     const session = sessionId && Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry.sessionId === sessionId);
     return session ? sessionContext(sceneId, session, groupId) : current;
   };
+  // A GM observes a player's conversation without becoming its speaker or
+  // extending its lease. Privileged reads are checked on every refresh.
+  const inspectSession = (command) => {
+    if (!game.user?.isGM || generics.chat.isManagedIdentityUser(game.user)) return null;
+    const current = getContext(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target, { sessionId: command.sessionId });
+    const session = current.session;
+    if (!current.scene || !session || session.runId !== current.runtime?.runId
+      || (command.runId && command.runId !== session.runId)
+      || (command.dialogueId && command.dialogueId !== session.dialogueId)
+      || (command.target && objectKey(command.target) !== objectKey(session.target))) return null;
+    return visibleSession(session, current.dialogue, current.target, { role: "moderator" });
+  };
   const refreshSession = (command) => {
+    if (command.moderator) return inspectSession(command);
     const current = context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target);
     const session = Object.values(current.runtime?.dialogueSessions ?? {}).find((entry) => entry?.sessionId === command.sessionId);
     if (!session || !current.scene || globalThis.canvas?.scene?.id !== current.scene.id || session.runId !== current.runtime.runId) return null;
@@ -117,6 +130,7 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
         state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
         const previous = state.dialogueCommands[commandKey];
         if (previous) {
+          if (previous.role === "moderator" && (!user.isGM || generics.chat.isManagedIdentityUser(user))) fail(text("Доступ мастера к диалогу больше недоступен.", "GM access to this dialogue is no longer available."));
           if (previous.status === "processing") fail(localizedMessage("Исход предыдущего ответа ещё не подтверждён. Откройте диалог заново."));
           if (previous.role === "listener") {
             const session = Object.values(state.dialogueSessions).find(entry => entry?.sessionId === previous.sessionId);
@@ -178,6 +192,17 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
             participant.expiresAt = Date.now() + INTERACTION_LEASE_MS;
             ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
             const response = visibleSession(session, dialogue, target, { role: "listener", listenerTokenId: actor.id });
+            remember(state, commandKey, response); await save(scene, state); return { response };
+          }
+          if (command.kind === "moderator-finish") {
+            if (!user?.isGM || generics.chat.isManagedIdentityUser(user)) fail(text("Завершить чужой диалог может только мастер.", "Only a GM can finish another player's dialogue."));
+            if (session.runId !== state.runId || (command.runId && command.runId !== session.runId)) fail(localizedMessage("Разговор уже завершён или ответ ещё обрабатывается."));
+            if (["active", "processing", "interrupted"].includes(session.status)) {
+              session.status = "finished"; session.step++;
+              signals.push(interactionSignal(scene, "Dialogue", session.dialogueId, session, "closed"));
+            }
+            ({ dialogue, target } = sessionContext(command.sceneId, session, command.groupId ?? "main"));
+            const response = visibleSession(session, dialogue, target, { role: "moderator" });
             remember(state, commandKey, response); await save(scene, state); return { response };
           }
           const participant = dialogueParticipant(scene, session, user, command.listenerTokenId);
@@ -297,6 +322,10 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
       if (command.kind !== "renew") debugTrace("dialogue", `${command.kind}.result`, () => ({ ...details(),
         sessionId: result.sessionId, nodeId: result.nodeId, step: result.step, status: result.status, role: result.role }));
       if (result.failure || result.error) debugError("dialogue", `${command.kind}.failed`, result.failure || result.error, details);
+      if (result.sessionId && command.kind === "start") {
+        try { await onDialogueStart({ command, user, view: result }); }
+        catch (error) { debugError("dialogue", "start-notice.failed", error, details); globalThis.ui?.notifications?.error?.(error.message); }
+      }
       // Publication follows the committed session outside its document lock.
       // Chat failures cannot replay an already accepted answer or its signals.
       if (result.sessionId && command.kind !== "renew" && !options?.scriptStart) {
@@ -325,12 +354,13 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
   return Object.freeze({ ...createManualDialogueService(),
     ...createScriptDialogueService({ context: scriptContext, validate: validateScriptDialogueAccess,
       process: (command, user, commandId) => process(command, user, commandId, { scriptStart: true }),
-      authority, chat, openWindow: openScriptWindow, presentChat: presentScriptChat }), getContext, refreshSession,
+      authority, chat, openWindow: openScriptWindow, presentChat: presentScriptChat }), getContext, refreshSession, inspectSession,
     requestStart: (command) => send({ ...command, kind: "start", runId: command.runId ?? context(command.sceneId, command.dialogueId, command.groupId ?? "main", command.target).runtime?.runId }),
     requestInteraction: (command) => send({ ...command, kind: "interaction", runId: command.runId ?? context(command.sceneId, null, command.groupId ?? "main").runtime?.runId }),
     requestAnswer: (command) => { const known = knownSessions.get(command.sessionId); return send({ ...command, kind: "answer", nodeId: command.nodeId ?? known?.nodeId, step: command.step ?? known?.step }); },
     requestListen: (command) => send({ ...command, kind: "listen" }),
     requestFinish: (command) => send({ ...command, kind: "finish" }),
+    requestModeratorFinish: (command) => send({ ...command, kind: "moderator-finish" }),
     leaveSession: (command) => send({ ...command, kind: "leave" }), renewSession: (command) => send({ ...command, kind: "renew" }),
     async processCommand(message, initiatingUserId) {
       const command = message.getFlag?.(MODULE_ID, "dialogueCommand");

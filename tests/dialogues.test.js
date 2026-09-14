@@ -5,7 +5,7 @@ import { createGroupDefinition, defaultState } from "../dmicher-master-screen/sc
 import { isInteractionPaused } from "../dmicher-master-screen/scripts/interaction-pause.js";
 
 const MODULE_ID = "dmicher-master-screen";
-function fixture({ emitFailure = false, signal = async () => ({ status: "done", allowed: true }) } = {}) {
+function fixture({ emitFailure = false, signal = async () => ({ status: "done", allowed: true }), onDialogueStart } = {}) {
   let serial = 0, locked = false;
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   const player = { id: "player", isGM: false, role: 1, active: true };
@@ -37,7 +37,7 @@ function fixture({ emitFailure = false, signal = async () => ({ status: "done", 
   globalThis.canvas = { scene };
   globalThis.foundry ??= {}; foundry.utils = { ...(foundry.utils ?? {}), randomID: () => `id-${++serial}` };
   const service = createDialogueService({ context, runtimeOf: () => structuredClone(runtime), save: async (_scene, state) => { runtime = structuredClone(state); },
-    lock, authority: () => true, emitSignal: async (_scene, event) => {
+    lock, authority: () => true, onDialogueStart, emitSignal: async (_scene, event) => {
       assert.equal(locked, false, "event admission must be outside the Scene lock");
       if (emitFailure) throw new Error("event queue unavailable");
       events.push(structuredClone(event)); return signal(_scene, event);
@@ -71,6 +71,73 @@ function visibilityFixture(initialMode) {
   };
   return { ...f, setMode: value => { mode = value; }, listen, refresh };
 }
+
+test("GM inspection reads a private transcript without becoming a speaker or extending its lease", async () => {
+  const f = fixture(), { result: opened } = await f.send(f.start);
+  const command = { ...f.start, sessionId: opened.sessionId, moderator: true };
+  const before = structuredClone(f.runtime());
+  const view = f.service.inspectSession(command);
+  assert.equal(view.role, "moderator"); assert.equal(view.history[0].text, "Welcome");
+  assert.deepEqual(view.responses, []); assert.deepEqual(f.runtime(), before);
+  assert.equal(f.service.refreshSession(command).role, "moderator");
+  game.user = f.other;
+  assert.equal(f.service.inspectSession(command), null); assert.equal(f.service.refreshSession(command), null);
+  game.user = f.gm;
+  assert.equal(f.service.inspectSession({ ...command, runId: "stale" }), null);
+  assert.equal(f.service.inspectSession({ ...command, target: { type: "Token", id: "other" } }), null);
+  f.runtime().halted = true;
+  assert.equal(f.service.inspectSession(command).role, "moderator", "an emergency halt does not hide the GM transcript");
+});
+
+test("only an authenticated GM can finish another player's conversation and completion is emitted once", async () => {
+  const f = fixture(), { result: opened } = await f.send(f.start);
+  const command = { ...f.start, kind: "moderator-finish", sessionId: opened.sessionId };
+  const denied = await f.send(command, { user: f.other });
+  assert.ok(denied.result.failure); assert.equal(Object.values(f.runtime().dialogueSessions)[0].status, "active");
+  const forged = f.message(command, { user: f.gm });
+  await f.service.processCommand(forged, f.other.id); assert.equal(forged.flags.dialogueResult, undefined);
+  const finished = await f.send(command, { user: f.gm });
+  assert.equal(finished.result.status, "finished"); assert.equal(finished.result.role, "moderator");
+  assert.deepEqual(finished.result.responses, []);
+  await f.send(command, { user: f.gm });
+  assert.equal(f.events.filter(event => event.name === "closed").length, 1);
+  const previous = structuredClone(f.runtime());
+  f.gm.isGM = false;
+  await f.service.processCommand(finished.record, f.gm.id);
+  assert.ok(finished.record.flags.dialogueResult.failure, "revoked GM cannot replay privileged cached history");
+  assert.deepEqual(f.runtime(), previous);
+});
+
+test("GM completion cancels a pending answer without accepting its late result or duplicating completion", async () => {
+  let release, reached;
+  const gate = new Promise(resolve => { release = resolve; }), ready = new Promise(resolve => { reached = resolve; });
+  const f = fixture({ signal: async (_scene, signal) => {
+    if (signal.name === "response") { reached(); await gate; }
+    return { status: "done", allowed: true };
+  } });
+  const { result: opened } = await f.send(f.start);
+  const answer = f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, nodeId: "start", step: 0, responseId: "ask" });
+  await ready;
+  const finish = await f.send({ ...f.start, kind: "moderator-finish", sessionId: opened.sessionId }, { user: f.gm });
+  assert.equal(finish.result.status, "finished"); release();
+  assert.ok((await answer).result.failure);
+  const current = Object.values(f.runtime().dialogueSessions)[0];
+  assert.equal(current.status, "finished"); assert.equal(current.history.length, 1);
+  assert.equal(f.events.filter(event => event.name === "closed").length, 1);
+});
+
+test("the common start callback receives only committed, admitted sessions and does not repeat on replies", async () => {
+  const notices = []; let f;
+  f = fixture({ onDialogueStart: async ({ command, user, view }) => {
+    assert.ok(Object.values(f.runtime().dialogueSessions).some(session => session.sessionId === view.sessionId));
+    notices.push({ kind: command.kind, userId: user.id, sessionId: view.sessionId });
+  } });
+  const { result: opened } = await f.send(f.start);
+  assert.deepEqual(notices, [{ kind: "start", userId: f.player.id, sessionId: opened.sessionId }]);
+  await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, nodeId: "start", step: 0, responseId: "ask" });
+  assert.equal(notices.length, 1);
+  await f.send({ ...f.start, actorTokenId: "missing" }); assert.equal(notices.length, 1);
+});
 
 test("a listener joining after private to public sees only public lines, including cached command replies", async () => {
   const f = visibilityFixture("gmroll"), { result: opened } = await f.send(f.start);

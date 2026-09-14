@@ -4,6 +4,7 @@ import { scenePreparationKey } from "./scene-refresh.js";
 import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
 import { renderSceneTree, renderSceneControls, syncSceneControls, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
+import { NavigationFilter } from "./navigation-filter.js";
 import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
 import { GroupEditor } from "../group-editor.js";
 import { SignalCatalog } from "../signal-catalog.js";
@@ -12,7 +13,7 @@ import { MODULE_ID, randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
 import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
-import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
+import { renderAssetForm, readAssetForm, renderOwnedObjects, bindAssetPremiumControls } from "./asset-forms.js";
 import { renderDialogueTree } from "./dialogue-asset-view.js";
 import { bindIDEMenus } from "./ide-menu.js";
 import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
@@ -20,6 +21,7 @@ import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form
 import { debugEnabled, setDebugEnabled } from "../debug.js";
 import { getDialogueAudioPickerOptions } from "../premium-provider.js";
 import { DirectorConsole, renderDirectorConsole } from "./director-console.js";
+import { DirectorActivity, renderDirectorActivity } from "./director-activity.js";
 import { notifyError } from "../ui.js";
 
 const clone = (value) => structuredClone(value);
@@ -50,13 +52,17 @@ export class MasterScreenApplication extends EditorApplication {
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
     this.foldedDialogues = new Map();
+    this.navigationFilter = new NavigationFilter();
     this.directorConsole = new DirectorConsole();
+    this.directorActivity = new DirectorActivity({ onAction: (action, entry) => this.activityAction(action, entry), onError: notify });
   }
 
   _insertElement(element) { super._insertElement(element); this.layout.attach(element); }
 
   async _onClose(options) {
+    this.navigationFilter.dispose();
     this.directorConsole.dispose();
+    this.directorActivity.dispose();
     this.menuController?.dispose();
     this.menuDialog?.close(); this.menuDialog?.remove(); this.menuObserver?.disconnect();
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
@@ -85,6 +91,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.directorConsole.captureViewState();
     this.mode = mode;
     this.directorConsole.dispose();
+    this.directorActivity.dispose();
     this.layout.setMode(mode);
     this.otherBlock = mode === "director" ? "playback" : "tokens";
     this.layout.preferences.mainTab = "scene";
@@ -120,6 +127,7 @@ export class MasterScreenApplication extends EditorApplication {
   refreshFromScene(scene) {
     const context = this.controller.getContext();
     syncSceneControls(this.element, context);
+    this.directorActivity.refresh(scene);
     const key = this.sceneRefreshKey(scene, context);
     if (key === this.preparedRefreshKey || key === this.requestedRefreshKey) return;
     this.requestedRefreshKey = key;
@@ -150,7 +158,7 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   onDraftInput(event) {
-    if (event.target.matches("[data-tab-visibility], [data-screen-debug]")) return false;
+    if (event.target.matches("[data-tab-visibility], [data-screen-debug], [data-main-filter]")) return false;
     if (event.target.closest("[data-ide-parameters]")) return true;
     return super.onDraftInput(event);
   }
@@ -280,7 +288,9 @@ export class MasterScreenApplication extends EditorApplication {
         + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? t("Состояния магазинов", "Shop sessions") : t("Просмотр и ручной показ", "View and show manually"));
     }
 
-    if (activeDetail === "console" && this.mode === "director") {
+    if (activeDetail === "activity" && this.mode === "director") {
+      detailHTML = renderDirectorActivity();
+    } else if (activeDetail === "console" && this.mode === "director") {
       detailHTML = renderDirectorConsole();
     } else if (activeDetail === "reference") {
       const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
@@ -301,6 +311,7 @@ export class MasterScreenApplication extends EditorApplication {
         detailHTML += renderMacroValidation(this.subscriptionValidation);
       }
       if (this.selection.kind === "group" && selected) detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
+      if (this.mode === "director" && selected && ["group", "state"].includes(this.selection.kind)) detailHTML += actionButton("showActivity", t("Показать активность", "Show activity"));
     }
     return { ...base, ...presentation, mainHTML, detailHTML, nodeActions,
       badgesHTML: renderGroupBadges(definitions, runtimes),
@@ -313,6 +324,8 @@ export class MasterScreenApplication extends EditorApplication {
     this.layout.bind();
     syncSceneControls(this.element, this.controller.getContext());
     this.directorConsole.attach(this.mode === "director" ? this.element.querySelector("[data-director-console]") : null, this.selectionSceneId);
+    this.directorActivity.attach(this.mode === "director" ? this.element.querySelector("[data-director-activity]") : null, this.controller.getContext().scene,
+      () => ({ groupId: this.selection.groupId, manualRuns: this.controller.runtime.manualRuns?.values() ?? [] }));
     this.controller.refreshConstructorFrame?.();
     updateSceneNavigationBadges(this.controller);
     const queues = new Map();
@@ -331,6 +344,7 @@ export class MasterScreenApplication extends EditorApplication {
       if (button) button.textContent = node.open ? "▾" : "▸";
     }
     const selectionKey = `${this.selectionSceneId}:${this.layout.preferences.mainTab}:${JSON.stringify(this.selection)}`;
+    this.navigationFilter.attach(this.element, this.stateKey());
     if (selectionKey !== this.revealedSelection) {
       const content = this.element.querySelector("[data-main-content]"), row = content?.querySelector('[aria-selected="true"], .is-selected');
       if (row) {
@@ -342,6 +356,7 @@ export class MasterScreenApplication extends EditorApplication {
     }
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.componentsDisposers.push(generics.components.bindColorFields(this.element));
+    this.componentsDisposers.push(bindAssetPremiumControls(this.element));
     if (this.selection.kind === "signal") this.componentsDisposers.push(bindSignalFields(this.element, {
       getSignal: () => this.parameterDraft,
       onChange: () => { this.captureParameterDraft(); this.dirty = true; },
@@ -365,6 +380,7 @@ export class MasterScreenApplication extends EditorApplication {
     }, listeners);
     this.element.addEventListener("toggle", (event) => {
       if (!event.target.matches("[data-signal-category],[data-emitter-node]")) return;
+      if (event.target.dataset.mainFilterExpanded) return;
       const key = signalBranchKey(event.target);
       if (event.target.open) this.foldedSignalBranches.delete(key); else this.foldedSignalBranches.add(key);
     }, { ...listeners, capture: true });
@@ -569,9 +585,30 @@ export class MasterScreenApplication extends EditorApplication {
     return this.render({ force: true });
   }
 
+  async activityAction(action, entry) {
+    if (this.mode !== "director" || !game.user.isGM) return;
+    const scene = this.assertScene();
+    if (action === "focus") return this.controller.focusObject(entry.target, { sceneId: scene.id, explicit: true });
+    const packet = entry.packet;
+    if (packet?.sceneId !== scene.id) return;
+    if (entry.kind === "dialogue") {
+      if (action === "join") return this.controller.openModeratorDialogue(packet);
+      if (action === "finish") return this.controller.dialogues.requestModeratorFinish(packet);
+    } else if (entry.kind === "shop") {
+      if (action === "join") return this.controller.openShop(packet.target, { groupId: packet.groupId, shopId: packet.shopId,
+        actorTokenId: packet.actorTokenId, sessionId: packet.sessionId, join: true });
+      if (action === "finish") return this.controller.shop.releaseSession(packet);
+    }
+  }
+
   async handleAction(action, button, event) {
     // Dispatch controls synchronously, before asynchronous editor/selection work.
     if (Object.hasOwn(SCENE_COMMANDS, action) || Object.hasOwn(GROUP_COMMANDS, action) || ["resumeGroup", "resumeSelectedGroup"].includes(action)) return super.handleAction(action, button, event);
+    if (action === "showActivity" && this.mode === "director") {
+      this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter(id => id !== "activity");
+      this.layout.selectDetailTab("activity"); this.captureParameterDraft();
+      return this.render({ force: true });
+    }
     if (action === "previewAsset") {
       this.parameterDraft = this.readParameterDraft();
       return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.selection.pageId });

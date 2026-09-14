@@ -55,6 +55,7 @@ export class ScreenController {
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
     this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor" });
     this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene),
+      onDialogueStart: ({ command, view }) => this.dialogueChat.notifyStarted({ ...command, sessionId: view.sessionId }),
       openScriptWindow: (command, initialView) => this.openScriptDialogue(command, initialView),
       presentScriptChat: (command, view) => this.dialogueChat.present(command, view),
       onSessionChange: async ({ command, user, view }) => {
@@ -63,7 +64,7 @@ export class ScreenController {
           await this.dialogueChat.presentListener({ ...command, userId: user.id, listenerTokenId: view.listenerTokenId }, view);
         }
       } });
-    this.dialogueChat = new DialogueChat(this.dialogues);
+    this.dialogueChat = new DialogueChat(this.dialogues, { openModerator: (command) => this.openModeratorDialogue(command) });
     this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
     this.hooks = [];
   }
@@ -104,10 +105,17 @@ export class ScreenController {
   }
   refreshConstructorFrame() {
     this.constructorIndicator.sync(game.user?.isGM === true && this.mode === "constructor" && this.editor?.rendered === true);
-    if (this.mode !== "constructor") clearCanvasObjectFocus(globalThis.canvas);
+    if (this.focusMode !== this.mode) { clearCanvasObjectFocus(globalThis.canvas); this.focusMode = this.mode; }
   }
-  focusObject(descriptor) {
-    if (!game.user?.isGM || this.mode !== "constructor") return false;
+  async focusObject(descriptor, { sceneId = currentScene()?.id, explicit = false } = {}) {
+    if (!game.user?.isGM || !explicit && this.mode !== "constructor") return false;
+    const scene = game.scenes?.get(sceneId) ?? (currentScene()?.id === sceneId ? currentScene() : null);
+    if (!scene || !getSceneObject(scene, descriptor)) return false;
+    if (currentScene()?.id !== sceneId) {
+      if (!explicit || !scene.view) return false;
+      await scene.view();
+      if (currentScene()?.id !== sceneId || !game.user?.isGM) return false;
+    }
     return focusCanvasObject(globalThis.canvas, descriptor);
   }
   openObjectInfo(descriptor) { return this.openObjectForm(descriptor, this.objectInfoWindows, ObjectInfoApplication); }
@@ -343,6 +351,17 @@ export class ScreenController {
       () => new DialogueApplication(this.dialogues, { ...command, initialView }), { moduleId: MODULE_ID });
     this.dialogueWindows.set(key, app);
     return app;
+  }
+  openModeratorDialogue(command) {
+    requireGM();
+    const view = this.dialogues.inspectSession(command);
+    if (!view) return null;
+    const packet = { ...command, sessionId: view.sessionId, runId: view.runId, dialogueId: view.dialogueId,
+      actorTokenId: view.actorTokenId, target: view.target, moderator: true, initialView: view };
+    const key = `${command.sceneId}:moderator:${view.sessionId}`;
+    const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
+      () => new DialogueApplication(this.dialogues, packet), { moduleId: MODULE_ID });
+    this.dialogueWindows.set(key, app); return app;
   }
   async openListeningDialogue(session, actorTokenId) {
     const scene = currentScene();

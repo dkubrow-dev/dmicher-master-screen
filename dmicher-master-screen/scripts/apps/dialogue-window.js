@@ -18,10 +18,10 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     actions: { answer: DialogueApplication.answer, finish: DialogueApplication.finish, leave: DialogueApplication.leave }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/dialogue.hbs` } };
-  constructor(service, { sceneId, dialogueId, target, actorTokenId, listenerTokenId, groupId = "main", runId: requestedRunId, initialView }, options = {}) {
+  constructor(service, { sceneId, dialogueId, target, actorTokenId, listenerTokenId, sessionId, moderator = false, groupId = "main", runId: requestedRunId, initialView }, options = {}) {
     const runId = requestedRunId ?? service.getContext(sceneId, dialogueId, groupId, target).runtime?.runId ?? "inactive";
-    super({ ...options, id: `dmicher-master-screen-dialogue-${sceneId}-${groupId}-${runId}-${dialogueId}-${target?.type ?? ""}-${target?.id ?? ""}-${actorTokenId}${listenerTokenId ? `-listener-${listenerTokenId}` : ""}` });
-    Object.assign(this, { service, sceneId, dialogueId, target, actorTokenId, listenerTokenId, groupId });
+    super({ ...options, id: `dmicher-master-screen-dialogue-${sceneId}-${groupId}-${runId}-${dialogueId}-${target?.type ?? ""}-${target?.id ?? ""}-${actorTokenId}${moderator ? `-moderator-${game.user.id}-${sessionId ?? initialView?.sessionId ?? ""}` : listenerTokenId ? `-listener-${listenerTokenId}` : ""}` });
+    Object.assign(this, { service, sceneId, dialogueId, target, actorTokenId, listenerTokenId, moderator, groupId });
     this.runId = runId;
     this.initialView = initialView === undefined ? undefined : structuredClone(initialView);
     this.busy = false; this.error = ""; this.closing = false;
@@ -29,8 +29,10 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     this.unavailable = false;
   }
   get isListener() { return this.view?.role === "listener"; }
+  get isModerator() { return this.moderator && this.view?.role === "moderator" && Boolean(game.user?.isGM); }
   get isFinished() { return ["finished", "left"].includes(this.view?.status); }
-  command() { return { sceneId: this.sceneId, groupId: this.groupId, sessionId: this.view?.sessionId, target: this.target,
+  command() { return { sceneId: this.sceneId, groupId: this.groupId, runId: this.runId, dialogueId: this.dialogueId, sessionId: this.view?.sessionId, target: this.target,
+    ...(this.moderator ? { moderator: true } : {}),
     ...(this.listenerTokenId ? { listenerTokenId: this.listenerTokenId } : {}) }; }
   checkedInitialView(view) {
     const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: view?.sessionId });
@@ -55,29 +57,31 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
         if (this.initialView !== undefined) {
           // A delivered session already owns its admission and quota. An invalid
           // envelope must fail closed instead of silently starting a new dialogue.
-          this.view = this.initialView?.role === "listener"
+          this.view = this.moderator || this.initialView?.role === "listener"
             ? await this.service.refreshSession({ ...this.command(), sessionId: this.initialView.sessionId })
             : this.checkedInitialView(this.initialView);
           this.unavailable = !this.view;
           this.initialView = undefined;
+        } else if (this.moderator) {
+          this.unavailable = true;
         } else {
           this.startPromise ??= this.service.requestStart({ sceneId: this.sceneId, dialogueId: this.dialogueId, target: this.target, actorTokenId: this.actorTokenId, groupId: this.groupId, runId: this.runId });
           this.view = await this.startPromise;
         }
         this.error = this.view?.error ?? "";
-        if (this.closing && this.view?.sessionId) void this.service.leaveSession(this.command()).catch(() => {});
+        if (this.closing && this.view?.sessionId && !this.moderator) void this.service.leaveSession(this.command()).catch(() => {});
       } catch (error) { this.error = error.message; }
     }
     const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: this.view?.sessionId });
     this.dialogueName = current.dialogue?.name ?? this.dialogueName;
     let unavailable = "";
-    if (!this.isListener && !this.isFinished && !this.unavailable) try {
+    if (!this.moderator && !this.isListener && !this.isFinished && !this.unavailable) try {
       validateDialogueAccess({ ...current, descriptor: current.dialogue }, this.actorTokenId, game.user, this.runId);
     } catch (error) { unavailable = error.message; }
-    const responses = unavailable || this.unavailable || this.isListener || this.view?.status !== "active" ? []
+    const responses = unavailable || this.unavailable || this.isListener || this.moderator || this.view?.status !== "active" ? []
       : (this.view?.responses ?? []).map((response) => ({ ...response, disabled: this.busy }));
     const messages = dialogueMessages(this.view, responses);
-    const canFinish = Boolean(this.view) && !this.unavailable && !this.isListener && !this.isFinished;
+    const canFinish = Boolean(this.view) && !this.unavailable && !this.isListener && !this.isFinished && (!this.moderator || this.isModerator);
     const selectionKey = `${this.view?.nodeId}:${this.view?.step}`;
     if (this.responseSelection?.key !== selectionKey) this.responseSelection = { key: selectionKey, id: "" };
     return { ...base, ...this.view, busy: this.busy, error: this.error || unavailable,
@@ -96,7 +100,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
       const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: this.view?.sessionId });
       return current.runtime?.runId === this.runId && !isExecutionHalted(current.scene, current.runtime);
     } });
-    if (this.view?.status !== "active" || this.error || this.unavailable) { clearInterval(this.leaseTimer); this.leaseTimer = null; return; }
+    if (this.moderator || this.view?.status !== "active" || this.error || this.unavailable) { clearInterval(this.leaseTimer); this.leaseTimer = null; return; }
     this.leaseTimer ??= setInterval(() => {
       if (!this.rendered || this.closing || this.view?.status !== "active") return;
       void this.service.renewSession(this.command())
@@ -105,7 +109,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     this.leaseTimer.unref?.();
   }
   static async answer(_event, button) {
-    if (this.busy || this.closing || this.unavailable || this.isListener || this.view?.status !== "active") return;
+    if (this.busy || this.closing || this.unavailable || this.isListener || this.moderator || this.view?.status !== "active") return;
     const responseId = dialogueResponseId(button); if (!responseId) return;
     const request = { ...this.command(), responseId,
       nodeId: this.view.nodeId, step: this.view.step };
@@ -113,6 +117,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   }
   static async finish() {
     if (this.busy || this.closing || this.unavailable || this.isListener || this.isFinished || !this.view?.sessionId) return;
+    if (this.moderator) return this.isModerator ? this.perform(() => this.service.requestModeratorFinish(this.command())) : undefined;
     return this.perform(() => this.service.requestFinish(this.command()));
   }
   captureScroll() { captureDialogueScroll(this); }
@@ -167,7 +172,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     return this.closeTask;
   }
   async closeConfirmed(options) {
-    if (this.view?.sessionId && !this.unavailable && !this.isListener && !this.isFinished) {
+    if (this.view?.sessionId && !this.moderator && !this.unavailable && !this.isListener && !this.isFinished) {
       const confirmed = await confirmDialogueClose();
       if (!confirmed) return;
     }
@@ -175,7 +180,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     disposeDialogueAudio(this);
     this.viewGeneration++;
     clearInterval(this.leaseTimer); this.leaseTimer = null;
-    if (this.view?.sessionId) {
+    if (this.view?.sessionId && !this.moderator) {
       // Closing remains possible while the authority is disconnected; its lease
       // still bounds the lifetime of an unacknowledged departure.
       void this.service.leaveSession(this.command()).catch(() => {});

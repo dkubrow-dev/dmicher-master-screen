@@ -129,9 +129,15 @@
 .dmicher-master-screen .ms-dialogue-bubble .ms-dialogue-text { margin: 0; line-height: 1.5; }
 .dmicher-master-screen .ms-dialogue-audio-replay { float: right; clear: both; display: inline-flex; align-items: center; justify-content: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; margin: 5px 0 0; padding: 2px; }
 .dmicher-master-screen .ms-dialogue-audio-replay[hidden] { display: none; }
-.dmicher-master-screen .ms-dialogue-audio-field { display: flex; align-items: end; gap: 6px; }
+.dmicher-master-screen.ms-dialogue-chat .ms-dialogue-message { margin: 0; }
+.dmicher-master-screen.ms-dialogue-chat .ms-dialogue-bubble { padding: 8px; }
+.dmicher-master-screen.ms-dialogue-chat .ms-dialogue-chat-image { display: block; float: none; width: 100%; max-width: 100%; height: auto; margin: 8px 0 0; border: 0; border-radius: 4px; }
+.dmicher-master-screen.ms-dialogue-chat .ms-dialogue-chat-heading { margin: 0 0 8px; font-size: 1em; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-dialogue-audio-field { display: flex; align-items: end; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .dmicher-master-screen .ms-dialogue-audio-field .ms-field { flex: 1; min-width: 0; }
 .dmicher-master-screen .ms-dialogue-audio-field > button { flex: 0 0 auto; width: auto; margin-bottom: 8px; }
+[data-dmicher-dialogue-volume] label { display: flex; align-items: center; white-space: nowrap; }
+[data-dmicher-dialogue-volume] .dmicher-premium-badge { color: inherit; margin-left: 0.25rem; padding: 0 0.25rem; font-size: 0.65em; }
 .dmicher-master-screen .ms-conditions-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; }
 .dmicher-master-screen .ms-conditions-scope > strong { flex-basis: 100%; font-size: 0.88rem; }
 .dmicher-master-screen .ms-conditions-scope .ms-check { margin: 3px 0; }
@@ -158,6 +164,10 @@
 .dmicher-master-screen .ms-ide-tabs .ms-ide-gear { margin-left: auto; align-self: flex-start; flex: 0 0 26px; }
 .dmicher-master-screen .ms-ide-zone-content { overflow: auto; min-height: 0; min-width: 0; padding: 5px 7px; flex: 1; scrollbar-gutter: stable; }
 .dmicher-master-screen .ms-ide-main .ms-ide-zone-content { padding: 2px 0; }
+.dmicher-master-screen .ms-main-filter { display: flex; align-items: center; flex: 0 0 auto; gap: 6px; padding: 3px 5px; font-size: 12px; }
+.dmicher-master-screen .ms-main-filter input { flex: 1; min-width: 0; height: 25px; }
+.dmicher-master-screen .ms-main-filter-empty { margin: 6px; }
+.dmicher-master-screen [data-main-filter-row][hidden], .dmicher-master-screen [data-main-filter-empty][hidden], .dmicher-master-screen [data-filter-related][hidden] { display: none !important; }
 .dmicher-master-screen .ms-ide-divider { background: var(--dmicher-border-muted); cursor: row-resize; touch-action: none; position: relative; }
 .dmicher-master-screen .ms-ide-divider::after { content: ""; position: absolute; height: 3px; width: 38px; left: calc(50% - 19px); top: 2px; border-radius: 2px; background: var(--dmicher-accent); }
 .dmicher-master-screen[data-dock-side="bottom"] .ms-ide-divider { cursor: col-resize; }
@@ -324,6 +334,16 @@
   vertical-align: middle;
 }
 .dmicher-master-screen .ms-director-groups td:last-child { width: 112px; }
+.dmicher-master-screen .ms-activity-table { width: 100%; table-layout: fixed; margin: 0; font-size: 12px; }
+.dmicher-master-screen .ms-activity-table th,
+.dmicher-master-screen .ms-activity-table td { padding: 4px; vertical-align: top; overflow-wrap: anywhere; }
+.dmicher-master-screen .ms-activity-table small,
+.dmicher-master-screen .ms-activity-table strong { display: block; line-height: 1.25; }
+.dmicher-master-screen .ms-activity-table small { opacity: .8; }
+.dmicher-master-screen .ms-activity-actions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.dmicher-master-screen .ms-activity-actions button { flex: 0 1 auto; width: auto; min-height: 22px; height: auto; padding: 2px 4px; line-height: 1.2; font-size: 11px; }
+.dmicher-master-screen .ms-activity-object { display: inline; width: auto; min-height: 0; height: auto; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: start; white-space: normal; line-height: 1.25; }
+.dmicher-master-screen .ms-activity-object:hover { text-decoration: underline; }
 .dmicher-master-screen .ms-group-control-label { display: block; line-height: 1.2; }
 .dmicher-master-screen .ms-group-commands button {
   flex: 0 0 auto;

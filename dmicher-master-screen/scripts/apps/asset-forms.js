@@ -2,7 +2,7 @@ import { text as t } from "../localization.js";
 import { generics } from "../generics.js";
 import { localizedDescription } from "../model.js";
 import { getObjectTags } from "../store.js";
-import { isDialogueAudioAvailable } from "../premium-provider.js";
+import { isDialogueAudioAvailable, subscribeDialogueAudioAccess } from "../premium-provider.js";
 import { renderDialoguePresentation, readDialoguePresentation } from "./dialogue-asset-view.js";
 import { escapeHTML as esc, actionButton as button, textInput, selectOptions as options, formValue } from "./form-fields.js";
 
@@ -61,8 +61,20 @@ function renderPageMediaOptions(page) {
 }
 
 function renderPageAudio(page) {
-  if (!isDialogueAudioAvailable()) return "";
-  return `<div class="ms-dialogue-audio-field">${input("dialoguePageAudio", t("Звук блока", "Page audio"), page.audio ?? "", 'maxlength="1024"')}${button("assetFilePicker", t("Выбрать звук", "Choose audio"), 'data-field="dialoguePageAudio"')}</div>`;
+  const disabled = isDialogueAudioAvailable() ? "" : " disabled";
+  return `<fieldset class="ms-dialogue-audio-field" data-dialogue-audio-controls${disabled}><label class="ms-field"><span>${t("Звук блока", "Page audio")}<span class="dmicher-premium-badge">Premium</span></span><input name="dialoguePageAudio" value="${esc(page.audio ?? "")}" maxlength="1024"></label>${button("assetFilePicker", t("Выбрать звук", "Choose audio"), 'data-field="dialoguePageAudio"')}</fieldset>`;
+}
+
+/** Availability changes only controls, never the draft or its layout. The IDE
+ * owns disposal with its other field components; pages without audio subscribe to nothing. */
+export function bindAssetPremiumControls(root) {
+  const controls = [...root?.querySelectorAll?.('[data-dialogue-audio-controls]') ?? []];
+  if (!controls.length) return () => {};
+  const sync = () => {
+    const disabled = !isDialogueAudioAvailable();
+    for (const control of controls) if (control.isConnected !== false) control.disabled = disabled;
+  };
+  sync(); return subscribeDialogueAudioAccess(sync);
 }
 
 function renderDialoguePagePreview(page) {
@@ -120,7 +132,7 @@ export function readAssetForm(root, draft, kind) {
     if (page) {
       page.name = value("dialoguePageName").trim(); page.text = value("dialoguePageText"); page.art = value("dialoguePageArt").trim();
       page.imageAlignment = value("dialoguePageImageAlignment") || "left";
-      // Losing Premium hides the control but never erases a prepared sound.
+      // Disabled or stale controls never erase a previously prepared sound.
       if (isDialogueAudioAvailable() && root.querySelector('[name="dialoguePageAudio"]')) page.audio = value("dialoguePageAudio").trim();
       page.responses = [...root.querySelectorAll("[data-asset-response]")].map((row) => ({ ...page.responses[Number(row.dataset.assetResponse)], label: row.querySelector('[name="responseLabel"]').value.trim(), nextPageId: row.querySelector('[name="responseNextPage"]').value, signalId: row.querySelector('[name="responseSignal"]').value, parameters: JSON.parse(row.querySelector('[name="responseParameters"]')?.value || "{}") }));
     }

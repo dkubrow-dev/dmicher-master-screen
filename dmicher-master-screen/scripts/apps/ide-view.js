@@ -115,7 +115,7 @@ export function renderMacroList(catalog, selection, resolveMacro = () => null, o
     const doc = resolveMacro(macro.uuid);
     const key = macroKey(macro), subscriptions = catalog.subscriptions.filter((row) => row.ownerKey === macro.ownerKey && row.macroUuid === macro.uuid);
     return `<div class="ms-ide-list-row ${selection.kind === "macro" && selection.id === key ? "is-selected" : ""}" data-select-kind="macro" data-select-id="${esc(key)}" draggable="true" data-macro-uuid="${esc(macro.uuid)}"><button class="ms-tree-name" type="button" data-screen-action="selectNode" data-kind="macro" data-id="${esc(key)}">⌘ ${esc(emitterName(catalog, macro.ownerKey))} · ${esc(doc?.name ?? macro.uuid)}</button><small>${subscriptions.length ? `${t("Подписок", "Subscriptions")}: ${subscriptions.length}` : t("Без подписок", "No subscriptions")}</small>${button("editMacro", t("Править", "Edit"), `data-uuid="${esc(macro.uuid)}"`)}</div>`;
-  }).join("")}<div class="ms-macro-validation-list">${catalog.macros.map((macro) => `<p class="ms-note">${esc(resolveMacro(macro.uuid)?.name ?? macro.uuid)}: ${esc(validation.get(macroKey(macro))?.text ?? "")}</p>`).join("")}</div><p class="ms-note">${t("Перетащите сюда макрос из каталога Foundry.", "Drop a macro here from the Foundry directory.")}</p></div>`;
+  }).join("")}<div class="ms-macro-validation-list">${catalog.macros.map((macro) => `<p class="ms-note" data-filter-related="${esc(macroKey(macro))}">${esc(resolveMacro(macro.uuid)?.name ?? macro.uuid)}: ${esc(validation.get(macroKey(macro))?.text ?? "")}</p>`).join("")}</div><p class="ms-note">${t("Перетащите сюда макрос из каталога Foundry.", "Drop a macro here from the Foundry directory.")}</p></div>`;
 }
 
 function colorFields(entry) {

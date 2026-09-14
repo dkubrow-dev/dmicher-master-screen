@@ -1,10 +1,8 @@
 import { MODULE_ID } from "./model.js";
-import { getRuntime, getRuntimeForRun } from "./store.js";
-import { isExecutionHalted, onExecutionChange } from "./execution.js";
+import { onExecutionChange, scriptPresentationScope, validScriptPresentationScope as validScriptScope, scriptPresentationIsCurrent as scriptAudioIsCurrent } from "./execution.js";
 import { debugError } from "./debug.js";
 import { message as localizedMessage } from "./localization.js";
 import { objectReferenceKey } from "./object-reference.js";
-import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { generics } from "./generics.js";
 
 const CHANNEL = "script-audio", FLAG = "scriptAudio";
@@ -17,36 +15,7 @@ const isAudioMessage = message => {
   const tag = generics.chat.getChatMetadata(message);
   return tag?.ownerId === MODULE_ID && tag?.channel === CHANNEL && tag?.technical === true;
 };
-const haltId = scene => scene?.getFlag?.(MODULE_ID, "automationHaltId") ?? null;
-const groupStamp = (scene, groupId) => {
-  if (!groupId) return null;
-  const run = getRuntime(scene, { groupId });
-  return JSON.stringify([run.runId, run.stateId, run.halted, run.haltedAt]);
-};
-const hasScriptScope = data => data.scriptKey != null;
-const validScriptScope = data => !hasScriptScope(data) ? data.scriptGeneration == null
-  : typeof data.scriptKey === "string" && Boolean(objectReferenceKey(data.target))
-    && data.scriptKey.startsWith(`${objectReferenceKey(data.target)}:`)
-    && Number.isSafeInteger(data.scriptGeneration ?? 0) && (data.scriptGeneration ?? 0) >= 0;
-
-export function scriptAudioIsCurrent(scene, data) {
-  if (!scene || !validScriptScope(data)) return false;
-  const key = data.target && objectReferenceKey(data.target);
-  const binding = key && scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[key];
-  if (data.target && (!key || !scene[SCENE_OBJECT_COLLECTIONS[data.target.type]]?.get(data.target.id) || !binding || binding.playerCharacter)) return false;
-  // Manual initial runs are local to the GM. Their existing scene/group stamps
-  // gate remote admission; scoped stop deletes the delivery for every listener.
-  if (data.manual) return data.manualHaltId === haltId(scene) && data.manualGroupStamp === groupStamp(scene, data.groupId);
-  const groupRun = getRuntimeForRun(scene, data.runId);
-  const command = !groupRun && key && scene.getFlag?.(MODULE_ID, "objectCommandRuns")?.[key];
-  const commandCurrent = command?.schemaVersion === 1 && command.command === true && command.runId === data.runId
-    && ["before", "core", "after"].includes(command.phase) && !command.interruption && objectReferenceKey(command.target) === key;
-  const run = commandCurrent ? getRuntimeForRun(scene, command.parentRunId) : groupRun;
-  if (commandCurrent && run?.groupId !== command.groupId) return false;
-  const progress = hasScriptScope(data) && (commandCurrent ? command : run)?.scriptStates?.[data.scriptKey];
-  const scriptCurrent = !hasScriptScope(data) || progress && (progress.generation ?? 0) === (data.scriptGeneration ?? 0);
-  return Boolean(run && scriptCurrent && !isExecutionHalted(scene, run) && (!key || binding.groupId === run.groupId && !run.disabledObjects.includes(key)));
-}
+export { scriptAudioIsCurrent };
 
 /** One native sound per authenticated technical message. Generics owns delivery;
  * this adapter owns playback, cancellation and disposal. No sound history replays.
@@ -144,10 +113,8 @@ export class ScriptAudioService {
     if (!this.messages) throw new Error(localizedMessage("Общий сервис чата Generics недоступен."));
     if (!scene || !runId || this.disposed || signal?.aborted || !isCurrent()) return;
     this.start();
-    const data = { sceneId: scene.id, runId, src, volume, manual: Boolean(manual),
-      ...(manual ? { groupId: groupId ?? null, manualHaltId: haltId(scene), manualGroupStamp: groupStamp(scene, groupId) } : {}),
-      ...(scriptKey != null ? { scriptKey, scriptGeneration } : {}),
-      playbackId: globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID(), ...(target ? { target: structuredClone(target) } : {}) };
+    const data = { ...scriptPresentationScope(scene, { runId, groupId, manual, target, scriptKey, scriptGeneration }), src, volume,
+      playbackId: globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID() };
     if (!validScriptScope(data)) return;
     const request = { data, signal, isCurrent, cancelled: false };
     const current = () => !this.disposed && !request.cancelled && !signal?.aborted && isCurrent();

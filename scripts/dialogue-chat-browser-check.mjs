@@ -15,8 +15,9 @@ try {
     await page.evaluate(async () => {
       await controller.editor.close();
       const { DialogueChat } = await import("/modules/dmicher-master-screen/scripts/dialogue-chat.js");
-      const { renderDialogueMessages, renderDialogueResponses } = await import("/modules/dmicher-master-screen/scripts/dialogue-response-presentation.js");
+      const { renderDialogueMessages, renderDialogueResponses, dialogueChatTitle } = await import("/modules/dmicher-master-screen/scripts/dialogue-response-presentation.js");
       const MODULE = "dmicher-master-screen", GENERICS = "dmicher-generics";
+      const gm = game.user;
       const speaker = { id: "speaker", name: "Traveller", role: 1, isGM: false, active: true };
       const observer = { id: "observer", name: "Listener", role: 1, isGM: false, active: true };
       const informer = { id: "informer", name: "Informer", role: 1, isGM: false, active: false,
@@ -30,8 +31,11 @@ try {
       const service = { getContext: (_scene, _dialogue, _group, _target, options) => contexts.get(options.sessionId),
         requestAnswer: async command => { calls.push({ kind: "answer", ...command }); },
         requestFinish: async command => { calls.push({ kind: "finish", ...command }); runtime.dialogueSessions[command.sessionId].status = "finished"; },
+        inspectSession: command => game.user.isGM ? { ...contexts.get(command.sessionId).session, role: "moderator", responses: [] } : null,
+        requestModeratorFinish: async command => { calls.push({ kind: "gm-finish", ...command }); contexts.get(command.sessionId).session.status = "finished"; },
         renewSession: async () => {} };
-      globalThis.chatQA = new DialogueChat(service, { messages: {}, requests: {}, authority: () => false });
+      globalThis.chatQA = new DialogueChat(service, { messages: {}, requests: {}, authority: () => false,
+        openModerator: async (command, view) => calls.push({ kind: "gm-join", ...command, role: view.role }) });
       chatQA.context = packet => contexts.get(packet.sessionId);
       const panel = document.createElement("section"); panel.id = "chat-qa"; panel.className = "application dmicher-window dmicher-master-screen"; panel.dataset.dmicherTheme = "dark";
       Object.assign(panel.style, { position: "fixed", top: "40px", left: "90px", width: "340px", maxHeight: "830px", overflow: "auto", padding: "16px", background: "#20252d" });
@@ -53,11 +57,22 @@ try {
           getFlag(scope, key) { return this.flags[scope]?.[key]; } };
         game.messages.set(id, message);
         const root = document.createElement("article"); root.id = `card-${id}`; root.className = "dmicher-master-screen ms-dialogue-chat";
-        root.innerHTML = `${renderDialogueMessages([entry])}${controls ? renderDialogueResponses(responses, {
+        root.innerHTML = `<h3 class="ms-dialogue-chat-heading">${dialogueChatTitle("Keeper", "Hero")}</h3>${renderDialogueMessages([entry], { layout: "chat" })}${controls ? renderDialogueResponses(responses, {
           actionAttribute: "data-dialogue-chat-action", groupName: id, canFinish: true
         }) : ""}`;
         panel.append(root); chatQA.render(message, root);
         chatCards.set(id, { root, message, packet, session }); return id;
+      };
+      globalThis.addGMNotice = () => {
+        addChatCard("gm-notice-source", { controls: false });
+        game.user = gm;
+        const source = chatCards.get("gm-notice-source"), packet = { ...source.packet, controls: false, management: true };
+        const message = { ...source.message, id: "gm-notice", whisper: [gm.id], flags: { ...source.message.flags, [MODULE]: { dialogueChat: packet } } };
+        game.messages.set(message.id, message);
+        const root = document.createElement("article"); root.id = "gm-notice"; root.className = "dmicher-master-screen ms-dialogue-chat";
+        root.innerHTML = '<button type="button" data-dialogue-gm-action="join">Join</button><button type="button" data-dialogue-gm-action="finish">Finish</button>';
+        panel.append(root); chatQA.render(message, root);
+        globalThis.gmNotice = { message, root, gm };
       };
       addChatCard("radio-a", { long: true }); addChatCard("radio-b", { long: true });
     });
@@ -65,6 +80,12 @@ try {
     assert.equal(await radioA.locator('input[type="radio"]').count(), 2);
     assert.equal(await radioA.evaluate(root => root.scrollWidth <= root.clientWidth + 1), true, "long replies fit a narrow chat column");
     assert.equal(await radioA.locator('script').count(), 0);
+    assert.equal(await radioA.evaluate(root => {
+      const image = root.querySelector('.ms-dialogue-chat-image'), body = image.closest('.ms-dialogue-bubble'), text = root.querySelector('.ms-dialogue-text');
+      const imageBox = image.getBoundingClientRect(), textBox = text.getBoundingClientRect(), style = getComputedStyle(body);
+      const contentWidth = body.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      return imageBox.top >= textBox.bottom && Math.abs(imageBox.width - contentWidth) < 2 && getComputedStyle(image).float === 'none';
+    }), true, "chat art spans the message width below the text");
     assert.equal(await radioA.locator('[data-dialogue-answer]').isDisabled(), true);
     await radioA.locator('input[value="more"]').check();
     assert.equal(await radioA.locator('[data-dialogue-answer]').isEnabled(), true);
@@ -111,9 +132,24 @@ try {
     await page.evaluate(() => chatQA.syncCards(scene));
     assert.equal(await short.locator('[data-dialogue-responses]').count(), 0);
     assert.equal(await short.locator('.ms-dialogue-message').count(), 1, "finishing retains the transcript card");
+    await page.evaluate(() => addGMNotice());
+    const notice = page.locator("#gm-notice");
+    await notice.locator('[data-dialogue-gm-action="join"]').click();
+    await page.waitForFunction(() => chatCalls.length === 5);
+    assert.equal(await page.evaluate(() => chatCalls.at(-1).role), "moderator");
+    await page.evaluate(() => { game.user = game.users.get("observer"); });
+    await notice.locator('[data-dialogue-gm-action="finish"]').click();
+    assert.equal(await page.evaluate(() => chatCalls.length), 5, "an old GM control does not grant a player permission");
+    await page.evaluate(() => { game.user = gmNotice.gm; });
+    await notice.locator('[data-dialogue-gm-action="finish"]').click();
+    await page.waitForFunction(() => chatCalls.length === 6);
+    assert.equal(await page.evaluate(() => chatCalls.at(-1).kind), "gm-finish");
+    await page.evaluate(() => chatQA.syncCards());
+    assert.equal(await notice.locator('[data-dialogue-gm-action="finish"]').isDisabled(), true);
+    assert.equal(await notice.locator('[data-dialogue-gm-action="join"]').isEnabled(), true);
     await page.evaluate(() => chatQA.dispose());
     errors.push(...await page.evaluate(() => globalThis.errors)); assert.deepEqual(errors, []);
-    reports.push({ version, language, checks: "real Generics bindActions, private radio and short buttons, independent card selections, observer controls removed, fresh user/content authorization, stale block rejection and UI cleanup, finish preserves transcript", errors });
+    reports.push({ version, language, checks: "full-width art after text, participant heading, real Generics bindActions, independent reply selections, fresh user/content authorization, stale controls removed, GM join and finish, revoked GM control denied, completed transcript retained", errors });
     await context.close();
   }
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(reports, null, 2));

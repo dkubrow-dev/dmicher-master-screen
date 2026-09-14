@@ -17,8 +17,10 @@
   <div class="ms-ide-zones" data-editor-context="{{contextKey}}">
     <section class="ms-ide-zone ms-ide-main" aria-label="{{dmicherScreenText "Основная зона" "Main area"}}">
       <div class="ms-ide-tabs"><div class="ms-menu-levels">{{{mainMenuHTML}}}</div><button type="button" class="ms-ide-gear" data-screen-action="tabSettings" data-zone="main" title="{{dmicherScreenText "Показать или скрыть вкладки" "Show or hide tabs"}}" aria-label="{{dmicherScreenText "Состав основных вкладок" "Main tab visibility"}}"><i class="fa-solid fa-gear"></i></button></div>
+      <label class="ms-main-filter"><span>{{dmicherScreenText "Фильтр" "Filter"}}</span><input type="search" data-main-filter autocomplete="off" placeholder="{{dmicherScreenText "Поиск по строкам" "Search rows"}}"></label>
       <div class="ms-ide-zone-content" data-main-content>
         {{{mainHTML}}}
+        <p class="ms-note ms-main-filter-empty" data-main-filter-empty role="status" hidden>{{dmicherScreenText "Совпадений нет" "No matching rows"}}</p>
       </div>
       <footer class="ms-ide-node-actions">{{{nodeActions}}}</footer>
     </section>

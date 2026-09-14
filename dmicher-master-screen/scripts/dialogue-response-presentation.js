@@ -5,6 +5,10 @@ export function dialogueWindowTitle(name) {
   return `${text("Диалог", "Dialogue")}${name ? `. ${name}` : ""}`;
 }
 
+export function dialogueChatTitle(targetName, actorName) {
+  return `${text("Диалог между", "Dialogue between")} ${targetName ?? ""} ${text("и", "and")} ${actorName ?? ""}`;
+}
+
 /** Whitespace separates words in both supported languages; Unicode code points
  * keep an emoji from counting as two characters at the 80-character boundary. */
 export function dialogueUsesResponseButtons(responses) {
@@ -57,7 +61,7 @@ export function bindDialogueResponses(root, onSelect) {
   }
 }
 
-/** Display snapshots identically in a window, a local preview and a chat card. */
+/** Prepare the same immutable snapshots for a window, preview or chat card. */
 export function dialogueMessages(view, responses = []) {
   // A session without stored history can display only its supplied current page.
   // This is a read-only presentation fallback, never a data migration.
@@ -70,14 +74,15 @@ export function dialogueMessages(view, responses = []) {
     responses: index === history.length - 1 ? responses : [] }));
 }
 
-/** Accept raw or prepared snapshots, including a one-entry array for chat.
- * Author text is escaped; portrait alignment and replay markup stay shared. */
-export function renderDialogueMessages(messages = []) {
+/** Chat has the full-width art below the text; windows retain floated portraits.
+ * Snapshot preparation, escaped author text and audio controls stay shared. */
+export function renderDialogueMessages(messages = [], { layout = "window" } = {}) {
   if (!messages.length) return "";
   return dialogueMessages({ history: messages }).map((entry) => {
-    const image = entry.img ? `<img class="ms-dialogue-avatar is-${entry.imageAlignment}" src="${esc(entry.img)}" alt="">` : "";
+    const image = entry.img ? `<img class="${layout === "chat" ? "ms-dialogue-chat-image" : `ms-dialogue-avatar is-${entry.imageAlignment}`}" src="${esc(entry.img)}" alt="">` : "";
     const replayLabel = text("Повторить звук блока", "Replay page audio");
     const replay = entry.hasAudio ? `<button type="button" class="ms-dialogue-audio-replay" data-dialogue-audio-replay data-message-id="${esc(entry.id)}" hidden disabled aria-label="${replayLabel}" data-tooltip="${replayLabel}"><i class="fa-solid fa-volume-high" aria-hidden="true"></i></button>` : "";
-    return `<article class="ms-dialogue-message ${entry.isPlayer ? "is-player" : "is-object"}" data-message-id="${esc(entry.id)}" data-image-alignment="${entry.imageAlignment}"><div class="ms-dialogue-bubble">${image}<strong class="ms-dialogue-speaker">${esc(entry.name)}</strong>${entry.text ? `<p class="ms-dialogue-text">${esc(entry.text)}</p>` : ""}${replay}</div></article>`;
+    const body = `<strong class="ms-dialogue-speaker">${esc(entry.name)}</strong>${entry.text ? `<p class="ms-dialogue-text">${esc(entry.text)}</p>` : ""}`;
+    return `<article class="ms-dialogue-message ${entry.isPlayer ? "is-player" : "is-object"}" data-message-id="${esc(entry.id)}" data-image-alignment="${entry.imageAlignment}"><div class="ms-dialogue-bubble">${layout === "chat" ? `${body}${image}` : `${image}${body}`}${replay}</div></article>`;
   }).join("");
 }

@@ -86,6 +86,7 @@ function fields(parameters, context) {
   switch (context.kind) {
     case "wait": rows = num(["seconds"], t("Ожидание", "Wait"), duration); break;
     case "visibility": rows = check(["visible"], t("Показывать объект", "Show object")); break;
+    case "focus": rows = select(["audience"], t("Привлечь внимание", "Draw attention"), [["all", t("Всех", "Everyone")], ["players", t("Только игроков", "Players only")], ["gm", t("Только мастера", "GM only")]]); break;
     case "move": {
       const capabilities = context.document ? scriptObjectCapabilities(context.document) : { position: true, rotation: true, size: true, sizeZ: false };
       const speed = parameters.timeMode === "speed";

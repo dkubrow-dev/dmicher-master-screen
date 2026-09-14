@@ -2,6 +2,7 @@ import { message as localizedMessage } from "./localization.js";
 import { sanitizeScriptHTML, escapeScriptText as escapeHTML } from "./script-text.js";
 import { objectCenter, sceneDistance, isSceneObjectHidden } from "./scene-object-geometry.js";
 import { ScriptAudioService } from "./script-audio.js";
+import { ScriptFocusService } from "./script-focus.js";
 /** Foundry adapters. Scene rules and effect ownership remain in the runtime. */
 const values = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
 
@@ -28,12 +29,13 @@ export function speechRecipients(scene, speaker, { range = 0, visibleOnly = true
 
 export function createFoundryEffects(chat) {
   const audio = new ScriptAudioService(chat);
+  const focus = new ScriptFocusService(chat);
   const messages = chat?.createMessageService({ ownerId: "dmicher-master-screen", channel: "npc-speech" });
   const speechMetadata = (message) => message.getFlag?.("dmicher-master-screen", "scriptSpeech") ?? message.flags?.["dmicher-master-screen"]?.scriptSpeech;
   return {
-    start: () => audio.start(),
-    dispose: () => audio.dispose(),
-    stop: (scene, options) => audio.stop(scene, options),
+    start: () => { audio.start(); focus.start(); },
+    dispose: () => { audio.dispose(); focus.dispose(); },
+    stop: (scene, options) => { audio.stop(scene, options); focus.stop(scene, options); },
     async speak(scene, speaker, phrase, options, key, enabled) {
       if (!messages) throw new Error(localizedMessage("Общий сервис чата Generics недоступен."));
       const ids = speechRecipients(scene, speaker, options);
@@ -59,6 +61,7 @@ export function createFoundryEffects(chat) {
       for (const id of ids ?? []) { if (!enabled()) break; if (messages?.get(id)) await messages.remove(id); }
     },
     sound: (src, volume, options) => audio.sound(src, volume, options),
+    focus: (scene, object, audience, options) => focus.focus(scene, object, audience, options),
     async spawn(scene, spawn, runId, isCurrent) {
       const actor = await fromUuid(spawn.actorUuid);
       if (!actor || actor.documentName !== "Actor" || !actor.getTokenDocument) throw new Error(localizedMessage("Актор подкрепления не найден."));
