@@ -13,6 +13,11 @@ export class ObjectContextMenu {
     const events = new view.AbortController(); this.events = events; this.element = menu;
     const options = { signal: events.signal };
     for (const item of items) {
+      if (item.heading) {
+        const heading = document.createElement("div");
+        heading.className = "ms-object-menu-heading"; heading.setAttribute("role", "presentation"); heading.textContent = item.heading;
+        menu.append(heading); continue;
+      }
       const button = document.createElement("button");
       button.type = "button"; button.setAttribute("role", "menuitem"); button.textContent = item.label;
       button.addEventListener("click", () => {

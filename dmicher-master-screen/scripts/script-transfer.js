@@ -8,7 +8,7 @@ function checkedBlock(raw, { binding, ...references }) {
   const script = normalizeScript(raw);
   const dialogues = new Set(script.steps.filter((step) => step.kind === "dialogue").map((step) => step.parameters.dialogueId));
   validateBindingReferences({ ...binding, initialScript: script, transitionScripts: {}, scripts: [],
-    shops: [], dialogues: registeredToolIds(binding, "dialogue").filter((id) => dialogues.has(id)).map((id) => toolRegistration("dialogue", id)) }, references);
+    shops: [], commands: [], dialogues: registeredToolIds(binding, "dialogue").filter((id) => dialogues.has(id)).map((id) => toolRegistration("dialogue", id)) }, references);
   return script;
 }
 

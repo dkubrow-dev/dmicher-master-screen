@@ -11,6 +11,11 @@ import { registerTemplateLocalization } from "./apps/template-localization.js";
 import { registerDebugSetting } from "./debug.js";
 import { registerDialogueVolume, DialogueVolumeController } from "./dialogue-volume.js";
 import { syncDialogueRollMode } from "./dialogue-visibility.js";
+import { ObjectCommandRuntime } from "./object-command-runtime.js";
+import { ObjectCommandService } from "./object-command-service.js";
+import { ObjectCommandLights } from "./object-command-lights.js";
+import { createObjectCommandBadges } from "./object-command-badges.js";
+import { SCENE_OBJECT_TYPES } from "./scene-object-types.js";
 
 let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals, removeDialogueVolume;
 const hooks = [];
@@ -31,6 +36,9 @@ function attachCanvas() {
   };
   detachCanvas = listenCanvasObjectClicks(canvas, handleTap);
   controller.changed(canvas.scene);
+  controller.runtime.commandExecutor.activate(canvas.scene);
+  controller.commandLights.reindex(canvas.scene);
+  controller.commandBadges.sync(canvas.scene);
 }
 
 Hooks.once("init", () => {
@@ -39,6 +47,11 @@ Hooks.once("init", () => {
   registerDialogueVolume();
   theme.install();
   controller = new ScreenController();
+  controller.commandLights = new ObjectCommandLights();
+  controller.commandBadges = createObjectCommandBadges();
+  controller.runtime.commandExecutor = new ObjectCommandRuntime({ runtime: controller.runtime,
+    signals: controller.signals, lights: controller.commandLights });
+  controller.commandService = new ObjectCommandService({ executor: controller.runtime.commandExecutor, signals: controller.signals });
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
   removeControls = installControls(controller);
   const api = Object.freeze({ apiVersion: 1, version: VERSION,
@@ -68,11 +81,22 @@ Hooks.once("ready", () => {
   on("canvasReady", attachCanvas);
   on("renderSceneNavigation", () => updateSceneNavigationBadges(controller));
   on("updateScene", () => updateSceneNavigationBadges(controller));
+  on("updateScene", scene => { if (scene.id === globalThis.canvas?.scene?.id) controller.commandBadges.sync(scene); });
+  for (const type of SCENE_OBJECT_TYPES) {
+    on(`refresh${type}`, object => controller.commandBadges.refresh(object.document ?? object));
+    on(`update${type}`, document => { void controller.commandLights.updateObject(document).catch(notifyError); });
+    on(`delete${type}`, document => {
+      controller.commandBadges.remove(document);
+      void controller.commandLights.deleteObject(document).catch(notifyError);
+    });
+  }
+  on("createAmbientLight", document => controller.commandLights.reindex(document.parent));
+  on("deleteAmbientLight", document => controller.commandLights.reindex(document.parent));
   on("refreshToken", (token) => controller.dialogueMarkers.refresh(token.document ?? token));
   on("updateToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
   on("deleteToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
   on("updateUser", () => controller.dialogueMarkers.sync(globalThis.canvas?.scene));
-  on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); controller.dialogueMarkers.clear(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
+  on("canvasTearDown", () => { controller.commandBadges.clear(); controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); controller.dialogueMarkers.clear(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
   on("createChatMessage", (message, _options, userId) => {
     controller.dialogueChat.created(message);
     void controller.dialogueChat.processPublication(message, userId).catch(notifyError);
@@ -80,6 +104,7 @@ Hooks.once("ready", () => {
     void Promise.resolve().then(() => controller.dialogues.processScriptInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
     void controller.dialogues.processCommand(message, userId).catch(notifyError);
+    void controller.commandService.processMessage(message, userId).catch(notifyError);
   });
   on(generics.chat.getChatMessageRenderHook(), (message, html) => {
     controller.shop.renderChatMessage?.(message, html);
@@ -93,6 +118,7 @@ globalThis.addEventListener?.("pagehide", () => {
   controller?.editor?.layout?.dispose();
   controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
   controller?.dialogueMarkers.clear();
+  controller?.commandBadges?.clear(); controller?.commandLights?.dispose(); controller?.commandService?.dispose?.();
   clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
   controller?.dialogueChat.dispose();

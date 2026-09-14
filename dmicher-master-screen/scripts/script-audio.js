@@ -37,8 +37,13 @@ export function scriptAudioIsCurrent(scene, data) {
   // Manual initial runs are local to the GM. Their existing scene/group stamps
   // gate remote admission; scoped stop deletes the delivery for every listener.
   if (data.manual) return data.manualHaltId === haltId(scene) && data.manualGroupStamp === groupStamp(scene, data.groupId);
-  const run = getRuntimeForRun(scene, data.runId);
-  const progress = hasScriptScope(data) && run?.scriptStates?.[data.scriptKey];
+  const groupRun = getRuntimeForRun(scene, data.runId);
+  const command = !groupRun && key && scene.getFlag?.(MODULE_ID, "objectCommandRuns")?.[key];
+  const commandCurrent = command?.schemaVersion === 1 && command.command === true && command.runId === data.runId
+    && ["before", "core", "after"].includes(command.phase) && !command.interruption && objectReferenceKey(command.target) === key;
+  const run = commandCurrent ? getRuntimeForRun(scene, command.parentRunId) : groupRun;
+  if (commandCurrent && run?.groupId !== command.groupId) return false;
+  const progress = hasScriptScope(data) && (commandCurrent ? command : run)?.scriptStates?.[data.scriptKey];
   const scriptCurrent = !hasScriptScope(data) || progress && (progress.generation ?? 0) === (data.scriptGeneration ?? 0);
   return Boolean(run && scriptCurrent && !isExecutionHalted(scene, run) && (!key || binding.groupId === run.groupId && !run.disabledObjects.includes(key)));
 }

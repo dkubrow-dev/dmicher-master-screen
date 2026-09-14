@@ -12,6 +12,7 @@ const labels = {
   groupUuid: ["UUID группы", "Group UUID"], groupName: ["Название группы", "Group name"], stateUuid: ["UUID состояния", "State UUID"], stateName: ["Название состояния", "State name"],
   previousStateUuid: ["UUID исходного состояния", "Previous state UUID"], previousStateName: ["Название исходного состояния", "Previous state name"],
   objectUuid: ["UUID объекта взаимодействия", "Interaction object UUID"], shopUuid: ["UUID магазина", "Shop UUID"], dialogueUuid: ["UUID диалога", "Dialogue UUID"], responseUuid: ["UUID выбранного ответа", "Selected response UUID"],
+  playerTokenUuid: ["UUID персонажа, выдавшего команду", "Commanding character token UUID"], commandId: ["Встроенная команда", "Built-in command"], parameters: ["Параметры команды (JSON)", "Command parameters (JSON)"],
   combatUuid: ["UUID боя", "Combat UUID"], previousActorUuid: ["UUID персонажа, закончившего ход", "Previous character UUID"], currentActorUuid: ["UUID персонажа, начавшего ход", "Current character UUID"],
   paused: ["Игра приостановлена", "Game paused"], allowed: ["Разрешить действие: все подписчики должны вернуть true", "Allow action: every subscriber must return true"],
   message: ["Сообщение мастеру", "Message for the GM"], exit: ["Завершить диалог успешно", "Finish the dialogue successfully"], interrupt: ["Прервать диалог с сохранением позиции", "Suspend dialogue and remember its position"]
@@ -24,6 +25,15 @@ const transitionFields = () => [...groupFields(), ...textFields("previousStateUu
 const permission = () => [field("allowed", "boolean", { default: true }), field("message", "string", { nullable: true, default: null })];
 const interactionFields = (kind) => textFields("sceneUuid", "objectUuid", `${kind}Uuid`, "userUuid", "actorUuid");
 const combatFields = () => [...textFields("sceneUuid", "combatUuid"), ...["groupUuid", "groupName", "stateUuid", "stateName"].map((name) => field(name, "string", { nullable: true, default: null }))];
+const commandFields = () => [...textFields("playerTokenUuid", "objectUuid", "commandId"), field("parameters", "string", { default: "{}" })];
+// Native objects share command lifecycle signals. The packet is structured data;
+// its open command parameters travel as JSON within the existing scalar signal interface.
+const objectCommandSpecs = [
+  ["commandRequested", "Проверка команды", "Command requested", "До приёма команды; отказ любого подписчика отменяет её выполнение.", "Before accepting a command; any subscriber denial cancels it.", commandFields(), permission()],
+  ["commandStarted", "Команда начата", "Command started", "Принятая команда начинает предваряющий скрипт или встроенное действие.", "An accepted command starts its preceding script or built-in action.", commandFields(), []],
+  ["commandCompleted", "Команда выполнена", "Command completed", "Завершены встроенное действие и заканчивающий скрипт команды.", "The built-in action and following command script have completed.", commandFields(), []],
+  ["commandCancelled", "Команда отменена", "Command cancelled", "Команда отменена или остановлена до успешного завершения.", "The command was cancelled or stopped before successful completion.", commandFields(), []]
+];
 const specs = {
   Scene: [
     ["activated", "Активация", "Activation", "Сцена активирована штатными средствами Foundry.", "The scene was activated in Foundry.", [], []],
@@ -72,7 +82,7 @@ export function listSignalEmitters(scene) {
   return emitters;
 }
 export function builtinSignals(emitter) {
-  return structuredClone((specs[emitter.type] ?? []).map(([name, ru, en, ruDescription, enDescription, parameters, returns]) => ({
+  return structuredClone((specs[emitter.type] ?? (Object.hasOwn(SCENE_COLLECTIONS, emitter.type) ? objectCommandSpecs : [])).map(([name, ru, en, ruDescription, enDescription, parameters, returns]) => ({
     id: `builtin:${emitter.key}:${name}`, emitterKey: emitter.key, name, label: description(ru, en), description: description(ruDescription, enDescription), builtin: true, parameters, returns
   })));
 }

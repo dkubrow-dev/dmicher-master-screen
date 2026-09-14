@@ -7,6 +7,7 @@ globalThis.foundry = { applications: { api: { ApplicationV2: ApplicationStub, Ha
 const { ObjectBehaviorApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
 const { createGroupDefinition } = await import("../dmicher-master-screen/scripts/model.js");
 const { SceneObjects } = await import("../dmicher-master-screen/scripts/scene-objects.js");
+const { defaultObjectCommand } = await import("../dmicher-master-screen/scripts/object-command-model.js");
 const ObjectForm = Object.getPrototypeOf(ObjectBehaviorApplication.prototype);
 
 function root(fields = []) {
@@ -33,6 +34,23 @@ function fixture() {
   app.renderedDraft = app.draft;
   return { app, flags, scene };
 }
+
+test("command script selection survives unrelated group edits and clears after its command is deleted", () => {
+  const { app, flags } = fixture();
+  const command = defaultObjectCommand("come");
+  command.beforeScript = { name: "Before", steps: [] };
+  flags.objectBindings.bindings[app.ownerKey].commands = [command];
+  app.reloadRequested = true; app.context({ reload: true });
+  app.tab = "commands"; app.selectedCommand = "come";
+  app.selectedScript = { kind: "command", commandId: "come", phase: "beforeScript" };
+  assert.equal(app.activeScript().name, "Before");
+  flags.objectBindings.bindings[app.ownerKey].groupId = null;
+  app.reloadRequested = true; app.context({ reload: true });
+  assert.equal(app.activeCommand().id, "come"); assert.equal(app.activeScript().name, "Before");
+  flags.objectBindings.bindings[app.ownerKey].commands = [];
+  app.reloadRequested = true; app.context({ reload: true });
+  assert.equal(app.selectedCommand, null); assert.equal(app.selectedScript, null);
+});
 
 test("runtime updates do not replace authoring controls or their selected draft", async () => {
   const { app, scene, flags } = fixture();

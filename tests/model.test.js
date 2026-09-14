@@ -161,7 +161,7 @@ test("runtime writes require elected full GM; definition writes require current 
 
 test("scene object tags are normalized independently of state definitions and require a GM", async () => {
   const scene = world()();
-  scene.tokens = new Map([["hero", {}], ["guard", {}]]); scene.tiles = new Map([["door", {}]]);
+  scene.tokens = new Map([["hero", { id: "hero" }], ["guard", { id: "guard" }]]); scene.tiles = new Map([["door", { id: "door" }]]);
   await saveObjectTags(scene, { type: "Token", id: "hero" }, [" Hero ", "hero", "invited"]);
   await saveObjectTags(scene, { type: "Tile", id: "door" }, "Door, locked");
   assert.deepEqual(getObjectTags(scene, { type: "Token", id: "hero" }), ["hero", "invited"]);

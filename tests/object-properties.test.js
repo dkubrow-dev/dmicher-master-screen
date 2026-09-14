@@ -34,7 +34,7 @@ test("Properties opens first without a group and keeps signals after the four re
   const { body } = await app._prepareContext();
   assert.equal(app.tab, "properties");
   const tabs = [...body.matchAll(/data-tab="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["properties", "transitions", "player-actions", "routine"]);
+  assert.deepEqual(tabs, ["properties", "transitions", "player-actions", "commands", "routine"]);
   const sections = [...body.matchAll(/<h3>([^<]+)<\/h3>/g)].map((match) => match[1]);
   assert.deepEqual(sections, ["Shops", "Dialogues", "Object macros", "Subscriptions", "Object signals"]);
   assert.match(body, /name="register-dialogue"/);

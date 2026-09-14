@@ -6,6 +6,7 @@ import { GroupEditor } from "../dmicher-master-screen/scripts/group-editor.js";
 import { SceneObjects } from "../dmicher-master-screen/scripts/scene-objects.js";
 import { getInteractionCatalog } from "../dmicher-master-screen/scripts/scene-assets.js";
 import { exportBundle, importBundle } from "../dmicher-master-screen/scripts/transfer.js";
+import { bindingScripts } from "../dmicher-master-screen/scripts/object-binding-model.js";
 
 async function preparation() {
   const f = sceneFixture(), group = await f.editor.createGroup({ name: "Source" });
@@ -18,17 +19,21 @@ async function preparation() {
   ] };
   await f.objects.save(descriptor, { groupId: group.groupId, initialScript: script,
     transitionScripts: { [group.entryStateId]: script }, scripts: [{ ...script, stateId: group.entryStateId }],
+    commands: [{ id: "wait", enabled: true, beforeScript: script, afterScript: script,
+      conditions: { groups: [{ groupId: group.groupId, stateIds: [group.entryStateId] }] } }],
     dialogues: [{ dialogueId: dialogue.id }], shops: [{ shopId: shop.id }] });
   return { ...f, group, dialogue, script };
 }
 
 function checkReferences(binding, targetSceneId, dialogueId, stateId) {
-  for (const script of [binding.initialScript, binding.transitionScripts[stateId], ...binding.scripts]) {
+  for (const script of bindingScripts(binding)) {
     assert.equal(script.steps[0].parameters.dialogueId, dialogueId);
     assert.deepEqual(script.steps[0].parameters.tokenUuids, [`Scene.${targetSceneId}.Token.pc`]);
     assert.equal(script.steps[1].parameters.targetUuid, `Scene.${targetSceneId}.Tile.counter`);
     assert.equal(script.steps[2].parameters.targetUuid, `Scene.${targetSceneId}.Token.pc`);
   }
+  assert.deepEqual(binding.commands[0].conditions.groups, [{ groupId: binding.groupId, stateIds: [stateId] }]);
+  assert.equal(binding.commands[0].beforeScript.interruptions.command, "ignore");
 }
 
 test("group exports include an attached scripted dialogue and import it independently of equal shop IDs", async () => {
@@ -83,6 +88,26 @@ test("removing a dialogue attachment used by a script is rejected before saving"
   await assert.rejects(f.objects.save(descriptor, { dialogues: [] }));
   assert.deepEqual(f.scene.flags, before);
   assert.ok(f.scene.flags[MODULE_ID].objectBindings.bindings["Token:npc"].dialogues.length);
+});
+
+test("command phase references remain validated without a group and survive an explicit detach", async () => {
+  const f = await preparation();
+  await f.objects.save(descriptor, { groupId: null }, { allowReassign: true });
+  const binding = f.objects.get(descriptor);
+  assert.equal(binding.groupId, null);
+  assert.equal(binding.commands.length, 1);
+  assert.equal(binding.commands[0].beforeScript.steps[0].parameters.dialogueId, f.dialogue.id);
+  const before = clone(f.scene.flags);
+  await assert.rejects(f.objects.save(descriptor, { dialogues: [], initialScript: null }));
+  assert.deepEqual(f.scene.flags, before);
+});
+
+test("command scopes reject missing groups or foreign states before writing preparation", async () => {
+  const f = await preparation(), before = clone(f.scene.flags);
+  for (const groups of [[{ groupId: "missing", stateIds: [] }], [{ groupId: f.group.groupId, stateIds: ["missing"] }]]) {
+    await assert.rejects(f.objects.save(descriptor, { commands: [{ id: "wait", conditions: { groups } }] }));
+    assert.deepEqual(f.scene.flags, before);
+  }
 });
 
 test("a state export retains registered script dialogues without widening player availability", async () => {

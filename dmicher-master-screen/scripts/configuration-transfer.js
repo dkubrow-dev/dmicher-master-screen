@@ -50,6 +50,36 @@ export function remapBindingStateTransitions(binding, { sourceGroupId, groupId, 
   return next;
 }
 
+/** Command availability is a typed group/state reference, separate from script
+ * actions and opaque macro payloads. Split partial state imports by owner. */
+export function remapBindingCommandGroups(binding, { sourceGroupId, groupId, stateMapping = new Map() }) {
+  const next = structuredClone(binding);
+  for (const command of next.commands ?? []) {
+    command.conditions.groups = command.conditions.groups.flatMap(scope => {
+      if (scope.groupId !== sourceGroupId) return [scope];
+      if (!stateMapping.size) return [{ ...scope, groupId }];
+      if (!scope.stateIds.length) return [{ groupId, stateIds: [...stateMapping.values()] }];
+      const owned = scope.stateIds.filter(id => stateMapping.has(id));
+      const external = scope.stateIds.filter(id => !stateMapping.has(id));
+      return [...(owned.length ? [{ groupId, stateIds: owned.map(id => stateMapping.get(id)) }] : []),
+        ...(external.length ? [{ ...scope, stateIds: external }] : [])];
+    });
+    // Mapping may join a source group with an existing external reference.
+    command.conditions.groups = mergeCommandScopes(command.conditions.groups);
+  }
+  return next;
+}
+
+function mergeCommandScopes(scopes) {
+  const groups = new Map();
+  for (const scope of scopes) {
+    const current = groups.get(scope.groupId);
+    groups.set(scope.groupId, !current ? scope : { groupId: scope.groupId,
+      stateIds: !current.stateIds.length || !scope.stateIds.length ? [] : [...new Set([...current.stateIds, ...scope.stateIds])] });
+  }
+  return [...groups.values()];
+}
+
 /** Native objects keep their embedded IDs in scoped imports. Remap only these
  * actions' declared references; signal payloads and macro source are opaque. */
 export function remapBindingActionReferences(binding, { assetMapping, sourceSceneUuid, sceneUuid }) {

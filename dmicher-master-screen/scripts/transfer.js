@@ -5,6 +5,7 @@ import { getSignalCatalog, normalizeCatalog, exportCatalogDependencies } from ".
 import { validateParameters } from "./signal-types.js";
 import { getInteractionCatalog, normalizeInteractionCatalog } from "./scene-assets.js";
 import { normalizeObjectBindings, validateObjectBinding } from "./scene-objects.js";
+import { isCommandLightSource } from "./object-command-model.js";
 
 const copy = (data) => structuredClone(data);
 function portable(document) {
@@ -50,6 +51,7 @@ export async function exportBundle(scene) {
   }
   for (const macro of signalCatalog.macros) await include(macro.uuid);
   const data = portable(scene);
+  if (Array.isArray(data.lights)) data.lights = data.lights.filter(light => !isCommandLightSource(light));
   if (data.flags) delete data.flags[MODULE_ID];
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,

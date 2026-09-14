@@ -3,7 +3,7 @@ import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { getInteractionCatalog, mergeInteractionAssets } from "./scene-assets.js";
 import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./signal-catalog.js";
-import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences } from "./configuration-transfer.js";
+import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences, remapBindingCommandGroups } from "./configuration-transfer.js";
 import { normalizeObjectBinding, normalizeObjectBindings, objectKey, registeredToolIds, toolRegistration, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
 import { interactionType } from "./interaction-model.js";
 import { replacementFlagData } from "./scene-flags.js";
@@ -132,6 +132,7 @@ export function importObjectConfiguration(scene, source, { groupId, sourceGroupI
     if (current.bindings[key]?.groupId && current.bindings[key].groupId !== groupId) fail(localizedMessage("Объект {0} уже принадлежит другой группе.", [key]));
     let binding = remapBindingSignals(original, idMapping);
     binding = remapBindingStateTransitions(binding, { sourceGroupId, groupId, stateMapping });
+    binding = remapBindingCommandGroups(binding, { sourceGroupId, groupId, stateMapping });
     binding = remapBindingActionReferences(binding, {
       assetMapping: mapping, sourceSceneUuid: source.sourceSceneUuid ?? `Scene.${source.sourceSceneId}`, sceneUuid: scene.uuid ?? `Scene.${scene.id}`
     });
@@ -149,6 +150,9 @@ export function importObjectConfiguration(scene, source, { groupId, sourceGroupI
       binding.scripts = [...existing.scripts, ...binding.scripts]; binding.transitionScripts = { ...existing.transitionScripts, ...binding.transitionScripts };
       binding.shops = [...existing.shops, ...binding.shops]; binding.dialogues = [...existing.dialogues, ...binding.dialogues];
       binding.initialScript = existing.initialScript; binding.tags = existing.tags; binding.notes = existing.notes; binding.playerCharacter = existing.playerCharacter;
+      // Like the initial script, commands belong to the object rather than a
+      // state slot. Importing one more state must not replace its existing setup.
+      binding.commands = [...existing.commands, ...binding.commands.filter(command => !existing.commands.some(current => current.id === command.id))];
     }
     next.bindings[key] = binding;
   }

@@ -54,6 +54,7 @@ export class ObjectScriptRuntime {
     this.combat = runtime.combat ?? createCombatAdapter();
   }
   state(scene, runId) { return this.runtime.scriptState(scene, runId); }
+  interactionState(scene, state) { return this.runtime.scriptInteractionState?.(scene, state) ?? state; }
   save(scene, state) { return this.runtime.saveScriptState(scene, state); }
   current(scene, runId, target, options) {
     return !this.persistenceFailures.get(scene)?.has(`${runId}:${options?.scriptKey}`)
@@ -76,9 +77,9 @@ export class ObjectScriptRuntime {
     return progress;
   }
   now() { return this.runtime.now?.() ?? Date.now(); }
-  interruptionSource(scene, object, script) {
-    const external = this.runtime.scriptInterruptionSource?.(scene, targetOf(object), script);
-    if (external) return external;
+  interruptionSource(scene, object, script, runId) {
+    const external = this.runtime.scriptInterruptionSource?.(scene, targetOf(object), script, runId);
+    if (external && !(external === "command" && script.interruptions?.command === "ignore")) return external;
     if (!script.combat.enabled && this.combat.context(scene, object)) return "combat";
     return null;
   }
@@ -86,6 +87,7 @@ export class ObjectScriptRuntime {
     return Number(this.state(scene, runId)?.scriptStates?.[key]?.generation ?? 0) === generation;
   }
   scriptForKey(state, object, key) {
+    if (state.command) return state.phaseScripts?.[key] ?? state.script;
     if (state.manual) return state.script;
     const target = targetOf(object);
     for (const [slot, scripts] of [["transition", state.state?.transitions], ["routine", state.state?.scripts]]) {
@@ -205,7 +207,7 @@ export class ObjectScriptRuntime {
       if (!key.startsWith(prefix) || !scriptHasActivity(progress)
         || !this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: key })) continue;
       const script = this.scriptForKey(state, object, key);
-      const source = script && this.interruptionSource(scene, object, script);
+      const source = script && this.interruptionSource(scene, object, script, runId);
       if (!source) continue;
       await this.interrupt(scene, state, object, script, key, source);
     }
@@ -278,7 +280,7 @@ export class ObjectScriptRuntime {
     let state = this.state(scene, initial.runId);
     if (!state || !this.current(scene, initial.runId, target, { ignoreInteractionPause: true, scriptKey: key }) || script.enabled === false) return;
     state.scriptStates ??= {};
-    const source = this.interruptionSource(scene, object, script);
+    const source = this.interruptionSource(scene, object, script, initial.runId);
     // A script which has not started is merely unavailable in this context.
     // Do not manufacture an interrupted run while opening a scene in combat.
     if (source && !state.scriptStates[key]) return;
@@ -353,7 +355,7 @@ export class ObjectScriptRuntime {
         const generation = Number(progress.generation ?? 0);
         let interruptedBy = null;
         const scope = createExecutionScope(scene, { isCurrent: () => {
-          interruptedBy ??= this.interruptionSource(scene, object, script);
+          interruptedBy ??= this.interruptionSource(scene, object, script, state.runId);
           return !interruptedBy && !globalThis.game?.paused && this.generationCurrent(scene, state.runId, key, generation)
             && this.current(scene, state.runId, target, { scriptKey: key }) && sameTurn(combat, this.combat.context(scene, object));
         } });
@@ -373,7 +375,7 @@ export class ObjectScriptRuntime {
         available = Math.max(0, available - consumed);
         if (!movement.done) { await this.save(scene, state); return; }
       } else if (step.kind === "dialogue" && action.phase === "dialogue") {
-        if (scriptDialoguesPending(state, action.sessions, Date.now(), params.waitMode)) {
+        if (scriptDialoguesPending(this.interactionState(scene, state), action.sessions, Date.now(), params.waitMode)) {
           if (combat) {
             const remaining = Math.max(0, progress.combat.remaining - available);
             combatChanged ||= remaining !== progress.combat.remaining;
@@ -433,9 +435,12 @@ export class ObjectScriptRuntime {
       // Sound may outlive its step. Only its script generation and ownership,
       // not the next step's sequence number, can end this presentation.
       isCurrent: () => this.generationCurrent(scene, runId, job.progressKey, job.generation)
-        && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey }) && !this.interruptionSource(scene, object, script) }); return {}; }
+        && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey }) && !this.interruptionSource(scene, object, script, runId) }); return {}; }
     if (step.kind === "signal") {
-      if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 });
+      const state = this.state(scene, runId);
+      if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id,
+        originRunId: state?.command ? state.parentRunId : runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0,
+        ...(state?.command ? { current: executionCurrent } : {}) });
       return {};
     }
     if (step.kind === "state") {
@@ -454,7 +459,8 @@ export class ObjectScriptRuntime {
         return executionCurrent() && !globalThis.game?.paused && this.current(scene, runId, target, { scriptKey: job.progressKey, excludeDialogueSessions: started })
           && (!turn || script.combat.enabled && turn.isTurn);
       };
-      const sessions = await this.runtime.startScriptDialogues({ sceneId: scene.id, groupId: job.groupId, runId, target, dialogueId: p.dialogueId, tokenUuids: clone(p.tokenUuids) },
+      const dialogueRunId = this.interactionState(scene, this.state(scene, runId))?.runId ?? runId;
+      const sessions = await this.runtime.startScriptDialogues({ sceneId: scene.id, groupId: job.groupId, runId: dialogueRunId, target, dialogueId: p.dialogueId, tokenUuids: clone(p.tokenUuids) },
         { isCurrent, waitForAdmission: (started = []) => this.waitUntilAdmitted(job, () => isCurrent(started), executionCurrent) });
       return { sessions };
     }
@@ -483,7 +489,7 @@ export class ObjectScriptRuntime {
     const sameEffect = () => !job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.speechEffect?.id === sequence;
     const current = () => sameEffect() && this.current(scene, runId, target, { scriptKey: job.progressKey });
     const owned = () => {
-      job.interruptedBy ??= this.interruptionSource(scene, job.object, script);
+      job.interruptedBy ??= this.interruptionSource(scene, job.object, script, runId);
       return !job.interruptedBy && sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey })
         && this.generationCurrent(scene, runId, job.progressKey, job.generation)
         && (job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.sequence === sequence);
@@ -540,7 +546,7 @@ export class ObjectScriptRuntime {
         } else if (job.stage === "endTurn") { progress.status = progress.stepId === null ? "done" : "ready"; progress.combat.ended = true; }
         else if (step.kind === "dialogue") {
           const sessions = outcome.result?.sessions ?? [];
-          progress.dialogueSessions = [...(progress.dialogueSessions ?? []).filter(reference => scriptDialoguesPending(state, [reference])), ...sessions]
+          progress.dialogueSessions = [...(progress.dialogueSessions ?? []).filter(reference => scriptDialoguesPending(this.interactionState(scene, state), [reference])), ...sessions]
             .filter((reference, index, entries) => entries.findIndex(other => other.sessionId === reference.sessionId) === index);
           progress.status = "ready"; progress.action.phase = "dialogue"; progress.action.sessions = sessions;
           if (step.parameters.waitMode === "none") this.advance(progress, this.next(script, step));

@@ -1,0 +1,128 @@
+import { text } from "./localization.js";
+import { MODULE_ID, normalizeTags } from "./model.js";
+import { normalizeScript } from "./script-model.js";
+import { normalizeScriptInterruptions } from "./script-interruption-model.js";
+
+export const COMMAND_LIGHT_FLAG = "commandLight";
+/** Command-created light is a runtime effect, not scene preparation. Full scene
+ * exports omit only this exact owner marker; unrelated ambient lights remain. */
+export function isCommandLightSource(source) {
+  const marker = source?.flags?.[MODULE_ID]?.[COMMAND_LIGHT_FLAG];
+  return marker?.version === 1 && typeof marker.targetUuid === "string" && marker.targetUuid.startsWith("Scene.");
+}
+
+/** Preparation only. No document reads, player input, or active command state. */
+export const OBJECT_COMMAND_DEFINITIONS = Object.freeze([
+  { id: "come", category: "movement", defaults: { speed: 5, duration: 10 } },
+  { id: "away", category: "movement", defaults: { speed: 5, duration: 10 } },
+  { id: "go", category: "movement", defaults: { speed: 5, duration: 10, waitSeconds: 1 } },
+  { id: "follow", category: "movement", defaults: { speed: 5, minDistance: 0, maxDistance: 5, mode: "path" } },
+  { id: "patrol", category: "movement", defaults: { speed: 5 } },
+  { id: "wait", category: "movement", defaults: { seconds: 10 } },
+  { id: "open-door", category: "interaction", defaults: { speed: 5 } },
+  { id: "close-door", category: "interaction", defaults: { speed: 5 } },
+  { id: "light-on", category: "interaction", defaults: { bright: 10, dim: 20 } },
+  { id: "light-off", category: "interaction", defaults: {} },
+  { id: "stop", category: "interaction", defaults: { issuer: "gm" } },
+  { id: "cancel", category: "interaction", defaults: { issuer: "commander", waitSeconds: 1 } }
+].map(entry => Object.freeze({ ...entry, defaults: Object.freeze(entry.defaults) })));
+export const OBJECT_COMMAND_IDS = Object.freeze(OBJECT_COMMAND_DEFINITIONS.map(entry => entry.id));
+
+export function objectCommandName(id) {
+  const names = {
+    come: text("Подойди", "Come here"), away: text("Отойди", "Move away"), go: text("Встань там", "Stand there"),
+    follow: text("Следуй за мной", "Follow me"), patrol: text("Патрулируй", "Patrol"), wait: text("Жди", "Wait"),
+    "open-door": text("Открой дверь", "Open the door"), "close-door": text("Закрой дверь", "Close the door"),
+    "light-on": text("Зажги свет", "Light on"), "light-off": text("Потуши свет", "Light off"),
+    stop: text("Стой", "Stop"), cancel: text("Отмена", "Cancel")
+  };
+  return Object.hasOwn(names, id) ? names[id] : text("Неизвестная команда", "Unknown command");
+}
+
+const fail = message => { throw new Error(message); };
+const record = value => value && typeof value === "object" && !Array.isArray(value);
+const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+function definition(id) {
+  const entry = OBJECT_COMMAND_DEFINITIONS.find(item => item.id === id);
+  if (!entry) fail(text("Выберите встроенную команду объекта.", "Select a built-in object command."));
+  return entry;
+}
+function numeric(value, { positive = false } = {}) {
+  if (typeof value !== "number" || !Number.isFinite(value) || (positive ? value <= 0 : value < 0)) {
+    fail(text(positive ? "Параметр команды должен быть числом больше нуля." : "Параметр команды должен быть неотрицательным числом.",
+      positive ? "The command parameter must be a number greater than zero." : "The command parameter must be a non-negative number."));
+  }
+  return value;
+}
+function normalizeParameters(id, raw = {}) {
+  const defaults = definition(id).defaults;
+  if (!record(raw) || Object.keys(raw).some(key => !Object.hasOwn(defaults, key))) {
+    fail(text("В параметрах команды есть неизвестное поле.", "The command parameters contain an unknown field."));
+  }
+  const parameters = { ...defaults, ...raw };
+  for (const key of ["speed", "duration", "seconds", "waitSeconds"]) {
+    if (Object.hasOwn(parameters, key)) parameters[key] = numeric(parameters[key], { positive: true });
+  }
+  for (const key of ["minDistance", "maxDistance", "bright", "dim"]) {
+    if (Object.hasOwn(parameters, key)) parameters[key] = numeric(parameters[key]);
+  }
+  if (id === "follow") {
+    if (!["path", "direct"].includes(parameters.mode)) fail(text("Выберите способ следования.", "Select a following mode."));
+    if (parameters.maxDistance < parameters.minDistance) fail(text("Максимальное расстояние не может быть меньше минимального.", "Maximum distance cannot be less than minimum distance."));
+  }
+  if (id === "stop" && !["gm", "players"].includes(parameters.issuer)
+    || id === "cancel" && !["gm", "commander", "players"].includes(parameters.issuer)) {
+    fail(text("Выберите, кто может выдать команду.", "Select who may issue this command."));
+  }
+  return parameters;
+}
+function normalizeGroups(raw = []) {
+  if (!Array.isArray(raw) || raw.length > 100) fail(text("Выберите до 100 групп для команды.", "Select up to 100 groups for the command."));
+  const seen = new Set();
+  return raw.map(entry => {
+    if (!record(entry) || !validId(entry.groupId) || seen.has(entry.groupId)) fail(text("Группа команды отсутствует или повторяется.", "A command group is missing or repeated."));
+    seen.add(entry.groupId);
+    const states = entry.stateIds ?? [];
+    if (!Array.isArray(states) || states.length > 100 || states.some(id => !validId(id))) fail(text("Выберите состояния группы для команды.", "Select group states for the command."));
+    return { groupId: entry.groupId, stateIds: [...new Set(states)] };
+  });
+}
+
+export function normalizeObjectCommandScript(raw) {
+  if (raw == null) return null;
+  if (!record(raw)) fail(text("Ожидается блок скрипта команды.", "Expected a command script block."));
+  if (raw.interruptions !== undefined && !record(raw.interruptions)) fail(text("Ожидаются настройки прерывания скрипта команды.", "Expected command script interruption settings."));
+  const script = normalizeScript({ ...raw, interruptions: { ...raw.interruptions, command: raw.interruptions?.command ?? "ignore" } });
+  // The command phase owns the block; a foreign routine state cannot assign it.
+  const { stateId: _stateId, ...block } = script;
+  return block;
+}
+
+export function normalizeObjectCommand(raw) {
+  if (!record(raw)) fail(text("Ожидаются настройки команды объекта.", "Expected object command settings."));
+  definition(raw.id);
+  if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") fail(text("Включение команды должно быть логическим значением.", "Command enabled must be a boolean."));
+  const conditions = raw.conditions ?? {};
+  if (!record(conditions)) fail(text("Ожидаются условия команды.", "Expected command conditions."));
+  return { id: raw.id, enabled: raw.enabled ?? false,
+    conditions: { allowTags: normalizeTags(conditions.allowTags), denyTags: normalizeTags(conditions.denyTags),
+      groups: normalizeGroups(conditions.groups), range: numeric(conditions.range ?? 5) },
+    parameters: normalizeParameters(raw.id, raw.parameters), interruptions: normalizeScriptInterruptions(raw.interruptions),
+    beforeScript: normalizeObjectCommandScript(raw.beforeScript), afterScript: normalizeObjectCommandScript(raw.afterScript) };
+}
+export const defaultObjectCommand = id => normalizeObjectCommand({ id });
+export function normalizeObjectCommands(raw = []) {
+  if (!Array.isArray(raw) || raw.length > OBJECT_COMMAND_IDS.length) fail(text("Ожидается список встроенных команд объекта.", "Expected a list of built-in object commands."));
+  const commands = raw.map(normalizeObjectCommand);
+  if (new Set(commands.map(command => command.id)).size !== commands.length) fail(text("Команда объекта не должна повторяться.", "An object command cannot be repeated."));
+  return commands;
+}
+
+/** Empty filters are unrestricted; each selected group is an alternative. */
+export function objectCommandConditionsMatch(command, { tags = [], groupStates = [], distance = Infinity } = {}) {
+  const { allowTags, denyTags, groups, range } = command.conditions;
+  return command.enabled && (!allowTags.length || allowTags.some(tag => tags.includes(tag)))
+    && !denyTags.some(tag => tags.includes(tag)) && Number.isFinite(distance) && distance >= 0 && distance <= range
+    && (!groups.length || groups.some(group => groupStates.some(current => current.groupId === group.groupId
+      && (!group.stateIds.length || group.stateIds.includes(current.stateId)))));
+}

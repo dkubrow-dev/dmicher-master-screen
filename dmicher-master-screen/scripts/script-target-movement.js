@@ -90,7 +90,7 @@ export function clipMovementByWalls(scene, object, from, to) {
   return { point: { x: from.x + (to.x - from.x) * ratio, y: from.y + (to.y - from.y) * ratio }, blocked: true };
 }
 
-export async function advanceScriptFollow(scene, object, follow, parameters, seconds, { isCurrent = () => true, signal } = {}) {
+export async function advanceScriptFollow(scene, object, follow, parameters, seconds, { isCurrent = () => true, signal, collisionClip = clipMovementByWalls } = {}) {
   if (!isCurrent()) return { consumed: 0, done: false };
   const target = resolveMovementTarget(scene, object, follow.targetUuid), scale = pixelScale(scene);
   appendFollowWaypoint(follow, nativeCenter(target, scene));
@@ -118,7 +118,7 @@ export async function advanceScriptFollow(scene, object, follow, parameters, sec
     const length = distance(origin, destination);
     if (length < 0.5) return arrived();
     const ratio = Math.min(1, budget / length), proposed = { x: origin.x + (destination.x - origin.x) * ratio, y: origin.y + (destination.y - origin.y) * ratio };
-    const { point, blocked } = clipMovementByWalls(scene, object, origin, proposed), travel = distance(origin, point);
+    const { point, blocked } = collisionClip(scene, object, origin, proposed), travel = distance(origin, point);
     follow.blocked = blocked;
     if (travel >= 1) {
       const used = travel / parameters.speed / scale;

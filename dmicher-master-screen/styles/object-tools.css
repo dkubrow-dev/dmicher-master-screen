@@ -2,8 +2,17 @@
 .dmicher-master-screen.ms-object-menu { position: fixed; z-index: 1000; min-width: 180px; max-width: min(340px, 95vw); padding: 4px; border: 1px solid var(--dmicher-border, #777); border-radius: 5px; color: var(--dmicher-text, #eee); background: var(--dmicher-content-bg, #20252d); box-shadow: 0 3px 14px #0008; }
 .dmicher-master-screen.ms-object-menu button { display: flex; align-items: center; gap: 7px; width: 100%; margin: 0; padding: 5px 8px; border: 0; background: transparent; text-align: left; }
 .dmicher-master-screen.ms-object-menu button:hover, .dmicher-master-screen.ms-object-menu button:focus-visible { background: var(--dmicher-hover-bg, #ffffff20); }
+.dmicher-master-screen.ms-object-menu { max-height: calc(100vh - 8px); overflow-y: auto; overscroll-behavior: contain; }
+.dmicher-master-screen.ms-object-menu .ms-object-menu-heading { font-size: 11px; font-weight: 600; opacity: .75; padding: 5px 8px 2px; border-top: 1px solid var(--dmicher-border, #777); margin-top: 3px; }
 .dmicher-master-screen .ms-object-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
 .dmicher-master-screen .ms-object-tabs button { flex: 1; }
+.dmicher-master-screen .ms-object-commands { width: 100%; margin: 0; }
+.dmicher-master-screen .ms-object-commands td { padding: 3px 5px; }
+.dmicher-master-screen .ms-object-commands label.ms-check { margin: 0; min-height: 24px; line-height: 1.2; }
+.dmicher-master-screen .ms-object-commands td:last-child { width: 1%; white-space: nowrap; }
+.dmicher-master-screen .ms-object-commands button { width: auto; min-height: 24px; padding: 2px 7px; margin: 0; }
+.dmicher-master-screen .ms-object-commands tr.is-selected { background: var(--dmicher-row-hover, #ffffff15); }
+.dmicher-master-screen .ms-command-state-options { padding-inline-start: 18px; }
 .dmicher-master-screen .ms-object-form { display: flex; flex: 1; min-height: 0; height: 100%; flex-direction: column; gap: 10px; padding: 10px; overflow: hidden; }
 .dmicher-master-screen .ms-object-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; overflow: auto; scrollbar-gutter: stable; }
 .dmicher-master-screen .ms-object-scroll > * { flex-shrink: 0; }

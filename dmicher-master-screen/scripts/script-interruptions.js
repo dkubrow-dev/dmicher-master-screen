@@ -13,6 +13,9 @@ export function interruptScriptProgress(progress, script, source, { now = Date.n
   const settings = script.interruptions ?? {};
   const error = settings.error ?? { mode: "stop", retries: 3, delaySeconds: 1 };
   let mode = source === "error" ? error.mode : settings[source] ?? "stop";
+  // Ignoring an ordinary player command does not weaken the emergency stop.
+  // The command executor waits for this foreground block instead of moving in parallel.
+  if (source === "command" && mode === "ignore") return false;
   if (source === "error" && mode !== "stop") {
     if ((progress.errorRetries ?? 0) >= error.retries) mode = "stop";
     else progress.errorRetries = (progress.errorRetries ?? 0) + 1;

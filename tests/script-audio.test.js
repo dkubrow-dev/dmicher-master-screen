@@ -152,6 +152,28 @@ test("script audio generation ignores normal step progress and rejects stale or 
   assert.equal(scriptAudioIsCurrent(f.scene, f.data), true);
 });
 
+test("command script audio follows command generation, interruption and its parent group run", async () => {
+  const f = await scopedWorld(), key = "Token:npc", scriptKey = "Token:npc:command-before:script";
+  const command = { schemaVersion: 1, command: true, runId: "command-run", parentRunId: f.run.runId,
+    groupId: f.run.groupId, target: descriptor, phase: "before", scriptStates: { [scriptKey]: { generation: 2, status: "ready" } } };
+  const data = { ...f.data, runId: command.runId, scriptKey, scriptGeneration: 2 };
+  const save = () => f.scene.setFlag("dmicher-master-screen", "objectCommandRuns", { [key]: command });
+  await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), true);
+  command.phase = "core"; await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), true);
+  command.scriptStates[scriptKey].generation = 3; await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), false);
+  data.scriptGeneration = 3; assert.equal(scriptAudioIsCurrent(f.scene, data), true);
+  command.interruption = { source: "interaction" }; await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), false);
+  command.interruption = null;
+  for (const phase of ["waiting", "finished", "stopped"]) {
+    command.phase = phase; await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), false);
+  }
+  command.phase = "after"; command.parentRunId = "replaced";
+  await save(); assert.equal(scriptAudioIsCurrent(f.scene, data), false);
+  command.parentRunId = f.run.runId; await save();
+  f.run.halted = true; await saveRuntime(f.scene, f.run);
+  assert.equal(scriptAudioIsCurrent(f.scene, data), false);
+});
+
 test("remote scoped audio checks its saved generation after loading and during playback", async () => {
   for (const duringLoad of [true, false]) {
     const f = fixture(), world = await scopedWorld(), pending = deferred(); f.service.dispose();

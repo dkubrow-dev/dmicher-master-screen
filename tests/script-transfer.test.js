@@ -14,7 +14,7 @@ function references() {
 }
 
 test("a script block round trip preserves row order, graph, timing and options without exporting its state slot", () => {
-  const interruptions = { combat: "restart-script", interaction: "next-step", manual: "restart-step", error: { mode: "restart-script", retries: 10, delaySeconds: 0.25 } };
+  const interruptions = { combat: "restart-script", interaction: "next-step", manual: "restart-step", command: "stop", error: { mode: "restart-script", retries: 10, delaySeconds: 0.25 } };
   const original = { name: "Patrol", stateId: "calm", enabled: false, repeat: true, combat: { enabled: true, turnSeconds: 9 }, interruptions,
     steps: [wait(8, [1]), wait(1, [8])] }, before = structuredClone(original), refs = references();
   const envelope = exportScriptBlock(original, refs);
@@ -63,6 +63,7 @@ test("import and export require the destination object's registered dialogues, m
 test("transferring one block does not validate or export unrelated unfinished blocks and player assignments", () => {
   const refs = references();
   refs.binding.scripts = [{ stateId: "missing", steps: [{ kind: "invalid" }] }];
+  refs.binding.commands = [{ id: "wait", conditions: { groups: [{ groupId: "missing", stateIds: ["gone"] }] }, beforeScript: { steps: [{ kind: "invalid" }] } }];
   refs.binding.transitionScripts = { gone: { steps: null } };
   refs.binding.dialogues = [{ dialogueId: "greeting", stateIds: ["missing"], conditions: { enabled: false } }];
   refs.binding.shops = [toolRegistration("shop", "deleted-unused-shop")];

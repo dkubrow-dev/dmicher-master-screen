@@ -60,8 +60,9 @@ test("script interruption fields share the editor, localize both languages and r
         const script = normalizeScript({ steps: [], interruptions: { error: { retries: 7, delaySeconds: 2.5 } } });
         const html = buildScriptFields([script], { states: [] }, "Token", {}, { combatSupported });
         for (const label of [title, combat, interaction, manual, error, next]) assert.ok(html.includes(label), label);
-        assert.equal((html.match(/name="script-0-interruption-(combat|interaction|manual|error)"/g) ?? []).length, 4);
-        assert.equal((html.match(/value="stop" selected/g) ?? []).length, 4);
+        assert.equal((html.match(/name="script-0-interruption-(combat|interaction|manual|command|error)"/g) ?? []).length, 5);
+        assert.equal((html.match(/value="stop" selected/g) ?? []).length, 5);
+        assert.equal((html.match(/value="ignore"/g) ?? []).length, 1);
         assert.ok(html.includes('min="1" max="10" step="1" value="7" data-script-error-setting disabled'));
         assert.ok(html.includes('min="0.1" max="60" step="any" value="2.5" data-script-error-setting disabled'));
         script.interruptions.error.mode = "restart-step";
@@ -96,7 +97,7 @@ test("saving script interruption options includes disabled limits and rejects in
     return Object.hasOwn(fields, name) ? { value: fields[name], checked: fields[name] === true } : null;
   } };
   const saved = normalizeScript(readScriptFields(root, [script])[0]);
-  assert.deepEqual(saved.interruptions, { combat: "restart-step", interaction: "next-step", manual: "restart-script", error: { mode: "stop", retries: 10, delaySeconds: 0.1 } });
+  assert.deepEqual(saved.interruptions, { combat: "restart-step", interaction: "next-step", manual: "restart-script", command: "stop", error: { mode: "stop", retries: 10, delaySeconds: 0.1 } });
   fields["script-0-interruption-retries"] = "1.5";
   assert.throws(() => normalizeScript(readScriptFields(root, [script])[0]));
 });

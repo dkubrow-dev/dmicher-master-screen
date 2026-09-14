@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences } from "../dmicher-master-screen/scripts/configuration-transfer.js";
+import { remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences, remapBindingCommandGroups } from "../dmicher-master-screen/scripts/configuration-transfer.js";
+import { bindingScripts } from "../dmicher-master-screen/scripts/object-binding-model.js";
 
 const mapping = new Map([["source", "destination"]]);
 const payload = { signalId: "source", nested: [{ signalId: "source" }], text: "source" };
@@ -26,9 +27,10 @@ test("dialogue import remaps only answer references, retaining prose and payload
 
 test("object import remaps signal actions in each script purpose, preserving custom parameters", () => {
   const script = { steps: [{ id: 1, kind: "signal", parameters: { signalId: "source", parameters: structuredClone(payload) } }, { id: 2, kind: "speech", parameters: { text: "source" } }] };
-  const binding = { initialScript: structuredClone(script), transitionScripts: { calm: structuredClone(script) }, scripts: [structuredClone(script)] };
+  const binding = { initialScript: structuredClone(script), transitionScripts: { calm: structuredClone(script) }, scripts: [structuredClone(script)],
+    commands: [{ beforeScript: structuredClone(script), afterScript: structuredClone(script) }] };
   const result = remapBindingSignals(binding, mapping);
-  for (const saved of [result.initialScript, result.transitionScripts.calm, ...result.scripts]) {
+  for (const saved of bindingScripts(result)) {
     assert.equal(saved.steps[0].parameters.signalId, "destination");
     assert.deepEqual(saved.steps[0].parameters.parameters, payload);
     assert.equal(saved.steps[1].parameters.text, "source");
@@ -42,9 +44,10 @@ test("group imports remap state destinations in every script purpose without sca
     { id: 1, kind: "state", parameters: { transitions: structuredClone(transitions) } },
     { id: 2, kind: "signal", parameters: { parameters: { transitions, kind: "state", parameters: { transitions } } } }
   ] };
-  const binding = { initialScript: structuredClone(script), transitionScripts: { calm: structuredClone(script) }, scripts: [structuredClone(script)] };
+  const binding = { initialScript: structuredClone(script), transitionScripts: { calm: structuredClone(script) }, scripts: [structuredClone(script)],
+    commands: [{ beforeScript: structuredClone(script), afterScript: structuredClone(script) }] };
   const before = structuredClone(binding), result = remapBindingStateTransitions(binding, { sourceGroupId: "source", groupId: "destination" });
-  for (const saved of [result.initialScript, result.transitionScripts.calm, ...result.scripts]) {
+  for (const saved of bindingScripts(result)) {
     assert.deepEqual(saved.steps[0].parameters.transitions, [{ groupId: "destination", stateId: "calm" }, transitions[1]]);
     assert.deepEqual(saved.steps[1], script.steps[1]);
   }
@@ -58,6 +61,26 @@ test("single-state imports remap only their owned pair, retaining other states a
   assert.deepEqual(result.scripts.map((script) => script.steps[0].parameters.transitions[0]), [
     { groupId: "destination", stateId: "copy" }, { groupId: "source", stateId: "alarm" }, { groupId: "external", stateId: "calm" }
   ]);
+});
+
+test("command state filters remap owned pairs without interpreting arbitrary action JSON", () => {
+  const groups = [{ groupId: "source", stateIds: ["calm", "alarm"] }, { groupId: "external", stateIds: [] }];
+  const binding = { commands: [{ conditions: { groups }, parameters: { groups: structuredClone(groups) } }] };
+  const before = structuredClone(binding);
+  const result = remapBindingCommandGroups(binding, { sourceGroupId: "source", groupId: "destination", stateMapping: new Map([["calm", "copy"]]) });
+  assert.deepEqual(result.commands[0].conditions.groups, [
+    { groupId: "destination", stateIds: ["copy"] }, { groupId: "source", stateIds: ["alarm"] }, { groupId: "external", stateIds: [] }
+  ]);
+  assert.deepEqual(result.commands[0].parameters.groups, groups);
+  assert.deepEqual(binding, before);
+  const full = remapBindingCommandGroups(binding, { sourceGroupId: "source", groupId: "destination" });
+  assert.deepEqual(full.commands[0].conditions.groups, [{ groupId: "destination", stateIds: ["calm", "alarm"] }, groups[1]]);
+});
+
+test("partial command scope import limits all-state selection to the imported state and merges matching owners", () => {
+  const binding = { commands: [{ conditions: { groups: [{ groupId: "source", stateIds: [] }, { groupId: "destination", stateIds: ["existing"] }] } }] };
+  const result = remapBindingCommandGroups(binding, { sourceGroupId: "source", groupId: "destination", stateMapping: new Map([["calm", "copy"]]) });
+  assert.deepEqual(result.commands[0].conditions.groups, [{ groupId: "destination", stateIds: ["copy", "existing"] }]);
 });
 
 test("dialogue and movement imports remap only typed catalog and native action references", () => {

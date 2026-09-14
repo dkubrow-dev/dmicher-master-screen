@@ -30,6 +30,10 @@ import { isSceneAutomationHalted, isExecutionHalted } from "./execution.js";
 import { runDirectorCommand } from "./director-commands.js";
 import { DialogueChat } from "./dialogue-chat.js";
 import { normalizeDialoguePresentation } from "./interaction-model.js";
+import { text as t } from "./localization.js";
+import { availableObjectCommands } from "./object-command-access.js";
+import { OBJECT_COMMAND_DEFINITIONS, objectCommandName } from "./object-command-model.js";
+import { pickCommandParameters } from "./object-command-picker.js";
 
 export class ScreenController {
   constructor() {
@@ -135,9 +139,29 @@ export class ScreenController {
             : entry.kind === "listen" ? this.openListeningDialogue(entry, actorTokenId)
             : this.requestNamedInteraction(entry.id, actorTokenId, { groupId: entry.groupId })
       }));
+      const activeCommand = this.runtime.commandExecutor?.activeForObject(scene, descriptor);
+      const commands = availableObjectCommands(scene, descriptor, actorToken, game.user, activeCommand);
+      for (const [category, label] of [["movement", t("Команды движения", "Movement commands")], ["interaction", t("Команды взаимодействия", "Interaction commands")]]) {
+        const ids = new Set(OBJECT_COMMAND_DEFINITIONS.filter(entry => entry.category === category).map(entry => entry.id));
+        const group = commands.filter(command => ids.has(command.id));
+        if (!group.length) continue;
+        items.push({ heading: label }, ...group.map(command => ({ label: objectCommandName(command.id), action: () => this.issueObjectCommand(descriptor, actorTokenId, command.id) })));
+      }
     }
     if (!items.length) { this.objectMenu.close(); return false; }
     this.objectMenu.open(items, position); return true;
+  }
+  async issueObjectCommand(target, actorTokenId, commandId) {
+    const scene = currentScene(), actor = scene?.tokens?.get(actorTokenId), object = getSceneObject(scene, target);
+    if (!scene || !actor || !object || !this.commandService) return;
+    this.objectMenu.close(); this.cancelPick?.();
+    const picking = pickCommandParameters(commandId, { scene, actor, object });
+    const cancel = () => picking.cancel(); this.cancelPick = cancel;
+    let parameters;
+    try { parameters = await picking; }
+    finally { if (this.cancelPick === cancel) this.cancelPick = null; }
+    if (!parameters || currentScene()?.id !== scene.id) return;
+    return this.commandService.request({ scene, target, actorTokenId, commandId, parameters });
   }
   getAvailableInteractions(scene, descriptor, actorToken) {
     const choices = listAvailableInteractions(scene, descriptor, actorToken, game.user);

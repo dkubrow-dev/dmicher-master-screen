@@ -4,6 +4,7 @@ import { normalizeScript, normalizeScripts, normalizeStateTransitions } from "./
 import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js";
 import { interactionType } from "./interaction-model.js";
 import { validateParameters } from "./signal-types.js";
+import { normalizeObjectCommands } from "./object-command-model.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -41,7 +42,8 @@ export function normalizeObjectBinding(raw) {
     tags: normalizeTags(raw.tags), notes: raw.notes ?? "",
     initialScript: raw.initialScript ? normalizeScript(raw.initialScript) : null,
     transitionScripts: Object.fromEntries(entries.map(([id, script]) => [id, normalizeScript(script)])),
-    scripts: normalizeScripts(raw.scripts ?? []), shops: references(raw.shops, "shop"), dialogues: references(raw.dialogues, "dialogue") };
+    scripts: normalizeScripts(raw.scripts ?? []), shops: references(raw.shops, "shop"), dialogues: references(raw.dialogues, "dialogue"),
+    commands: normalizeObjectCommands(raw.commands) };
 }
 export function normalizeObjectBindings(raw = {}) {
   if (!raw || raw.schemaVersion !== undefined && raw.schemaVersion !== 1 || raw.bindings != null && (typeof raw.bindings !== "object" || Array.isArray(raw.bindings))) fail(localizedMessage("Неверные привязки объектов."));
@@ -51,11 +53,12 @@ export function normalizeObjectBindings(raw = {}) {
     bindings: Object.fromEntries(entries.map(([key, value]) => { if (key !== objectKey(value)) fail(localizedMessage("Ключ привязки не соответствует объекту.")); return [key, normalizeObjectBinding(value)]; })) };
 }
 
-/** The three script purposes share the same step model. Other JSON stored on
+/** Object scripts and command phases share the same step model. Other JSON stored on
  * the object is author data and cannot declare actions by matching field names. */
 export function bindingScripts(binding) {
   return [binding?.initialScript, ...Object.values(binding?.transitionScripts ?? {}),
-    ...(Array.isArray(binding?.scripts) ? binding.scripts : [])].filter(Boolean);
+    ...(Array.isArray(binding?.scripts) ? binding.scripts : []),
+    ...(binding?.commands ?? []).flatMap(command => [command.beforeScript, command.afterScript])].filter(Boolean);
 }
 export function bindingScriptSteps(binding) {
   return bindingScripts(binding).flatMap((script) => Array.isArray(script.steps) ? script.steps : []);
@@ -67,6 +70,12 @@ export function validateBindingReferences(binding, { definitions, signals, macro
   if (binding.playerCharacter && binding.type !== "Token") fail(localizedMessage("Персонажем игрока может быть только токен."));
   const checkStates = (values) => { if (values.some((id) => !stateIds.has(id))) fail(localizedMessage("Настройка ссылается на отсутствующее состояние группы.")); };
   checkStates(Object.keys(binding.transitionScripts)); checkStates(binding.scripts.map((script) => script.stateId));
+  for (const command of binding.commands ?? []) for (const scope of command.conditions.groups) {
+    const selected = definitions.find(entry => entry.groupId === scope.groupId);
+    if (!selected || scope.stateIds.some(id => !selected.states.some(state => state.id === id))) {
+      fail(text("Условия команды ссылаются на отсутствующую группу или состояние.", "Command conditions refer to a missing group or state."));
+    }
+  }
   const ownerKey = objectKey(binding);
   for (const step of bindingScriptSteps(binding)) {
     // Import remapping can merge two formerly distinct destination groups, so
@@ -104,6 +113,22 @@ export const clearGroupContent = (binding) => Object.assign(binding, { transitio
 export function reconcileBindingGroups(raw, previous, definitions) {
   const next = clone(raw); let changed = false;
   for (const binding of Object.values(next.bindings)) {
+    // Command scopes may reference other groups, even on an ungrouped object.
+    // Removing the last allowed state must never turn a restricted command public.
+    for (const command of binding.commands ?? []) {
+      const scopes = [];
+      for (const scope of command.conditions.groups) {
+        const selected = definitions.find(entry => entry.groupId === scope.groupId);
+        if (!selected) { command.enabled = false; changed = true; continue; }
+        const stateIds = scope.stateIds.filter(id => selected.states.some(state => state.id === id));
+        if (stateIds.length !== scope.stateIds.length) {
+          changed = true;
+          if (!stateIds.length) command.enabled = false;
+        }
+        scopes.push({ ...scope, stateIds });
+      }
+      command.conditions.groups = scopes;
+    }
     if (!binding.groupId) continue;
     const group = definitions.find((entry) => entry.groupId === binding.groupId);
     if (!group) { binding.groupId = null; clearGroupContent(binding); changed = true; continue; }

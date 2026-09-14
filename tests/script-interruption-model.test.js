@@ -7,7 +7,7 @@ test("all script interruption sources default to stop without mutating preparati
   const source = { steps: [] };
   const script = normalizeScript(source);
   assert.deepEqual(script.interruptions, {
-    combat: "stop", interaction: "stop", manual: "stop", error: { mode: "stop", retries: 3, delaySeconds: 1 }
+    combat: "stop", interaction: "stop", manual: "stop", command: "stop", error: { mode: "stop", retries: 3, delaySeconds: 1 }
   });
   assert.equal(Object.hasOwn(source, "interruptions"), false);
   script.interruptions.error.retries = 8;
@@ -17,7 +17,7 @@ test("all script interruption sources default to stop without mutating preparati
 test("every source accepts each explicit continuation and preserves independent error limits", () => {
   for (const mode of SCRIPT_INTERRUPTION_MODES) {
     for (const retries of [1, 10]) for (const delaySeconds of [0.1, 0.25, 60]) {
-      const interruptions = { combat: mode, interaction: mode, manual: mode, error: { mode, retries, delaySeconds } };
+      const interruptions = { combat: mode, interaction: mode, manual: mode, command: mode, error: { mode, retries, delaySeconds } };
       const before = structuredClone(interruptions);
       const actual = normalizeScript({ steps: [], interruptions }).interruptions;
       assert.deepEqual(actual, before);
@@ -31,7 +31,7 @@ test("interruption imports reject coercion, unknown fields and invalid limits ev
   for (const value of [null, [], "stop", false, { unknown: "stop" }, { error: null }, { error: [] }, { error: { unknown: 1 } }]) {
     assert.throws(() => normalizeScriptInterruptions(value));
   }
-  for (const source of ["combat", "interaction", "manual", "error"]) {
+  for (const source of ["combat", "interaction", "manual", "command", "error"]) {
     for (const mode of [null, true, 0, "", "STOP", "pause", {}, []]) {
       assert.throws(() => normalizeScriptInterruptions({ [source]: source === "error" ? { mode } : mode }));
     }
@@ -41,6 +41,13 @@ test("interruption imports reject coercion, unknown fields and invalid limits ev
   }
   for (const delaySeconds of [0, 0.099, 60.001, -1, "1", null, true, Infinity, NaN]) {
     assert.throws(() => normalizeScriptInterruptions({ error: { mode: "stop", delaySeconds } }));
+  }
+});
+
+test("only command interruption can be ignored; errors and emergency stop remain explicit", () => {
+  assert.equal(normalizeScriptInterruptions({ command: "ignore" }).command, "ignore");
+  for (const source of ["combat", "interaction", "manual", "error"]) {
+    assert.throws(() => normalizeScriptInterruptions({ [source]: source === "error" ? { mode: "ignore" } : "ignore" }));
   }
 });
 

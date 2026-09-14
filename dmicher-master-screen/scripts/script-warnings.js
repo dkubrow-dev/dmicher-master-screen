@@ -52,7 +52,11 @@ function blocks(binding = {}) {
   return [
     { key: "initial", kind: "initial", script: binding.initialScript },
     ...Object.entries(binding.transitionScripts ?? {}).map(([stateId, script]) => ({ key: `transition:${stateId}`, kind: "transition", stateId, script })),
-    ...(binding.scripts ?? []).map(script => ({ key: `routine:${script.stateId}`, kind: "routine", stateId: script.stateId, script }))
+    ...(binding.scripts ?? []).map(script => ({ key: `routine:${script.stateId}`, kind: "routine", stateId: script.stateId, script })),
+    ...(binding.commands ?? []).flatMap(command => [
+      { key: `command:${command.id}:before`, kind: "command-before", script: command.beforeScript },
+      { key: `command:${command.id}:after`, kind: "command-after", script: command.afterScript }
+    ])
   ].filter(entry => entry.script);
 }
 

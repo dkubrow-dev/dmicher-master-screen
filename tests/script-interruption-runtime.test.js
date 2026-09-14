@@ -7,6 +7,7 @@ import { scriptProgressKey } from "../dmicher-master-screen/scripts/script-runti
 import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
 import { beginInteractionPause, freezeInteractionClock } from "../dmicher-master-screen/scripts/interaction-pause.js";
 import { sampleGroupDefinition } from "./fixtures/definitions.js";
+import { normalizeScript } from "../dmicher-master-screen/scripts/script-model.js";
 
 const clone = structuredClone;
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
@@ -85,18 +86,22 @@ test("failed retry-budget persistence stops local ticking until a fresh explicit
   assert.equal(f.progress().action.remainingMs, 900);
 });
 
-for (const source of ["interaction", "combat"]) {
+for (const source of ["interaction", "combat", "command"]) {
   for (const [mode, expectedStep] of [["stop", 9], ["restart-step", 9], ["next-step", 25], ["restart-script", 1]]) {
     test(`${source} ${mode} interrupts an active step and resumes only after its source ends`, async () => {
       const f = fixture({ interruptions: { [source]: mode } }); await f.reachCurrentStep();
-      if (source === "interaction") await f.dialogue(); else f.combat(true);
+      if (source === "interaction") await f.dialogue();
+      else if (source === "combat") f.combat(true);
+      else f.runtime.scriptInterruptionSource = () => "command";
       await f.tick();
       const interrupted = f.progress(); assert.equal(interrupted.status, mode === "stop" ? "stopped" : "interrupted");
       assert.equal(interrupted.interruption.source, source); assert.equal(interrupted.interruption.resumeStepId, expectedStep);
       assert.equal(interrupted.action, null); assert.ok(interrupted.generation > 0);
       for (let index = 0; index < 3; index++) await f.tick(1000);
       assert.deepEqual(f.progress(), interrupted, "the active cause cannot repeatedly advance or recreate the interruption");
-      if (source === "interaction") await f.dialogue({ status: "finished" }); else f.combat(false);
+      if (source === "interaction") await f.dialogue({ status: "finished" });
+      else if (source === "combat") f.combat(false);
+      else f.runtime.scriptInterruptionSource = () => null;
       await f.tick();
       assert.equal(f.progress().status, mode === "stop" ? "stopped" : "ready");
       assert.equal(f.progress().stepId, expectedStep);
@@ -118,6 +123,69 @@ test("next-step follows graph IDs rather than row order and a terminal edge ends
   assert.equal(f.progress().interruption.resumeStepId, null);
   await f.dialogue({ status: "finished" }); await f.tick();
   assert.equal(f.progress().stepId, null); assert.equal(f.progress().status, "done");
+});
+
+test("an ignored command waits for the active block and prevents a new routine from starting", async () => {
+  const f = fixture({ interruptions: { command: "ignore" }, transition: true, steps: [wait(1, 3)] });
+  await f.start();
+  let waiting = true, executed = 0;
+  f.runtime.commandExecutor = {
+    has: () => false, runs: () => [],
+    interruptionSource: () => waiting ? "command" : null,
+    blocksScript: (_scene, target, script, runId) => {
+      if (!waiting) return false;
+      const state = f.runtime.scriptState(f.scene, runId);
+      const progress = script && state.scriptStates[scriptProgressKey(target, script, script.name === f.script.name ? "transition" : "routine")];
+      return script?.interruptions.command !== "ignore" || !progress || progress.status === "done";
+    },
+    async tick() { if (waiting && f.progress().status === "done") { waiting = false; executed++; } return []; }
+  };
+  await f.tick(1000);
+  assert.equal(waiting, true); assert.equal(executed, 0);
+  assert.equal(f.progress().action.remainingMs, 1000);
+  assert.equal(f.progress().interruption, null);
+  await f.tick(1000);
+  assert.equal(f.progress().status, "done"); assert.equal(executed, 0);
+  assert.equal(f.token.hidden, false, "new routine cannot run before the waiting command");
+  await f.tick(); assert.equal(f.token.hidden, true);
+  assert.equal(executed, 1);
+});
+
+test("command before/after blocks use the shared executor, persistence and parent dialogue sessions", async () => {
+  const f = fixture({ steps: [wait(1, 10)] }); await f.start();
+  const parent = f.current();
+  const script = normalizeScript({ steps: [step(1, "dialogue", { dialogueId: "own-dialogue", tokenUuids: ["Scene.scene.Token.pc"], waitMode: "all" }, [2]),
+    step(2, "visibility", { visible: false })], interruptions: { command: "ignore" } });
+  let command = { ...clone(parent), command: true, runId: "command-run", parentRunId: parent.runId, sceneId: f.scene.id,
+    target: { type: "Token", id: f.token.id }, script, scriptSlot: "command-before", scriptStates: {} };
+  const own = runId => runId === command?.runId;
+  f.runtime.commandExecutor = {
+    has: own, owns: (_scene, runId) => own(runId), runs: () => command ? [clone(command)] : [],
+    state: () => clone(command), save: async (_scene, state) => { command = clone(state); },
+    current: (_scene, run, target, options) => own(run.runId) && target.id === f.token.id
+      && (options.ignoreInteractionPause || !f.runtime.scriptInteractionPaused(f.scene, run, target, options.scriptKey, options.excludeDialogueSessions)),
+    interruptionSource: (_scene, _target, _script, runId) => own(runId) ? null : "command",
+    blocksScript: () => true,
+    async tick(scene, elapsed) {
+      const job = await f.runtime.scripts.tick(scene, command, f.token, command.script, elapsed, { slot: command.scriptSlot });
+      return job ? [job] : [];
+    }
+  };
+  const requests = [];
+  f.runtime.startScriptDialogues = async (request, options) => {
+    requests.push(request); assert.equal(request.runId, parent.runId);
+    const reference = await f.dialogue({ origin: "script", id: "command-dialogue" });
+    assert.equal(options.isCurrent([reference]), true, "own command dialogue does not interrupt its opening block");
+    return [reference];
+  };
+  await f.tick();
+  const key = scriptProgressKey(command.target, command.script, command.scriptSlot);
+  assert.equal(requests.length, 1); assert.equal(command.scriptStates[key].action.phase, "dialogue");
+  for (let index = 0; index < 3; index++) await f.tick(1000);
+  assert.equal(command.scriptStates[key].stepId, 1); assert.equal(f.token.hidden, false);
+  await f.dialogue({ origin: "script", status: "finished", id: "command-dialogue" }); await f.tick();
+  assert.equal(f.token.hidden, true); assert.equal(command.scriptStates[key].status, "done");
+  assert.equal(Object.hasOwn(f.current().scriptStates, key), false, "command progress cannot overwrite group progress");
 });
 
 test("combat-enabled scripts retain their current step at combat start and turn boundaries", async () => {

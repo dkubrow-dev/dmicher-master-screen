@@ -77,6 +77,22 @@ test("scene export/import round trip keeps embedded IDs and remaps actors, macro
   assert.equal(f.deleted.length, 0);
 });
 
+test("scene export omits only command-owned runtime lights without editing source or foreign lights", async () => {
+  const f = fixture(), marker = { version: 1, targetUuid: "Scene.oldScene.Token.oldToken" };
+  f.sceneData.lights = [
+    { _id: "ordinary", x: 1, y: 2, config: { dim: 20 } },
+    { _id: "command", x: 3, y: 4, flags: { [MODULE_ID]: { commandLight: marker } } },
+    { _id: "foreign", x: 5, y: 6, flags: { another: { commandLight: marker } } },
+    { _id: "unrecognized", x: 7, y: 8, flags: { [MODULE_ID]: { commandLight: { ...marker, version: 2 } } } }
+  ];
+  const before = copy(f.sceneData), bundle = await exportBundle(f.scene);
+  assert.deepEqual(bundle.scene.lights.map(light => light._id), ["ordinary", "foreign", "unrecognized"]);
+  assert.deepEqual(f.sceneData, before);
+  assert.deepEqual(f.deleted, []);
+  await importBundle(bundle);
+  assert.deepEqual(f.calls.find(call => call.type === "Scene").data.lights, bundle.scene.lights);
+});
+
 test("Actor compendium spawn is included and its exact UUID maps to the new world Actor", async () => {
   const f = fixture();
   const compendium = f.document("Actor", "compendiumActor", { name: "Reinforcement", type: "npc" });
