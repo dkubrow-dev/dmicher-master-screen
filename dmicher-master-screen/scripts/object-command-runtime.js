@@ -6,7 +6,8 @@ import { createExecutionScope, isExecutionHalted, notifyExecutionChange } from "
 import { isInteractionPaused } from "./interaction-pause.js";
 import { validateCommandAccess, commandDocument, rejectCommand, CommandRejection, commandLevelsOverlap } from "./object-command-access.js";
 import { text } from "./localization.js";
-import { validateCommandPoint, commandCenter } from "./object-command-movement.js";
+import { validateCommandPoint } from "./object-command-movement.js";
+import { commandDoorVisible } from "./object-command-visibility.js";
 import { ObjectCommandCore } from "./object-command-core.js";
 import { scriptProgressKey } from "./script-runtime.js";
 import { scriptHasActivity, clearScriptPresentation } from "./script-interruptions.js";
@@ -113,13 +114,7 @@ export class ObjectCommandRuntime {
       if (door?.documentName !== "Wall" || !door.door) rejectCommand("door", text("Выберите дверь на карте.", "Choose a door on the map."));
       if (!commandLevelsOverlap(actor, door) || !commandLevelsOverlap(object, door)) rejectCommand("door-level", text("Дверь находится на другом уровне.", "The door is on a different level."));
       if (!access.user.isGM && door.door === 2) rejectCommand("door", text("Выберите доступную дверь на карте.", "Choose an available door on the map."));
-      if (Array.isArray(door.c)) {
-        const point = { x: (door.c[0] + door.c[2]) / 2, y: (door.c[1] + door.c[3]) / 2 }, observer = commandCenter(actor, scene);
-        const distance = Math.hypot(observer.x - point.x, observer.y - point.y);
-        // Test the visible face, not a point numerically inside the closed wall.
-        if (distance > 0) { point.x += (observer.x - point.x) / distance; point.y += (observer.y - point.y) / distance; }
-        validateCommandPoint(scene, actor, object, point, { clearPath: false });
-      }
+      if (!commandDoorVisible(scene, actor, door)) rejectCommand("visibility", text("Персонаж, отдающий команду, должен видеть выбранную дверь.", "The character issuing the command must be able to see the chosen door."));
       if (config.id === "open-door" && door.ds === (globalThis.CONST?.WALL_DOOR_STATES?.LOCKED ?? 2)) rejectCommand("locked", text("Дверь заперта.", "The door is locked."));
       return { doorUuid: raw.doorUuid };
     }

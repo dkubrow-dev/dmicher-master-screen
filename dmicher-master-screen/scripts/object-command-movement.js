@@ -2,6 +2,7 @@ import { text } from "./localization.js";
 import { scriptObjectBounds, readObjectGeometry, planScriptMovement, advanceScriptMovement } from "./script-movement.js";
 import { clipMovementByWalls, approachPosition, boundsGap } from "./script-target-movement.js";
 import { rejectCommand } from "./object-command-access.js";
+import { commandPointVisible } from "./object-command-visibility.js";
 
 export const commandScale = scene => Number(scene.grid?.size || 100) / Number(scene.grid?.distance || 1);
 export const commandCenter = (object, scene) => { const b = scriptObjectBounds(object, scene); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
@@ -28,22 +29,10 @@ export function commandPoint(scene, value) {
   if (rect?.contains && !rect.contains(value.x, value.y)) rejectCommand("point-outside", text("Точка должна находиться внутри карты сцены.", "Choose a point inside the scene map."));
   return { x: value.x, y: value.y };
 }
-export function commandPointVisible(scene, actor, point) {
-  if (scene.tokenVision === false) return true;
-  const vision = actor.object?.vision, modes = globalThis.CONFIG?.Canvas?.detectionModes;
-  if (vision && modes) {
-    const tests = [{ point, los: new Map() }];
-    return ["basicSight", "lightPerception"].some(id => {
-      const mode = actor.detectionModes?.find(entry => entry.id === id);
-      return mode && modes[id]?.testVisibility?.(vision, mode, { object: null, tests }) === true;
-    });
-  }
-  return Boolean(vision?.los?.contains?.(point.x, point.y) && vision?.shape?.contains?.(point.x, point.y));
-}
-export function validateCommandPoint(scene, actor, object, value, { clearPath = true } = {}) {
+export function validateCommandPoint(scene, actor, object, value) {
   const point = commandPoint(scene, value);
   if (!commandPointVisible(scene, actor, point)) rejectCommand("visibility", text("Персонаж должен видеть выбранную точку.", "Your character must be able to see the chosen point."));
-  if (clearPath && clipCommandMovement(scene, object, commandCenter(object, scene), point).blocked) {
+  if (clipCommandMovement(scene, object, commandCenter(object, scene), point).blocked) {
     rejectCommand("obstacle", text("Прямой путь объекта к этой точке перекрыт.", "The object's straight path to that point is blocked."));
   }
   return point;
