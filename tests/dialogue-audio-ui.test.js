@@ -32,7 +32,7 @@ test("unlicensed authoring hides audio controls and preserves configured paths w
   globalThis.game = { i18n: { lang: "en" } };
   const source = dialogueData(); source.pages[0].audio = "worlds/example/voice.ogg";
   const draft = normalizeDialogueAsset(source);
-  const html = renderAssetForm({ kind: "dialogue", draft, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
+  const html = renderAssetForm({ kind: "dialogue", draft, pageId: draft.pages[0].id, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
   assert.doesNotMatch(html, /name="dialoguePageAudio"/);
   const values = { assetName: "Updated name", assetDescription: "", dialogueStartPage: draft.startPageId,
     dialoguePageName: "Updated page", dialoguePageText: "Updated text", dialoguePageArt: "", dialoguePageImageAlignment: "right" };
@@ -58,7 +58,7 @@ test("licensed authoring uses the Foundry audio picker field in both languages a
     const draft = normalizeDialogueAsset(source);
     for (const [lang, label] of [["ru", "Звук блока"], ["en", "Page audio"]]) {
       globalThis.game = { i18n: { lang } };
-      const html = renderAssetForm({ kind: "dialogue", draft, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
+      const html = renderAssetForm({ kind: "dialogue", draft, pageId: draft.pages[0].id, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] });
       assert.ok(html.includes(label)); assert.match(html, /data-field="dialoguePageAudio"/);
     }
     const values = { assetName: draft.name, assetDescription: "", dialogueStartPage: draft.startPageId,

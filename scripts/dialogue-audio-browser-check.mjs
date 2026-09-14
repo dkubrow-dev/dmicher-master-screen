@@ -34,7 +34,7 @@ try {
         { id: "first", name: "Greeting", text: "Welcome to the town. How may I help you?", art: "icons/svg/book.svg", audio: "worlds/qa/welcome.ogg", responses: [{ id: "next", label: "Tell me more", nextPageId: "next" }] },
         { id: "next", name: "Directions", text: "The market is open. Follow this street to the square.", audio: "worlds/qa/directions.ogg", responses: [] }
       ] });
-      globalThis.audioFormContext = { kind: "dialogue", draft: audioDraft, mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] };
+      globalThis.audioFormContext = { kind: "dialogue", draft: audioDraft, pageId: "first", mode: "constructor", catalog: { signals: [] }, bindings: [], objects: [], definitions: [] };
       const panel = document.createElement("section"); panel.id = "audio-authoring"; panel.className = "application dmicher-window dmicher-master-screen"; panel.dataset.dmicherTheme = "dark";
       Object.assign(panel.style, { position: "fixed", top: "50px", left: "65px", width: "710px", height: "790px", overflow: "auto", padding: "16px", background: "#20252d" });
       panel.innerHTML = renderAssetForm(audioFormContext); document.body.append(panel);

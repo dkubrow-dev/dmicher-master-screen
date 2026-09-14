@@ -1,19 +1,8 @@
 import { text } from "../localization.js";
 import { DialogueAudioController } from "../dialogue-audio.js";
 import { onExecutionChange } from "../execution.js";
-
-/** Display snapshots identically for live dialogue and local GM reading. */
-export function dialogueMessages(view, responses = []) {
-  // Old open-session snapshots expose their current page only. Do not invent
-  // past replies or write reconstructed history into scene data.
-  const history = view?.history?.length ? view.history : view ? [{ id: "current-page", role: "object",
-    name: view.targetName, text: view.text, img: view.art, audio: view.audio, imageAlignment: view.imageAlignment }] : [];
-  return history.map((entry, index) => ({ ...entry,
-    isPlayer: entry.role === "player", imageRight: entry.role === "player" || entry.imageAlignment === "right",
-    hasAudio: entry.role === "object" && typeof entry.audio === "string" && Boolean(entry.audio.trim()),
-    imageAlignment: entry.role === "player" || entry.imageAlignment === "right" ? "right" : "left",
-    responses: index === history.length - 1 ? responses : [] }));
-}
+export { dialogueMessages, renderDialogueMessages, renderDialogueResponses, dialogueResponseId,
+  bindDialogueResponses, dialogueWindowTitle } from "../dialogue-response-presentation.js";
 
 function updateAudioButtons(application) {
   for (const button of application.element?.querySelectorAll?.("[data-dialogue-audio-replay]") ?? []) {

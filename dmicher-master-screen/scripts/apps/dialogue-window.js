@@ -5,12 +5,13 @@ import { validateDialogueAccess } from "../dialogues.js";
 import { objectReferenceKey } from "../object-reference.js";
 import { dialogueSessionIsPresent } from "../interaction-session-model.js";
 import { isExecutionHalted } from "../execution.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
+import { dialogueMessages, renderDialogueMessages, renderDialogueResponses, dialogueResponseId, bindDialogueResponses, dialogueWindowTitle,
+  captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV2) {
-  get title() { return localizedMessage("Ширма мастера · Диалог"); }
+  get title() { return dialogueWindowTitle(this.view?.title ?? this.initialView?.title ?? this.dialogueName); }
   static DEFAULT_OPTIONS = {
     classes: themedClasses("ms-dialogue"), position: { width: 660, height: 580 },
     window: { icon: "fa-solid fa-comments", resizable: true },
@@ -68,6 +69,7 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
       } catch (error) { this.error = error.message; }
     }
     const current = this.service.getContext(this.sceneId, this.dialogueId, this.groupId, this.target, { sessionId: this.view?.sessionId });
+    this.dialogueName = current.dialogue?.name ?? this.dialogueName;
     let unavailable = "";
     if (!this.isListener && !this.isFinished && !this.unavailable) try {
       validateDialogueAccess({ ...current, descriptor: current.dialogue }, this.actorTokenId, game.user, this.runId);
@@ -75,13 +77,18 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
     const responses = unavailable || this.unavailable || this.isListener || this.view?.status !== "active" ? []
       : (this.view?.responses ?? []).map((response) => ({ ...response, disabled: this.busy }));
     const messages = dialogueMessages(this.view, responses);
+    const canFinish = Boolean(this.view) && !this.unavailable && !this.isListener && !this.isFinished;
+    const selectionKey = `${this.view?.nodeId}:${this.view?.step}`;
+    if (this.responseSelection?.key !== selectionKey) this.responseSelection = { key: selectionKey, id: "" };
     return { ...base, ...this.view, busy: this.busy, error: this.error || unavailable,
-      messages, responses, listener: this.isListener, unavailable: this.unavailable,
-      canFinish: Boolean(this.view) && !this.unavailable && !this.isListener && !this.isFinished,
+      messages, responses, messagesHTML: renderDialogueMessages(messages),
+      responsesHTML: renderDialogueResponses(responses, { canFinish, busy: this.busy, groupName: `${this.id}-response`, selectedId: this.responseSelection.id }),
+      listener: this.isListener, unavailable: this.unavailable, canFinish,
       finished: this.isFinished, missing: !this.view };
   }
   async _onRender(context, options) {
     await super._onRender(context, options);
+    bindDialogueResponses(this.element, (id) => { this.responseSelection.id = id; });
     restoreDialogueScroll(this);
     const scene = game.scenes?.get(this.sceneId);
     renderDialogueAudio(this, context.messages, { scene, isCurrent: () => {
@@ -99,7 +106,8 @@ export class DialogueApplication extends HandlebarsApplicationMixin(ApplicationV
   }
   static async answer(_event, button) {
     if (this.busy || this.closing || this.unavailable || this.isListener || this.view?.status !== "active") return;
-    const request = { ...this.command(), responseId: button.dataset.responseId,
+    const responseId = dialogueResponseId(button); if (!responseId) return;
+    const request = { ...this.command(), responseId,
       nodeId: this.view.nodeId, step: this.view.step };
     return this.perform(() => this.service.requestAnswer(request));
   }

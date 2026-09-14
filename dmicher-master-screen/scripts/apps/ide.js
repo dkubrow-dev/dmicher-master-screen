@@ -13,6 +13,7 @@ import { generics } from "../generics.js";
 import { SceneAssets } from "../scene-assets.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects } from "./asset-forms.js";
+import { renderDialogueTree } from "./dialogue-asset-view.js";
 import { bindIDEMenus } from "./ide-menu.js";
 import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form-fields.js";
@@ -48,7 +49,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.foldedSignalBranches = new Set();
     this.otherBlock = "tokens";
     this.componentsDisposers = [];
-    this.assetPageIds = new Map();
+    this.foldedDialogues = new Map();
     this.directorConsole = new DirectorConsole();
   }
 
@@ -248,6 +249,10 @@ export class MasterScreenApplication extends EditorApplication {
       this.parameterDraft = selected ? clone(selected) : null;
       this.parameterRevision = ["group", "state"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
     }
+    if (this.selection.kind === "dialogue" && this.selection.pageId && !this.parameterDraft?.pages?.some(page => page.id === this.selection.pageId)) {
+      this.selection.pageId = null;
+      this.pendingTabInputs = null;
+    }
     const activeMain = preferences.mainTab, activeDetail = preferences.detailTab;
     this.toolRows = [];
     let mainHTML = "", detailHTML = "", nodeActions = "";
@@ -270,7 +275,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (["shops", "dialogues"].includes(activeMain)) {
       const kind = activeMain === "shops" ? "shop" : "dialogue";
       const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[`${kind}s`]?.some((link) => link[`${kind}Id`] === entry.id)).length}${t(" об.", " obj.")}` }));
-      mainHTML = renderObjectList(rows, this.selection, kind);
+      mainHTML = kind === "dialogue" ? renderDialogueTree(rows.map(entry => this.dirty && this.parameterDraft?.id === entry.id && this.selection.kind === "dialogue" ? this.parameterDraft : entry), this.selection, this.foldedDialogues.get(current.scene?.id)) : renderObjectList(rows, this.selection, kind);
       nodeActions = (this.mode === "constructor" ? actionButton(kind === "shop" ? "addShopAsset" : "addDialogueAsset", kind === "shop" ? t("+ Магазин", "+ Shop") : t("+ Диалог", "+ Dialogue")) + actionButton("deleteSelected", t("Удалить", "Delete")) + generics.components.renderJSONControls({ id: `${kind}-list`, importLabel: t("Импорт", "Import"), exportLabel: t("Экспорт", "Export") }) : "")
         + actionButton(activeMain === "shops" ? "shops" : "dialogues", activeMain === "shops" ? t("Состояния магазинов", "Shop sessions") : t("Просмотр и ручной показ", "View and show manually"));
     }
@@ -281,7 +286,7 @@ export class MasterScreenApplication extends EditorApplication {
       const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">${t("Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.", "Select an entry in the main area. Saving parameters does not start automation; manual transitions are available in Director mode.")}</p>${actionButton("contextHelp", t("Открыть справку", "Open help"), `data-page="${page}"`)}`;
     } else if (["shops", "dialogues"].includes(activeMain)) {
-      detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.assetPageIds.get(`${current.scene?.id}:${this.selection.id}`), mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
+      detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.selection.pageId, mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
     } else if (activeMain === "other") {
       if (this.otherBlock === "manual") detailHTML = `<p class="ms-note">${t("Просматривайте магазины, читайте реплики и показывайте диалоги игрокам. Ручные диалоги доступны и после остановки автоматизации.", "View shops, read lines and show dialogues to players. Manual dialogues remain available after automation stops.")}</p>${actionButton("shops", t("Магазины", "Shops"))}${actionButton("dialogues", t("Диалоги и действия", "Dialogues and actions"))}`;
       else {
@@ -375,12 +380,12 @@ export class MasterScreenApplication extends EditorApplication {
     this.element.addEventListener("click", (event) => {
       const row = event.target.closest("[data-select-kind]");
       if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
-      event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId).catch(notify);
+      event.preventDefault(); void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId, row.dataset.pageId).catch(notify);
     }, listeners);
     this.element.addEventListener("keydown", (event) => {
       if (!["Enter", " "].includes(event.key) || !event.target.matches("[data-select-kind]")) return;
       event.preventDefault(); const row = event.target;
-      void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId).catch(notify);
+      void this.selectNode(row.dataset.selectKind, row.dataset.selectId, row.dataset.groupId, row.dataset.pageId).catch(notify);
     }, listeners);
     this.menuObserver?.disconnect();
     this.menuController?.dispose(); this.menuController = bindIDEMenus(this.element);
@@ -398,7 +403,7 @@ export class MasterScreenApplication extends EditorApplication {
         this.selectedMacroOwner = event.target.value;
       } else if (event.target.matches('[name="subscription-owner"]')) {
         this.captureSubscription(); void this.render({ force: true });
-      } else if (event.target.matches('[name="shopDisplay"]')) {
+      } else if (event.target.matches('[name="shopDisplay"], [name="dialogueDisplayMode"], [name="dialogueWindowChat"], [name="dialogueVisibility"]')) {
         try { this.captureParameterDraft(); this.dirty = true; void this.render({ force: true }); } catch (error) { notify(error); }
       }
     }, listeners);
@@ -441,9 +446,15 @@ export class MasterScreenApplication extends EditorApplication {
     return scene;
   }
 
-  async selectNode(kind, id, groupId) {
-    if (!(await this.mayDiscard())) return;
-    this.resetDraft(); this.parameterDraft = null;
+  async selectNode(kind, id, groupId, pageId) {
+    const sameDialogue = kind === "dialogue" && this.selection.kind === kind && this.selection.id === id && this.selectionSceneId === this.controller.getContext().scene?.id;
+    if (sameDialogue) {
+      // General settings and pages edit one revision-protected dialogue draft.
+      this.parameterDraft = this.readParameterDraft(); this.pendingTabInputs = null;
+    } else {
+      if (!(await this.mayDiscard())) return;
+      this.resetDraft(); this.parameterDraft = null;
+    }
     this.subscriptionDraft = null; this.subscriptionValidation = null;
     if (["group", "state"].includes(kind)) {
       this.controller.selectGroup(groupId ?? id, { render: false });
@@ -451,7 +462,7 @@ export class MasterScreenApplication extends EditorApplication {
     }
     const tool = this.toolRows?.find((entry) => entry.id === id);
     if (tool?.groupId) { this.controller.selectGroup(tool.groupId, { render: false }); this.controller.selectState(tool.stateId, { render: false }); }
-    this.selection = { kind, id, groupId: groupId || this.controller.getContext().groupId, stateId: tool?.stateId };
+    this.selection = { kind, id, groupId: groupId || this.controller.getContext().groupId, stateId: tool?.stateId, ...(kind === "dialogue" ? { pageId: pageId || null } : {}) };
     this.layout.preferences.detailTab = "parameters";
     this.layout.preferences.hiddenDetail = this.layout.preferences.hiddenDetail.filter((tab) => tab !== "parameters");
     this.layout.save();
@@ -563,7 +574,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (Object.hasOwn(SCENE_COMMANDS, action) || Object.hasOwn(GROUP_COMMANDS, action) || ["resumeGroup", "resumeSelectedGroup"].includes(action)) return super.handleAction(action, button, event);
     if (action === "previewAsset") {
       this.parameterDraft = this.readParameterDraft();
-      return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`) });
+      return this.controller.previewAsset(this.selection.kind, this.selection.id, { draft: clone(this.parameterDraft), pageId: this.selection.pageId });
     }
     if (action === "assetFilePicker") {
       const sceneId = this.selectionSceneId, assetId = this.selection.id, pageId = this.element.querySelector("[data-asset-page]")?.dataset.assetPage, name = button.dataset.field;
@@ -587,22 +598,21 @@ export class MasterScreenApplication extends EditorApplication {
       return this.assignObject({ type, id });
     }
     if (action === "unassignObject") return this.assignObject({ type: button.dataset.objectType, id: button.dataset.objectId }, true);
-    if (action === "previewAssetDialogue") return this.controller.previewDialogueAsset(this.selection.id, this.assetPageIds.get(`${this.selectionSceneId}:${this.selection.id}`));
-    if (action === "selectAssetPage") {
-      this.parameterDraft = this.readParameterDraft(); this.pendingTabInputs = null;
-      this.assetPageIds.set(`${this.selectionSceneId}:${this.selection.id}`, button.dataset.id); return this.render({ force: true });
-    }
     if (action === "removeShopItem") return this.mutateParameters((draft) => { draft.items = draft.items.filter((item) => item.id !== button.dataset.id); });
+    if (action === "deleteSelected" && this.selection.kind === "dialogue" && this.selection.pageId) action = "deleteAssetPage";
     if (["addAssetPage", "deleteAssetPage", "addAssetResponse", "removeAssetResponse"].includes(action)) {
+      if (this.mode !== "constructor") return;
+      this.pendingTabInputs = null;
       return this.mutateParameters((draft) => {
-        const key = `${this.selectionSceneId}:${draft.id}`, page = draft.pages.find((entry) => entry.id === this.assetPageIds.get(key)) ?? draft.pages[0];
-        if (action === "addAssetPage") { const entry = { id: randomId(), name: nextName(draft.pages, t("Новый блок", "New page")), text: "", art: "", responses: [] }; draft.pages.push(entry); this.assetPageIds.set(key, entry.id); }
+        const page = draft.pages.find((entry) => entry.id === this.selection.pageId);
+        if (action !== "addAssetPage" && !page) return;
+        if (action === "addAssetPage") { const entry = { id: randomId(), name: nextName(draft.pages, t("Новый блок", "New page")), text: "", art: "", responses: [] }; draft.pages.push(entry); this.selection.pageId = entry.id; this.foldedDialogues.get(this.selectionSceneId)?.delete(draft.id); }
         if (action === "deleteAssetPage") {
           if (draft.pages.length === 1) throw new Error(t("В диалоге должен остаться хотя бы один блок.", "A dialogue must retain at least one page."));
           draft.pages = draft.pages.filter((entry) => entry.id !== page.id);
           for (const entry of draft.pages) for (const response of entry.responses) if (response.nextPageId === page.id) response.nextPageId = "";
           if (draft.startPageId === page.id) draft.startPageId = draft.pages[0].id;
-          this.assetPageIds.set(key, draft.pages[0].id);
+          this.selection.pageId = null;
         }
         if (action === "addAssetResponse") page.responses.push({ id: randomId(), label: t("Новый ответ", "New response"), nextPageId: "", signalId: "", parameters: {} });
         if (action === "removeAssetResponse") page.responses.splice(Number(button.dataset.index), 1);
@@ -632,7 +642,13 @@ export class MasterScreenApplication extends EditorApplication {
       if (row.type === "state") { await this.switchMainTab("scene"); return this.selectNode("state", row.stateId, row.groupId); }
       await this.switchMainTab("other"); this.controller.selectGroup(row.groupId, { render: false }); this.controller.selectState(row.stateId, { render: false }); this.otherBlock = "zones"; return this.render({ force: true });
     }
-    if (action === "selectNode") return this.selectNode(button.dataset.kind, button.dataset.id, button.dataset.groupId);
+    if (action === "selectNode") return this.selectNode(button.dataset.kind, button.dataset.id, button.dataset.groupId, button.dataset.pageId);
+    if (action === "foldDialogue") {
+      this.captureParameterDraft();
+      const folded = this.foldedDialogues.get(this.selectionSceneId) ?? new Set(), id = button.dataset.id;
+      if (folded.has(id)) folded.delete(id); else folded.add(id);
+      this.foldedDialogues.set(this.selectionSceneId, folded); return this.render({ force: true });
+    }
     if (action === "selectOther") {
       if (!(await this.mayDiscard())) return;
       this.resetDraft(); this.parameterDraft = null; this.otherBlock = button.dataset.id;

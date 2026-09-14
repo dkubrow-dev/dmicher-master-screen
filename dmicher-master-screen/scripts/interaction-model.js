@@ -25,6 +25,32 @@ export function normalizeShopAsset(raw) {
     img: prose(raw.img ?? "", 1024, localizedMessage("Арт магазина")), display: raw.display ?? "list", requireGMApproval: raw.requireGMApproval !== false, items };
 }
 
+/** Presentation is preparation data; defaults never write a scene on read. */
+export function normalizeDialoguePresentation(raw = {}) {
+  if (!object(raw)) fail(text("Настройки отображения диалога должны быть объектом.", "Dialogue presentation settings must be an object."));
+  const choice = (value, allowed, fallback, label) => {
+    if (value === undefined) return fallback;
+    if (!allowed.includes(value)) fail(text("Неизвестное значение настройки диалога: ", "Unknown dialogue setting: ") + label);
+    return value;
+  };
+  const audience = raw.publicAudience === undefined ? {} : raw.publicAudience;
+  if (!object(audience)) fail(text("Аудитория диалога должна быть объектом.", "Dialogue audience must be an object."));
+  const tags = (value, label) => [...new Set(array(value === undefined ? [] : value, 100, label).map((tag) => {
+    const result = prose(tag, 100, label).trim();
+    if (!result) fail(text("Тег аудитории не может быть пустым.", "An audience tag cannot be empty."));
+    return result;
+  }))];
+  const range = audience.range === undefined ? null : audience.range;
+  if (range !== null && (typeof range !== "number" || !Number.isFinite(range) || range < 0)) fail(text("Дальность аудитории должна быть неотрицательным числом или null без ограничения.", "Audience range must be a non-negative number or null for unlimited."));
+  return {
+    mode: choice(raw.mode, ["chat", "window"], "chat", text("Режим отображения", "Display mode")),
+    windowChat: choice(raw.windowChat, ["none", "replies", "complete", "confirm"], "none", text("Публикация в чат", "Chat publication")),
+    visibility: choice(raw.visibility, ["private", "public", "player"], "private", text("Видимость диалога", "Dialogue visibility")),
+    publicAudience: { allowTags: tags(audience.allowTags, text("Белые теги аудитории", "Allowed audience tags")),
+      denyTags: tags(audience.denyTags, text("Чёрные теги аудитории", "Denied audience tags")), range }
+  };
+}
+
 /** Pages carry text and references only; no inline script is interpreted. */
 export function normalizeDialogueAsset(raw) {
   if (!object(raw)) fail(localizedMessage("Ожидается диалог."));
@@ -47,7 +73,8 @@ export function normalizeDialogueAsset(raw) {
   const startPageId = raw.startPageId ?? pages[0].id;
   if (!pages.some((page) => page.id === startPageId)) fail(localizedMessage("Начальная страница диалога отсутствует."));
   for (const page of pages) for (const response of page.responses) if (response.nextPageId && !pages.some((entry) => entry.id === response.nextPageId)) fail(localizedMessage("Ответ ссылается на отсутствующую страницу."));
-  return { id: id(raw.id || randomId(), localizedMessage("Диалог")), name: name(raw.name, localizedMessage("Диалог")), description: normalizeDescription(raw.description), startPageId, pages };
+  return { id: id(raw.id || randomId(), localizedMessage("Диалог")), name: name(raw.name, localizedMessage("Диалог")), description: normalizeDescription(raw.description),
+    presentation: normalizeDialoguePresentation(raw.presentation), startPageId, pages };
 }
 
 export function normalizeInteractionCatalog(raw = {}) {

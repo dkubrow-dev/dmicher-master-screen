@@ -363,7 +363,8 @@ test("player token menu joins a conversation with separate speaker and listener 
     f.scene.tokens.set(listener.id, listener); f.scene.tokens.set(speaker.id, speaker);
     canvas.tokens.controlled = [{ document: listener }];
     const session = { sessionId: "conversation", dialogueId: "talk", groupId: "main", runId: "run", userId: "speaker-user",
-      actorTokenId: speaker.id, actorId: speaker.actor.id, target: { type: "Token", id: "guard" }, status: "active", expiresAt: Date.now() + 60000 };
+      actorTokenId: speaker.id, actorId: speaker.actor.id, target: { type: "Token", id: "guard" }, status: "active", expiresAt: Date.now() + 60000,
+      presentation: { mode: "window", visibility: "public" } };
     const runtime = { ...emptyRuntime(), runId: "run", stateId: "calm", dialogueSessions: { speaker: session } };
     f.scene.flags[MODULE_ID].groupRuntimes = { main: runtime };
     f.scene.flags[MODULE_ID].interactionCatalog = { dialogues: [{ id: "talk", name: "Greeting", pages: [{ id: "hello", name: "Hello" }] }] };
@@ -379,4 +380,59 @@ test("player token menu joins a conversation with separate speaker and listener 
     assert.equal(app.command().listenerTokenId, listener.id);
     assert.deepEqual(f.scene.updates, []);
   } finally { controller.dialogueMarkers.clear(); await f.dispose(); }
+});
+
+test("default dialogue interaction starts through chat without creating a Foundry window", async () => {
+  const f = fixture(14, false), controller = new ScreenController(), requests = [];
+  try {
+    const pc = { id: "pc", documentName: "Token", parent: f.scene, name: "Hero", x: 0, y: 0, width: 1, height: 1,
+      actor: { id: "pc-actor", testUserPermission: user => user.id === game.user.id } };
+    f.scene.tokens.set(pc.id, pc);
+    f.scene.flags[MODULE_ID].groupRuntimes = { main: { ...emptyRuntime(), runId: "run", stateId: "calm" } };
+    const view = { sessionId: "session", presentation: { mode: "chat", visibility: "private" } };
+    controller.dialogues = { getContext: () => ({ dialogue: { id: "talk" } }) };
+    controller.dialogueChat.open = async command => { requests.push(command); return view; };
+    const target = { type: "Token", id: "guard" };
+    assert.equal(await controller.openDialogue("talk", pc.id, { groupId: "main", target }), view);
+    assert.deepEqual(requests, [{ sceneId: f.scene.id, groupId: "main", dialogueId: "talk", target, actorTokenId: pc.id, runId: "run" }]);
+    assert.equal(controller.dialogueWindows.size, 0); assert.equal(instances.size, 0); assert.deepEqual(f.scene.updates, []);
+  } finally { controller.dialogueChat.dispose(); controller.dialogueMarkers.clear(); await f.dispose(); }
+});
+
+test("listening to a chat dialogue forwards listener identity and creates no dialogue window", async () => {
+  const f = fixture(14, false), controller = new ScreenController(), requests = [], tracked = [];
+  try {
+    const listener = { id: "listener", documentName: "Token", parent: f.scene, x: 0, y: 0, width: 1, height: 1,
+      actor: { id: "listener-actor", testUserPermission: user => user.id === game.user.id } };
+    f.scene.tokens.set(listener.id, listener);
+    const session = { sessionId: "conversation", groupId: "main", runId: "run", dialogueId: "talk", userId: "speaker-user",
+      actorTokenId: "speaker", target: { type: "Token", id: "guard" } };
+    const view = { ...session, role: "listener", listenerTokenId: listener.id, presentation: { mode: "chat", visibility: "public" }, history: [], responses: [] };
+    controller.dialogues = { requestListen: async command => { requests.push(command); return view; } };
+    controller.dialogueChat.track = packet => tracked.push(packet);
+    assert.equal(await controller.openListeningDialogue(session, listener.id), view);
+    assert.equal(requests.length, 1); assert.equal(requests[0].actorTokenId, listener.id);
+    assert.equal(tracked.length, 1); assert.equal(tracked[0].actorTokenId, session.actorTokenId);
+    assert.equal(tracked[0].listenerTokenId, listener.id); assert.equal(tracked[0].userId, game.user.id); assert.equal(tracked[0].role, "listener");
+    assert.equal(controller.dialogueWindows.size, 0); assert.equal(instances.size, 0); assert.deepEqual(f.scene.updates, []);
+  } finally { controller.dialogueChat.dispose(); controller.dialogueMarkers.clear(); await f.dispose(); }
+});
+
+test("resuming a dialogue uses its stored display mode when the catalogue now selects another mode", async () => {
+  for (const mode of ["chat", "window"]) {
+    const f = fixture(14, false), controller = new ScreenController(), opened = [];
+    try {
+      const pc = { id: "pc", documentName: "Token", parent: f.scene, actor: { id: "pc-actor", testUserPermission: () => true } };
+      f.scene.tokens.set(pc.id, pc);
+      f.scene.flags[MODULE_ID].groupRuntimes = { main: { ...emptyRuntime(), runId: "run", stateId: "calm" } };
+      const view = { sessionId: "existing-session", presentation: { mode } }, window = { id: "window" };
+      controller.dialogues = { getContext: () => ({ dialogue: { id: "talk", presentation: { mode: mode === "chat" ? "window" : "chat" } } }) };
+      controller.dialogueChat.open = async () => view;
+      controller.openScriptDialogue = (command, initialView) => { opened.push({ command, initialView }); return window; };
+      const target = { type: "Token", id: "guard" }, result = await controller.openDialogue("talk", pc.id, { groupId: "main", target });
+      assert.equal(result, mode === "chat" ? view : window); assert.equal(opened.length, mode === "chat" ? 0 : 1);
+      if (mode === "window") assert.equal(opened[0].initialView, view);
+      assert.deepEqual(f.scene.updates, []);
+    } finally { controller.dialogueChat.dispose(); controller.dialogueMarkers.clear(); await f.dispose(); }
+  }
 });

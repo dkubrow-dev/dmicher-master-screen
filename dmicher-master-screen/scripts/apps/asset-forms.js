@@ -3,6 +3,7 @@ import { generics } from "../generics.js";
 import { localizedDescription } from "../model.js";
 import { getObjectTags } from "../store.js";
 import { isDialogueAudioAvailable } from "../premium-provider.js";
+import { renderDialoguePresentation, readDialoguePresentation } from "./dialogue-asset-view.js";
 import { escapeHTML as esc, actionButton as button, textInput, selectOptions as options, formValue } from "./form-fields.js";
 
 const input = (name, label, value = "", attributes = "") => textInput(name, label, value, attributes, "ms-field");
@@ -31,7 +32,7 @@ export function renderAssetBindings(kind, assetId, bindings, objects, definition
     const actor = binding.type === "Token" ? scene?.tokens?.get(binding.id)?.actor : null;
     const eligible = matchingActorTokens(scene, bindings, config.conditions);
     return `<tr><td>${button("objectInfo", object?.name ?? binding.id, `data-object-type="${esc(binding.type)}" data-object-id="${esc(binding.id)}"`)}${actor ? `<small>${t("Персонаж", "Character")}: ${esc(actor.name ?? actor.id)}</small>` : ""}</td><td>${esc(definition?.groupName ?? t("Без группы", "Unassigned"))} · ${esc(states)}<small>${t("Белые теги", "Allowed tags")}: ${esc(tagNames(config.conditions?.allowTags))}<br>${t("Чёрные теги", "Denied tags")}: ${esc(tagNames(config.conditions?.denyTags))}</small><details><summary>${t("Токены с Actor по тегам", "Character tokens matching tags")} · ${eligible.length}</summary>${eligible.map((token) => `<small>${esc(token.name)} · ${esc(token.actorName)}</small>`).join("")}<small>${t("Дальность, видимость и состояние проверяются при взаимодействии.", "Range, visibility and state are checked on interaction.")}</small></details></td></tr>`;
-  }).join("")}</tbody></table>` : `<p class="ms-note">${t("Магазин или диалог назначается объекту через «Поведение → Особенности». Одним каталогом могут пользоваться несколько объектов.", "Assign a shop or dialogue through Object behavior → Features. Several objects can use the same catalog.")}</p>`}</section>`;
+  }).join("")}</tbody></table>` : `<p class="ms-note">${t("Зарегистрируйте магазин или диалог в «Поведении → Свойства», затем настройте «Действия игроков». Одним каталогом могут пользоваться несколько объектов.", "Register a shop or dialogue in Behavior → Properties, then configure Player actions. Several objects can use the same catalog.")}</p>`}</section>`;
 }
 
 export function renderOwnedObjects(groupId, bindings, objects, readOnly = false) {
@@ -83,29 +84,29 @@ export function renderDialogueGraph(pages, startPageId) {
 export function renderAssetForm({ kind, draft, pageId, mode, catalog, bindings, objects, definitions, scene }) {
   if (!draft) return `<p class="ms-note">${t("Создайте или выберите элемент в списке.", "Create or select an entry from the list.")}</p>`;
   const readOnly = mode !== "constructor", isShop = kind === "shop";
+  const page = !isShop && pageId ? draft.pages.find((entry) => entry.id === pageId) : null;
+  const preview = button("previewAsset", page ? t("Предпросмотр с этого блока", "Preview from this page") : t("Предпросмотр с условиями", "Preview with conditions"));
   if (readOnly) {
-    const page = draft.pages?.find((entry) => entry.id === pageId) ?? draft.pages?.[0];
-    return `<h3>${esc(draft.name)}</h3><p>${esc(localizedDescription(draft.description))}</p>${button("previewAsset", t("Предпросмотр с условиями", "Preview with conditions"))}${isShop ? renderShopItems(draft, true) + button("shops", t("Состояния торговли", "Trade sessions")) : `<nav class="ms-dialogue-page-tabs">${draft.pages.map((entry) => button("selectAssetPage", entry.name, `data-id="${esc(entry.id)}" aria-pressed="${entry.id === page?.id}"`)).join("")}</nav>${renderDialoguePagePreview(page)}${renderDialogueGraph(draft.pages, draft.startPageId)}${button("previewAssetDialogue", t("Посмотреть диалог", "View dialogue"))}`}${renderAssetBindings(kind, draft.id, bindings, objects, definitions, scene)}`;
+    if (page) return `<h3>${esc(page.name)}</h3>${renderDialoguePagePreview(page)}${preview}`;
+    return `<h3>${esc(draft.name)}</h3><p>${esc(localizedDescription(draft.description))}</p>${preview}${isShop ? renderShopItems(draft, true) + button("shops", t("Состояния торговли", "Trade sessions")) : renderDialoguePresentation(draft, true) + renderDialogueGraph(draft.pages, draft.startPageId)}${renderAssetBindings(kind, draft.id, bindings, objects, definitions, scene)}`;
   }
-  let html = input("assetName", t("Название", "Name"), draft.name, 'required maxlength="100"') + textarea("assetDescription", t("Описание", "Description"), localizedDescription(draft.description));
+  let html = page ? "" : input("assetName", t("Название", "Name"), draft.name, 'required maxlength="100"') + textarea("assetDescription", t("Описание", "Description"), localizedDescription(draft.description));
   if (isShop) {
     html += input("shopImg", t("Изображение магазина", "Shop image"), draft.img ?? "") + button("assetFilePicker", t("Выбрать изображение", "Choose image"), 'data-field="shopImg"') + `<label class="ms-field">${t("Отображение товаров", "Catalog display")}<select name="shopDisplay">${options([{ id: "list", name: t("По категориям", "By category") }, { id: "tiles", name: t("Плитки", "Tiles") }], draft.display)}</select></label><label class="ms-check"><input type="checkbox" name="shopApproval" ${draft.requireGMApproval !== false ? "checked" : ""}> ${t("Подтверждение мастера", "GM approval")}</label><h4>${t("Товары", "Items")}</h4><p class="ms-note">${t("Начальный запас применяется при первом открытии магазина. Изменение подготовки не восстанавливает уже потраченные товары; текущий остаток виден в торговле.", "Initial stock applies when the shop first opens. Editing preparation does not replenish spent items; current stock is shown during trade.")}</p>${renderShopItems(draft, readOnly)}`;
   } else {
-    const page = draft.pages.find((entry) => entry.id === pageId) ?? draft.pages[0];
-    html += `<label class="ms-field">${t("Первый блок", "First page")}<select name="dialogueStartPage">${options(draft.pages, draft.startPageId)}</select></label>`;
-    html += `<nav class="ms-dialogue-page-tabs">${draft.pages.map((entry) => button("selectAssetPage", entry.name, `data-id="${esc(entry.id)}" aria-pressed="${entry.id === page?.id}"`)).join("")}</nav>`;
+    if (!page) html += renderDialoguePresentation(draft) + `<label class="ms-field">${t("Первый блок", "First page")}<select name="dialogueStartPage">${options(draft.pages, draft.startPageId)}</select></label>`;
     if (page) html += `<section data-asset-page="${esc(page.id)}">${input("dialoguePageName", t("Название блока", "Page name"), page.name, "required")}${textarea("dialoguePageText", t("Текст блока", "Page text"), page.text, 4)}${input("dialoguePageArt", t("Изображение блока", "Page image"), page.art ?? "")}${button("assetFilePicker", t("Выбрать изображение", "Choose image"), 'data-field="dialoguePageArt"')}${renderPageMediaOptions(page)}${page.art ? `<img class="ms-dialogue-art" src="${esc(page.art)}" alt="">` : ""}<h4>${t("Ответы", "Responses")}</h4>${page.responses.map((response, index) => `<fieldset class="ms-response-row" data-asset-response="${index}">${input("responseLabel", t("Ответ", "Response"), response.label, "required")}<div class="ms-grid-two"><label class="ms-field">${t("Продолжение", "Continue to")}<select name="responseNextPage">${options(draft.pages, response.nextPageId, t("Завершить диалог", "Finish dialogue"))}</select></label><label class="ms-field">${t("Сигнал ответа", "Response signal")}<select name="responseSignal">${options(catalog.signals.filter((signal) => signal.emitterKey === `Dialogue:${draft.id}`).map((signal) => ({id:signal.id,name:signal.name})), response.signalId, t("Без сигнала", "No signal"))}</select></label></div>${textarea("responseParameters", t("Параметры сигнала (JSON)", "Signal parameters (JSON)"), JSON.stringify(response.parameters ?? {}))}${readOnly ? "" : button("removeAssetResponse", t("Убрать ответ", "Remove response"), `data-index="${index}"`)}</fieldset>`).join("")}<p class="ms-note">${t("«Завершить диалог» доступно игроку всегда. Переписка остаётся в окне; сигнал ответа не испускается.", "Finish dialogue is always available. The transcript remains in the window; no response signal is emitted.")}</p>${readOnly ? "" : button("addAssetResponse", t("+ Ответ", "+ Response"))}</section>`;
-    html += renderDialogueGraph(draft.pages, draft.startPageId);
+    if (!page) html += renderDialogueGraph(draft.pages, draft.startPageId);
   }
-  const editing = readOnly ? "" : `${isShop ? "" : `<div class="ms-asset-actions">${button("addAssetPage", t("+ Блок", "+ Page"))}${button("deleteAssetPage", t("Удалить блок", "Delete page"))}</div>`}${generics.components.renderJSONControls({ id: "asset-selection", importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discardParameters", t("Отменить ввод", "Discard edits"))}<button type="submit">${t("Сохранить", "Save")}</button></footer>`;
-  return `<form data-screen-form="saveParameters" data-ide-parameters data-asset-form="${kind}"><fieldset ${readOnly ? "disabled" : ""}>${html}</fieldset>${editing}</form>${button("previewAsset", t("Предпросмотр с условиями", "Preview with conditions"))}${isShop ? button("shops", t("Состояния торговли", "Trade sessions")) : button("previewAssetDialogue", t("Посмотреть диалог", "View dialogue"))}${renderAssetBindings(kind, draft.id, bindings, objects, definitions, scene)}`;
+  const editing = `${isShop ? "" : `<div class="ms-asset-actions">${button("addAssetPage", t("+ Блок", "+ Page"))}${page ? button("deleteAssetPage", t("Удалить блок", "Delete page")) : ""}</div>`}${generics.components.renderJSONControls({ id: "asset-selection", importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}<footer class="ms-ide-save"><span data-save-status class="ms-note"></span>${button("discardParameters", t("Отменить ввод", "Discard edits"))}<button type="submit">${t("Сохранить", "Save")}</button></footer>`;
+  return `<form data-screen-form="saveParameters" data-ide-parameters data-asset-form="${kind}"><fieldset>${html}</fieldset>${editing}</form>${preview}${isShop ? button("shops", t("Состояния торговли", "Trade sessions")) : ""}${page ? "" : renderAssetBindings(kind, draft.id, bindings, objects, definitions, scene)}`;
 }
 
 export function readAssetForm(root, draft, kind) {
   const result = structuredClone(draft), value = (name) => formValue(root, name);
-  result.name = value("assetName").trim();
+  if (root.querySelector('[name="assetName"]')) result.name = value("assetName").trim();
   const description = value("assetDescription");
-  if (description !== localizedDescription(result.description)) result.description = description;
+  if (root.querySelector('[name="assetDescription"]') && description !== localizedDescription(result.description)) result.description = description;
   if (kind === "shop") {
     result.img = value("shopImg").trim(); result.display = value("shopDisplay"); result.requireGMApproval = root.querySelector('[name="shopApproval"]')?.checked === true;
     for (const input of root.querySelectorAll('[name="shopStock"]')) {
@@ -113,7 +114,8 @@ export function readAssetForm(root, draft, kind) {
       const item = result.items.find((entry) => entry.id === input.dataset.entryId); if (item) item.stock = Number(input.value);
     }
   } else {
-    result.startPageId = value("dialogueStartPage");
+    if (root.querySelector('[name="dialogueStartPage"]')) result.startPageId = value("dialogueStartPage");
+    if (root.querySelector('[data-dialogue-presentation]')) result.presentation = readDialoguePresentation(root, result.presentation);
     const page = result.pages.find((entry) => entry.id === root.querySelector("[data-asset-page]")?.dataset.assetPage);
     if (page) {
       page.name = value("dialoguePageName").trim(); page.text = value("dialoguePageText"); page.art = value("dialoguePageArt").trim();

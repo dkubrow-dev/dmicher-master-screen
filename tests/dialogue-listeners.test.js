@@ -4,6 +4,8 @@ import { MODULE_ID, emptyRuntime } from "../dmicher-master-screen/scripts/model.
 import { sampleGroupDefinition } from "./fixtures/definitions.js";
 import { listListeningSessions, validateListenerAccess } from "../dmicher-master-screen/scripts/dialogue-listeners.js";
 import { createDialogueMarkers } from "../dmicher-master-screen/scripts/apps/dialogue-markers.js";
+import { dialogueParticipant } from "../dmicher-master-screen/scripts/dialogue-participants.js";
+import { createDialogueService } from "../dmicher-master-screen/scripts/dialogues.js";
 
 function fixture() {
   const user = { id: "listener-user", isGM: false }, speakerUser = { id: "speaker-user", isGM: false };
@@ -16,7 +18,7 @@ function fixture() {
   for (const token of [speaker, listener, source]) scene.tokens.set(token.id, token);
   const session = { sessionId: "session", userId: speakerUser.id, actorTokenId: speaker.id, actorId: speaker.actor.id,
     dialogueId: "talk", groupId: "main", runId: "run", target: { type: "Token", id: source.id }, status: "active", expiresAt: 5000,
-    history: [{ text: "Private conversation" }] };
+    presentation: { visibility: "public" }, history: [{ text: "Public conversation" }] };
   const runtime = { ...emptyRuntime(), runId: "run", stateId: "calm", dialogueSessions: { own: session } };
   Object.assign(scene.flags, { groupDefinitions: { main: sampleGroupDefinition() }, groupRuntimes: { main: runtime },
     interactionCatalog: { dialogues: [{ id: "talk", name: "Greeting", pages: [{ id: "first", name: "Hello", text: "Hello" }] }] } });
@@ -54,6 +56,44 @@ test("listener admission uses native sight, scene distance, levels and hidden st
     (f) => { f.listener.object.checkCollision = () => true; }, (f) => { f.listener.object = null; },
     (f) => { f.speaker.hidden = true; }, (f) => { f.listener.hidden = true; }, (f) => { f.listener.x = NaN; }
   ]) { const f = fixture(); mutate(f); assert.throws(() => validateListenerAccess(f.current, "listener", f.user, { now: 1000 })); }
+});
+
+test("private and unspecified dialogues reveal no listening marker and cannot admit a listener", () => {
+  for (const presentation of [undefined, {}, { visibility: "private" }, { visibility: "player" }]) {
+    const f = fixture(); f.session.presentation = presentation;
+    assert.deepEqual(listListeningSessions(f.scene, { now: 1000 }), []);
+    assert.deepEqual(listListeningSessions(f.scene, { actorTokenId: "listener", user: f.user, now: 1000 }), []);
+    assert.throws(() => validateListenerAccess(f.current, "listener", f.user, { now: 1000 }), /private/);
+  }
+});
+
+test("public dialogue admission applies the configured tags and source distance to listeners", () => {
+  const f = fixture();
+  f.scene.flags.objectBindings = { bindings: { "Token:listener": { type: "Token", id: "listener", tags: ["guest"] } } };
+  f.session.presentation.publicAudience = { allowTags: ["guest"], denyTags: ["excluded"], range: 10 };
+  assert.equal(validateListenerAccess(f.current, "listener", f.user, { now: 1000 }), f.listener);
+  f.scene.flags.objectBindings.bindings["Token:listener"].tags.push("excluded");
+  assert.throws(() => validateListenerAccess(f.current, "listener", f.user, { now: 1000 }), /audience/);
+  f.scene.flags.objectBindings.bindings["Token:listener"].tags = ["guest"];
+  f.session.presentation.publicAudience.range = 5;
+  assert.throws(() => validateListenerAccess(f.current, "listener", f.user, { now: 1000 }), /audience/);
+});
+
+test("a registered reader loses transcript refresh when player preference becomes private", () => {
+  const f = fixture(); let mode = "publicroll";
+  f.speakerUser.getFlag = () => mode;
+  f.session.presentation = { visibility: "player" };
+  f.session.participants = [{ userId: f.user.id, actorTokenId: f.listener.id, actorId: f.listener.actor.id,
+    role: "listener", expiresAt: Date.now() + 60_000 }];
+  const service = createDialogueService({ context: () => ({ ...f.current, dialogue: { id: "talk", pages: [] }, target: f.source }), messageService: {} });
+  const command = { sceneId: f.scene.id, groupId: "main", dialogueId: "talk", sessionId: f.session.sessionId,
+    target: f.session.target, listenerTokenId: f.listener.id };
+  assert.equal(dialogueParticipant(f.scene, f.session, f.user, f.listener.id).role, "listener");
+  assert.equal(service.refreshSession(command).role, "listener");
+  mode = "gmroll";
+  assert.throws(() => dialogueParticipant(f.scene, f.session, f.user, f.listener.id), /no longer have access/);
+  assert.equal(service.refreshSession(command), null);
+  assert.equal(dialogueParticipant(f.scene, f.session, f.speakerUser).role, "speaker", "the leading character retains their own conversation");
 });
 
 test("dialogue markers have their own labels and one lease deadline, and clean up on scene disposal", () => {

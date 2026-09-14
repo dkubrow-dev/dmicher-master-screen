@@ -8,7 +8,8 @@ import { normalizeTags } from "../model.js";
 import { generics } from "../generics.js";
 import { evaluateInteractionPreview } from "../interaction-access.js";
 import { dialogueObjectMessage, dialoguePlayerMessage } from "../dialogue-history.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
+import { dialogueMessages, renderDialogueMessages, renderDialogueResponses, dialogueResponseId, bindDialogueResponses, dialogueWindowTitle,
+  captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 
 const esc = generics.utilities.escapeHTML;
 const clone = structuredClone;
@@ -25,7 +26,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     this.dialogueHistory = []; this.dialogueSession = { sessionId: "preview", step: 0 };
   }
   onDraftInput() { return false; }
-  get title() { return t("Предпросмотр взаимодействия", "Interaction preview"); }
+  get title() { return this.kind === "dialogue" ? dialogueWindowTitle(this.currentAsset?.name ?? this.assetDraft?.name) : t("Предпросмотр взаимодействия", "Interaction preview"); }
   getAsset(scene) { return clone(this.assetDraft ?? (this.kind === "shop" ? new SceneAssets(scene).getShop(this.assetId) : new SceneAssets(scene).getDialogue(this.assetId))); }
   async _prepareContext(options) {
     const parent = await super._prepareContext(options), scene = this.controller.getContext().scene;
@@ -79,14 +80,18 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
     this.pageId = page.id;
     if (!this.dialogueHistory.length) this.appendDialoguePage(asset, page);
     const responses = this.ended ? [] : page.responses.map(({ id, label }) => ({ id, label }));
+    const messages = dialogueMessages({ history: this.dialogueHistory });
     const html = await foundry.applications.handlebars.renderTemplate("modules/dmicher-master-screen/templates/dialogue.hbs", {
-      title: asset.name, targetName: this.dialogueSource().target?.name, messages: dialogueMessages({ history: this.dialogueHistory }, responses),
+      messages, messagesHTML: renderDialogueMessages(messages), responsesHTML: renderDialogueResponses(responses, {
+        canFinish: !this.ended, groupName: `${this.id}-response`, actionAttribute: "data-screen-action", answerAction: "previewAnswer", finishAction: "previewFinish"
+      }),
       finished: this.ended, canFinish: !this.ended, preview: true
     });
     return `<div class="ms-preview-dialogue">${html}</div>${button("previewRestart", t("Начать диалог заново", "Restart dialogue"))}`;
   }
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = this.bindEvents();
+    bindDialogueResponses(this.element);
     restoreDialogueScroll(this);
     if (this.kind === "dialogue") renderDialogueAudio(this, this.allowed ? this.dialogueHistory : []);
     this.element.addEventListener("change", (event) => {
@@ -112,7 +117,7 @@ export class InteractionPreviewApplication extends ScreenFormApplication {
   async handleAction(action, button) {
     if (action === "applyPreview") { this.readConditions(); this.inventory = null; this.stock = null; this.localShopItems = null; this.take = {}; this.give.clear(); this.resetDialogue(); return this.render({ force: true }); }
     if (!this.allowed || !this.currentAsset || !game.user.isGM) return;
-    const asset = this.currentAsset, id = button?.dataset.responseId ?? button?.dataset.id;
+    const asset = this.currentAsset, id = action === "previewAnswer" ? dialogueResponseId(button) : button?.dataset.id;
     captureDialogueScroll(this);
     if (action === "previewTake" && (this.stock.get(id) ?? 0) > (this.take[id] ?? 0)) this.take[id] = (this.take[id] ?? 0) + 1;
     if (action === "previewRemoveTake") delete this.take[id];

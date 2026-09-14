@@ -57,6 +57,27 @@ test("transcript messages retain order, reply art stays on the right and only th
   assert.equal(context.messages[1].img, "hero.webp"); assert.equal(context.canFinish, true);
 });
 
+test("live radio reply uses its own selected response, survives harmless preparation and resets on the next page", async () => {
+  const f = fixture(); f.dialogue.name = "Keeper. Greeting";
+  f.view.responses = [{ id: "short", label: "Yes" }, { id: "long", label: "Please tell me more" }];
+  const app = new DialogueApplication(f.service, f.selection);
+  const context = await app._prepareContext({});
+  assert.equal(app.title, "Диалог. Keeper. Greeting");
+  assert.match(context.responsesHTML, /data-response-mode="radio"/);
+  let sent;
+  f.service.requestAnswer = async (command) => {
+    sent = command;
+    return { ...app.view, nodeId: "next-page", step: 1 };
+  };
+  await DialogueApplication.answer.call(app, null, { dataset: {}, closest: () => null });
+  assert.equal(sent, undefined, "an unselected reply must not issue an empty command");
+  app.responseSelection.id = "long";
+  assert.match((await app._prepareContext({})).responsesHTML, /value="long"[^>]* checked/);
+  await DialogueApplication.answer.call(app, null, { dataset: {}, closest: () => ({ querySelector: () => ({ value: "long" }) }) });
+  assert.equal(sent.responseId, "long"); assert.equal(sent.nodeId, "page"); assert.equal(sent.step, 0);
+  assert.doesNotMatch((await app._prepareContext({})).responsesHTML, / checked/);
+});
+
 test("listener delivery is authorized by a fresh read and never exposes answer or finish actions", async () => {
   const f = fixture(); f.selection.listenerTokenId = "listener-token";
   f.selection.initialView = { ...f.view, role: "listener", history: [{ id: "forged", text: "Not trusted" }] };

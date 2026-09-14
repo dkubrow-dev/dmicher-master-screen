@@ -6,6 +6,7 @@ import { objectCenter, sceneDistance } from "./scene-object-geometry.js";
 import { isExecutionHalted } from "./execution.js";
 import { dialogueSessionIsLive } from "./interaction-session-model.js";
 import { generics } from "./generics.js";
+import { dialogueVisibility, publicDialogueTokenAllowed } from "./dialogue-visibility.js";
 
 export const DIALOGUE_SYMBOL = "💬";
 export const DIALOGUE_LISTENING_RANGE = 5;
@@ -14,6 +15,9 @@ export const DIALOGUE_LISTENING_RANGE = 5;
  * This policy also runs on the GM before admitting a listener. Range and sight
  * are admission checks; a registered reader's subsequent access is a session rule. */
 export function validateListenerAccess({ scene, runtime, session }, actorTokenId, user, { now = Date.now() } = {}) {
+  if (dialogueVisibility(session?.presentation, game.users.get(session?.userId)) !== "public") {
+    throw new Error(text("Этот диалог приватный: присоединение недоступно.", "This dialogue is private: joining is unavailable."));
+  }
   if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || session?.runId !== runtime.runId
     || !["active", "processing"].includes(session?.status) || !dialogueSessionIsLive(session, now)
     || isExecutionHalted(scene, runtime) || !getSceneObject(scene, session.target)) {
@@ -32,6 +36,9 @@ export function validateListenerAccess({ scene, runtime, session }, actorTokenId
     throw new Error(text("Персонажи находятся на разных уровнях сцены.", "The characters are on different scene levels."));
   }
   const origin = objectCenter(listener, scene), destination = objectCenter(speaker, scene);
+  if (!publicDialogueTokenAllowed(scene, session, listener)) {
+    throw new Error(text("Персонаж не входит в аудиторию этого диалога.", "Your character is outside this dialogue's audience."));
+  }
   if (![origin.x, origin.y, destination.x, destination.y].every(Number.isFinite)
     || sceneDistance(scene, origin, destination) > DIALOGUE_LISTENING_RANGE) {
     throw new Error(text("Персонаж слишком далеко от участника разговора.", "Your character is too far from the speaking character."));
@@ -53,6 +60,7 @@ export function listListeningSessions(scene, { targetTokenId, actorTokenId, user
     for (const session of Object.values(runtime.dialogueSessions ?? {})) {
       if (!session || session.runId !== runtime.runId || !["active", "processing"].includes(session.status)
         || !dialogueSessionIsLive(session, now) || (targetTokenId && session.actorTokenId !== targetTokenId)) continue;
+      if (dialogueVisibility(session.presentation, game.users.get(session.userId)) !== "public") continue;
       const token = scene.tokens?.get(session.actorTokenId);
       if (!token?.actor || token.hidden || token.actor.id !== session.actorId || !getSceneObject(scene, session.target) || !names.has(session.dialogueId)) continue;
       if (actorTokenId !== undefined) {

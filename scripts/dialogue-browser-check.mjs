@@ -40,6 +40,10 @@ try {
     const finishLabel = language === "ru" ? "\u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0434\u0438\u0430\u043b\u043e\u0433" : "Finish dialogue";
     const closeLabel = language === "ru" ? "\u0417\u0430\u043a\u0440\u044b\u0442\u044c" : "Close";
     assert.equal(await window.locator('[data-action="finish"]').textContent(), finishLabel);
+    assert.equal(await page.evaluate(() => dialogueQA.title), `${language === "ru" ? "\u0414\u0438\u0430\u043b\u043e\u0433" : "Dialogue"}. Conversation at the gate`);
+    assert.equal(await window.locator('.ms-dialogue-content > header').count(), 0);
+    assert.equal(await window.locator('.ms-dialogue-content').evaluate(el => el.firstElementChild.className), "ms-dialogue-history");
+    assert.equal(await window.locator('[data-dialogue-answer]').isDisabled(), true);
     assert.equal(await window.locator('.ms-dialogue-avatar').evaluate((el) => getComputedStyle(el).float), "left");
     const wrapping = await window.locator('.ms-dialogue-bubble').evaluate((bubble) => {
       const img = bubble.querySelector("img").getBoundingClientRect(), text = bubble.querySelector("p").firstChild;
@@ -47,14 +51,19 @@ try {
       return { imageRight: img.right, textLeft: range.getBoundingClientRect().left };
     });
     assert.ok(wrapping.textLeft > wrapping.imageRight, "the first line wraps alongside the left image");
-    await window.locator('[data-response-id="continue"]').click();
+    await window.locator('input[data-response-id="continue"]').check();
+    assert.equal(await page.evaluate(() => dialogueQA.history.length), 1, "choosing a radio never sends the response");
+    assert.equal(await window.locator('[data-dialogue-answer]').isEnabled(), true);
+    await page.screenshot({ path: path.join(output, `${version}-${language}-radio.png`) });
+    await window.locator('[data-dialogue-answer]').click();
     await page.waitForFunction(() => dialogueQA.history.length === 3);
     await page.waitForFunction(() => [...dialogueQA.element.querySelectorAll(".ms-dialogue-avatar")].every((image) => image.complete && image.naturalWidth > 0));
     assert.deepEqual(await window.locator('.ms-dialogue-message').evaluateAll((items) => items.map((item) => item.dataset.imageAlignment)), ["left", "right", "right"]);
     assert.equal(await window.locator('.is-player .ms-dialogue-text').textContent(), "Tell me more <script>literal</script>");
     assert.equal(await window.locator('script').count(), 0);
     assert.equal(await window.locator('.ms-dialogue-responses').count(), 1);
-    assert.equal(await window.locator('.ms-dialogue-message').last().locator('.ms-dialogue-responses').count(), 1);
+    assert.equal(await window.locator('.ms-dialogue-history > .ms-dialogue-responses').count(), 1);
+    assert.equal(await window.locator('input[type="radio"]').count(), 0, "all short responses use direct buttons");
     await page.evaluate(async () => { await dialogueQA.close(); });
     assert.equal(await window.count(), 1); assert.equal(await page.evaluate(() => confirmationCount), 1);
     await page.screenshot({ path: path.join(output, `${version}-${language}-conversation.png`) });
@@ -104,7 +113,9 @@ try {
       await previewQA.render({ force: true });
     });
     window = page.locator('.ms-interaction-preview');
-    await window.locator('[data-screen-action="previewAnswer"][data-response-id="continue"]').click();
+    await window.locator('input[data-response-id="continue"]').check();
+    assert.equal(await page.evaluate(() => previewQA.dialogueHistory.length), 1);
+    await window.locator('[data-screen-action="previewAnswer"]').click();
     await page.waitForFunction(() => previewQA.dialogueHistory.length === 3);
     assert.equal(await window.locator('.ms-dialogue-message').count(), 3);
     assert.deepEqual(await window.locator('.ms-dialogue-message').evaluateAll((items) => items.map((item) => item.dataset.imageAlignment)), ["left", "right", "right"]);

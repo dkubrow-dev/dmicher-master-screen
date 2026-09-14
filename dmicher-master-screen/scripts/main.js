@@ -10,6 +10,7 @@ import { installSceneSignals } from "./scene-signals.js";
 import { registerTemplateLocalization } from "./apps/template-localization.js";
 import { registerDebugSetting } from "./debug.js";
 import { registerDialogueVolume, DialogueVolumeController } from "./dialogue-volume.js";
+import { syncDialogueRollMode } from "./dialogue-visibility.js";
 
 let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals, removeDialogueVolume;
 const hooks = [];
@@ -59,6 +60,8 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
+  void syncDialogueRollMode().catch(notifyError);
+  on("clientSettingChanged", key => { if (key === "core.rollMode") void syncDialogueRollMode().catch(notifyError); });
   removeDialogueVolume = new DialogueVolumeController().install();
   controller.runtime.start();
   removeSceneSignals = installSceneSignals(controller.signals, { onError: notifyError });
@@ -68,14 +71,21 @@ Hooks.once("ready", () => {
   on("refreshToken", (token) => controller.dialogueMarkers.refresh(token.document ?? token));
   on("updateToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
   on("deleteToken", (token) => { if (token.parent?.id === globalThis.canvas?.scene?.id) controller.dialogueMarkers.sync(token.parent); });
+  on("updateUser", () => controller.dialogueMarkers.sync(globalThis.canvas?.scene));
   on("canvasTearDown", () => { controller.cancelPick?.(); controller.objectMenu.close(); controller.constructorIndicator.dispose(); controller.dialogueMarkers.clear(); clearCanvasObjectFocus(globalThis.canvas); detachCanvas?.(); });
   on("createChatMessage", (message, _options, userId) => {
+    controller.dialogueChat.created(message);
+    void controller.dialogueChat.processPublication(message, userId).catch(notifyError);
     void Promise.resolve().then(() => controller.dialogues.processManualInvitation(message, userId)).catch(notifyError);
     void Promise.resolve().then(() => controller.dialogues.processScriptInvitation(message, userId)).catch(notifyError);
     void controller.shop.processTradeRequest(message, userId).catch(notifyError);
     void controller.dialogues.processCommand(message, userId).catch(notifyError);
   });
-  on(generics.chat.getChatMessageRenderHook(), (message, html) => controller.shop.renderChatMessage?.(message, html));
+  on(generics.chat.getChatMessageRenderHook(), (message, html) => {
+    controller.shop.renderChatMessage?.(message, html);
+    controller.dialogueChat.render(message, html);
+  });
+  for (const message of game.messages?.values?.() ?? []) controller.dialogueChat.observe(message);
   attachCanvas();
 });
 
@@ -85,6 +95,7 @@ globalThis.addEventListener?.("pagehide", () => {
   controller?.dialogueMarkers.clear();
   clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
+  controller?.dialogueChat.dispose();
   detachCanvas?.();
   for (const [name, id] of hooks) Hooks.off(name, id);
   removeControls?.(); removeSettingHelp?.(); removeSceneSignals?.(); removeDialogueVolume?.(); unregister?.(); theme.dispose();

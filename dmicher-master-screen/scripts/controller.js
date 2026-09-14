@@ -28,6 +28,8 @@ import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.
 import { StateChooserApplication } from "./apps/state-chooser.js";
 import { isSceneAutomationHalted, isExecutionHalted } from "./execution.js";
 import { runDirectorCommand } from "./director-commands.js";
+import { DialogueChat } from "./dialogue-chat.js";
+import { normalizeDialoguePresentation } from "./interaction-model.js";
 
 export class ScreenController {
   constructor() {
@@ -49,7 +51,15 @@ export class ScreenController {
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
     this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor" });
     this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene),
-      openScriptWindow: (command, initialView) => this.openScriptDialogue(command, initialView) });
+      openScriptWindow: (command, initialView) => this.openScriptDialogue(command, initialView),
+      presentScriptChat: (command, view) => this.dialogueChat.present(command, view),
+      onSessionChange: async ({ command, user, view }) => {
+        await this.dialogueChat.publish({ ...command, sessionId: view.sessionId });
+        if (command.kind === "listen" && view.role === "listener") {
+          await this.dialogueChat.presentListener({ ...command, userId: user.id, listenerTokenId: view.listenerTokenId }, view);
+        }
+      } });
+    this.dialogueChat = new DialogueChat(this.dialogues);
     this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
     this.hooks = [];
   }
@@ -152,7 +162,6 @@ export class ScreenController {
       () => new InteractionPreviewApplication(this, { kind, assetId: id, sceneId, ...options }), { moduleId: MODULE_ID });
     return this.preview;
   }
-  previewDialogueAsset(id, pageId) { requireGM(); return this.dialogues.openManualDialogue({ sceneId: currentScene()?.id, dialogueId: id, pageId }); }
   openScreen(presentation = "panel", { mode = this.mode === "director" ? "director" : "constructor" } = {}) {
     requireGM();
     if (!currentScene()) throw new Error(localizedMessage("Откройте карту сцены"));
@@ -291,15 +300,15 @@ export class ScreenController {
     const candidates = this.getPlayerTokens().filter(allowed);
     return candidates.length === 1 ? candidates[0].id : undefined;
   }
-  openDialogue(dialogueId, actorTokenId, { groupId, target } = {}) {
+  async openDialogue(dialogueId, actorTokenId, { groupId, target } = {}) {
     const { scene, runtime } = this.getContext({ groupId });
     actorTokenId = this.getActingTokenId(actorTokenId);
     if (!actorTokenId) throw new Error(localizedMessage("Выберите персонажа игрока для разговора."));
-    const key = `${scene.id}:${runtime.runId}:${dialogueId}:${target?.type}:${target?.id}:${actorTokenId}`;
-    const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
-      () => new DialogueApplication(this.dialogues, { sceneId: scene.id, groupId: runtime.groupId, dialogueId, target, actorTokenId }), { moduleId: MODULE_ID });
-    this.dialogueWindows.set(key, app);
-    return app;
+    const command = { sceneId: scene.id, groupId: runtime.groupId, dialogueId, target, actorTokenId, runId: runtime.runId };
+    // A resumed session retains its display mode even if the catalogue changed.
+    const view = await this.dialogueChat.open(command);
+    if (normalizeDialoguePresentation(view.presentation).mode === "chat") return view;
+    return this.openScriptDialogue(command, view);
   }
   openScriptDialogue(command, initialView) {
     // The service has already opened and authenticated this session. Reuse the
@@ -318,6 +327,11 @@ export class ScreenController {
     const command = { sceneId: scene.id, groupId: session.groupId, sessionId: session.sessionId, runId: session.runId, actorTokenId };
     const initialView = await this.dialogues.requestListen(command);
     if (currentScene()?.id !== command.sceneId) return null;
+    if (normalizeDialoguePresentation(initialView.presentation).mode === "chat") {
+      this.dialogueChat.track({ ...command, actorTokenId: session.actorTokenId, listenerTokenId: actorTokenId,
+        dialogueId: session.dialogueId, target: session.target, userId: game.user.id, role: "listener" });
+      return initialView;
+    }
     const key = `${scene.id}:listener:${session.sessionId}:${actorTokenId}`;
     const app = generics.windows.openSingletonApplication(this.dialogueWindows.get(key),
       () => new DialogueApplication(this.dialogues, { ...command, actorTokenId: session.actorTokenId, listenerTokenId: actorTokenId,
@@ -359,6 +373,7 @@ export class ScreenController {
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
     this.dialogueMarkers.sync(scene);
+    this.dialogueChat.changed(scene);
     const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
     if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
     for (const app of [this.editor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
@@ -383,5 +398,5 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     globalThis.ui?.controls?.render();
   }
-  async dispose() { this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.dialogueMarkers.clear(); this.cancelPick?.(); await this.closeScreen(); }
+  async dispose() { this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.dialogueChat.dispose(); this.dialogueMarkers.clear(); this.cancelPick?.(); await this.closeScreen(); }
 }

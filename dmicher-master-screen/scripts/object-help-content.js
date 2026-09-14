@@ -106,12 +106,12 @@ export const OBJECT_HELP_SETTINGS = [
     ["assetDescription", "description", "Описание", "Description", "Заметка о назначении инструмента для мастера.", "A note describing the tool's purpose to the GM."],
     ["shopImg", "image", "Изображение магазина", "Shop image", "Арт, отображаемый рядом с ассортиментом.", "Art shown beside the stock list."],
     ["shopStock", "stock", "Начальный запас", "Initial stock", "Количество целых предметов при первом запуске магазина. Изменение подготовки не пополняет действующие остатки.", "Complete items stocked when the shop first runs. Editing preparation does not replenish live stock."],
-    ["dialogueStartPage", "start", "Первый блок", "Starting block", "Первый блок нового разговора.", "The first block of a new conversation."],
-    ["dialoguePageName", "block-name", "Название блока", "Block name", "Краткое имя для выбора переходов между блоками.", "A short name used to choose transitions between blocks."],
-    ["dialoguePageText", "text", "Текст блока", "Block text", "Реплика НИП или описание объекта, показываемое игроку.", "The NPC line or object description shown to the player."],
-    ["dialoguePageArt", "art", "Изображение блока", "Block image", "Иллюстрация блока. Выбирайте её штатным менеджером файлов Foundry.", "The block's illustration. Choose it with Foundry's native file picker."],
-    ["responseNextPage", "next", "Продолжение", "Continue", "Следующий блок. Пустой выбор завершает разговор.", "The next block. An empty choice ends the conversation."],
-    ["responseSignal", "signal", "Сигнал ответа", "Reply signal", "Объявленный этим диалогом сигнал для выбранного ответа.", "A signal declared by this dialogue for the chosen reply."],
-    ["responseParameters", "parameters", "Параметры сигнала", "Signal parameters", "Значения в формате JSON должны соответствовать полям сигнала.", "JSON values must match the signal's declared fields."]
+    ["dialogueStartPage", "start", "Первый блок", "First page", "С этого блока начинается обычный разговор. Предпросмотр выбранного блока может начинаться с другого места.", "Normal conversations start with this page. Previewing a selected page can start elsewhere."],
+    ["dialoguePageName", "block-name", "Название блока", "Page name", "Название для подготовки и выбора переходов; не заменяет произнесённый текст.", "A preparation label used to select transitions; it does not replace spoken text."],
+    ["dialoguePageText", "text", "Текст блока", "Page text", "Реплика объекта или описание, которое увидит участник при появлении блока.", "The object line or description participants see when this page appears."],
+    ["dialoguePageArt", "art", "Изображение блока", "Page image", "Выберите или загрузите картинку штатной кнопкой Foundry. Она отображается рядом с текстом блока.", "Choose or upload an image with Foundry's file picker. It appears alongside the page text."],
+    ["responseNextPage", "next", "Продолжение", "Continue to", "Следующий блок. Пустой выбор завершает разговор.", "The next block. An empty choice ends the conversation."],
+    ["responseSignal", "signal", "Сигнал ответа", "Response signal", "Объявленный этим диалогом сигнал для выбранного ответа.", "A signal declared by this dialogue for the chosen reply."],
+    ["responseParameters", "parameters", "Параметры сигнала (JSON)", "Signal parameters (JSON)", "Значения в формате JSON должны соответствовать полям сигнала.", "JSON values must match the signal's declared fields."]
   ] }
 ];

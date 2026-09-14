@@ -103,7 +103,15 @@
 .dmicher-master-screen .ms-dialogue-content { height: 100%; overflow: auto; padding: 16px; }
 .dmicher-master-screen .ms-dialogue-art { width: 100%; max-height: 220px; object-fit: contain; border: 0; border-radius: 6px; }
 .dmicher-master-screen .ms-dialogue-text { white-space: pre-wrap; line-height: 1.6; margin: 16px 0; }
-.dmicher-master-screen .ms-dialogue-responses { display: flex; flex-direction: column; gap: 8px; }
+.dmicher-master-screen .ms-dialogue-responses { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.dmicher-master-screen .ms-dialogue-response-options, .dmicher-master-screen .ms-dialogue-response-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.dmicher-master-screen .ms-dialogue-responses button { flex: 0 1 auto; width: auto; white-space: normal; height: auto; min-height: 28px; }
+.dmicher-master-screen [data-response-mode="radio"] .ms-dialogue-response-options { flex-direction: column; }
+.dmicher-master-screen .ms-dialogue-response-choice { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+.dmicher-master-screen .ms-dialogue-response-choice:hover { background: var(--dmicher-row-hover); }
+.dmicher-master-screen .ms-dialogue-response-choice:has(input:checked) { background: var(--dmicher-row-hover); box-shadow: inset 2px 0 var(--dmicher-accent); }
+.dmicher-master-screen .ms-dialogue-response-choice > input { flex: 0 0 16px; width: 16px; height: 16px; margin: 2px 0; }
+.dmicher-master-screen .ms-dialogue-response-choice > span { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; }
 .dmicher-master-screen .ms-dialogue-content footer { margin-top: 16px; }
 .dmicher-master-screen.ms-dialogue .ms-dialogue-content, .dmicher-master-screen .ms-preview-dialogue .ms-dialogue-content { display: flex; flex-direction: column; overflow: hidden; min-height: 0; gap: 10px; }
 .dmicher-master-screen.ms-dialogue .ms-dialogue-content > :is(header, footer, .ms-note, .ms-error), .dmicher-master-screen .ms-preview-dialogue .ms-dialogue-content > :is(header, footer, .ms-note, .ms-error) { flex: none; margin: 0; }
@@ -124,7 +132,6 @@
 .dmicher-master-screen .ms-dialogue-audio-field { display: flex; align-items: end; gap: 6px; }
 .dmicher-master-screen .ms-dialogue-audio-field .ms-field { flex: 1; min-width: 0; }
 .dmicher-master-screen .ms-dialogue-audio-field > button { flex: 0 0 auto; width: auto; margin-bottom: 8px; }
-.dmicher-master-screen .ms-dialogue-message .ms-dialogue-responses { margin-top: 8px; gap: 5px; }
 .dmicher-master-screen .ms-conditions-scope { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0; }
 .dmicher-master-screen .ms-conditions-scope > strong { flex-basis: 100%; font-size: 0.88rem; }
 .dmicher-master-screen .ms-conditions-scope .ms-check { margin: 3px 0; }
@@ -242,8 +249,6 @@
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry { flex-wrap: wrap; border: 1px solid var(--dmicher-border-muted); padding: 5px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry > img { width: 100%; height: 65px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry > span { flex: 1 0 100%; }
-.dmicher-master-screen .ms-dialogue-page-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
-.dmicher-master-screen .ms-dialogue-page-tabs [aria-pressed="true"] { outline: 1px solid var(--dmicher-accent); }
 .dmicher-master-screen .ms-response-row { border-bottom: 1px solid var(--dmicher-border-muted); padding: 5px 0; }
 .dmicher-master-screen .ms-asset-actions { display: flex; gap: 5px; margin: 5px 0; }
 .dmicher-master-screen .ms-dialogue-graph ul { padding-left: 18px; }

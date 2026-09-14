@@ -1,5 +1,11 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Приватность фиксируется для каждой реплики и ответа. Переключение режима бросков не раскрывает прежние приватные фрагменты слушателям; защищены также изображения, звук и повторные ответы из кэша команд. Повтор запроса слушателя заново проверяет его текущий доступ.
+- Privacy is captured for each line and reply. Changing roll mode never exposes earlier private portions to listeners, including images, audio and cached command replies. Retried listener requests recheck current access.
+
+- Каталог диалогов стал деревом «диалог → блок»: общие параметры, аудитория и переходы отделены от текста и ответов блока. Переключение сохраняет единый черновик; предпросмотр блока начинается с него. По умолчанию выбран приватный чат Foundry. Можно выбрать отдельное окно и его публикацию в чат, публичную аудиторию по тегам/дальности либо видимость по штатному режиму бросков игрока. Приватные разговоры закрыты для других слушателей; публичные показывают реплики и принятые ответы без команд ведущего. Запрос публикации подтверждает ведущий игрок.
+- The dialogue catalog is now a dialogue → page tree: general settings, audience and transitions are separate from page text and responses. Switching keeps one draft; page preview starts at that page. Private Foundry chat is the default. Choose a separate window with chat publication, a public audience filtered by tags/range, or visibility based on the player's native roll mode. Private conversations exclude other listeners; public ones show lines and accepted replies without leader controls. The leading player confirms requested publication.
+
 - Удалено окно «Актёр» со вспомогательной картой и управлением персонажем. В Ширме остаются два режима: Конструктор и Режиссёр. Нативные персонажи Foundry, портреты, слушатели диалогов, предпросмотр магазинов и диалогов и отделение самой Ширмы в окно сохраняются.
 - Removed the Actor window with its auxiliary map and character controls. Master screen now has two modes: Constructor and Director. Native Foundry characters, portraits, dialogue listeners, shop and dialogue previews, and detaching Master screen into a window remain available.
 

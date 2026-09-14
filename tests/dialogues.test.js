@@ -57,6 +57,70 @@ function fixture({ emitFailure = false, signal = async () => ({ status: "done", 
   return { service, events, context, pc, npc, tile, scene, tags, gm, player, other, message, send, start, runtime: () => runtime, setRuntime: (state) => { runtime = state; } };
 }
 
+function visibilityFixture(initialMode) {
+  const f = fixture(); let mode = initialMode;
+  f.player.getFlag = () => mode;
+  f.runtime().state.dialogues[0].presentation = { visibility: "player" };
+  f.scene.tokens.set("listener", { id: "listener", documentName: "Token", parent: f.scene, x: 0, y: 0, width: 1, height: 1,
+    actor: { id: "listener-actor", testUserPermission: user => user.id === f.other.id }, object: { checkCollision: () => false } });
+  const listen = sessionId => f.send({ ...f.start, kind: "listen", sessionId, actorTokenId: "listener" }, { user: f.other });
+  const refresh = sessionId => {
+    game.user = f.other;
+    try { return f.service.refreshSession({ ...f.start, sessionId, listenerTokenId: "listener" }); }
+    finally { game.user = f.gm; }
+  };
+  return { ...f, setMode: value => { mode = value; }, listen, refresh };
+}
+
+test("a listener joining after private to public sees only public lines, including cached command replies", async () => {
+  const f = visibilityFixture("gmroll"), { result: opened } = await f.send(f.start);
+  assert.equal(opened.history[0].visibility, "private");
+  f.setMode("publicroll");
+  await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 });
+  const { result, record } = await f.listen(opened.sessionId);
+  assert.equal(result.failure, undefined);
+  assert.deepEqual(result.history.map(entry => [entry.role, entry.text, entry.visibility]), [["player", "Ask", "public"], ["object", "Information", "public"]]);
+  assert.equal(result.text, "Information"); assert.deepEqual(result.responses, []);
+  await f.service.processCommand(record, f.other.id);
+  assert.deepEqual(record.flags.dialogueResult.history, result.history, "the persisted history-length cache must slice the filtered stream");
+  assert.equal(f.refresh(opened.sessionId).history.length, 2);
+  for (const entry of Object.values(f.runtime().dialogueSessions)[0].history) delete entry.visibility;
+  Object.assign(f.runtime().dialogueCommands[`${f.other.id}:${record.id}`], { text: "Old private fallback", art: "private.webp", audio: "private.ogg" });
+  await f.service.processCommand(record, f.other.id);
+  assert.deepEqual(record.flags.dialogueResult.history, []);
+  assert.equal(record.flags.dialogueResult.text, ""); assert.equal(record.flags.dialogueResult.art, ""); assert.equal(record.flags.dialogueResult.audio, "");
+});
+
+test("public to private to public never discloses the private interval to a returning listener", async () => {
+  const f = visibilityFixture("publicroll"), { result: opened } = await f.send(f.start);
+  const { result: joined } = await f.listen(opened.sessionId);
+  assert.deepEqual(joined.history.map(entry => entry.text), ["Welcome"]);
+  f.setMode("blindroll");
+  await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, responseId: "ask", nodeId: "start", step: 0 });
+  assert.equal(f.refresh(opened.sessionId), null);
+  f.setMode("publicroll");
+  const returned = f.refresh(opened.sessionId);
+  assert.deepEqual(returned.history.map(entry => entry.text), ["Welcome"]);
+  assert.equal(returned.text, "Welcome"); assert.equal(returned.art, "npc.webp");
+  assert.ok(!JSON.stringify(returned).includes("Information")); assert.ok(!JSON.stringify(returned).includes("info.webp"));
+  await f.send({ ...f.start, kind: "answer", sessionId: opened.sessionId, responseId: "finish", nodeId: "info", step: 1 });
+  assert.deepEqual(f.refresh(opened.sessionId).history.map(entry => entry.text), ["Welcome", "Done"]);
+  assert.deepEqual(Object.values(f.runtime().dialogueSessions)[0].history.map(entry => entry.visibility), ["public", "private", "private", "public"]);
+});
+
+test("cached listener commands recheck current privacy while speaker replay remains idempotent", async () => {
+  const f = visibilityFixture("publicroll"), { result: opened, record: startRecord } = await f.send(f.start);
+  const { record } = await f.listen(opened.sessionId);
+  f.setMode("gmroll");
+  await f.service.processCommand(record, f.other.id);
+  assert.match(record.flags.dialogueResult.failure, /no longer have access|доступ/);
+  assert.equal(record.flags.dialogueResult.history, undefined);
+  await f.service.processCommand(startRecord, f.player.id);
+  assert.equal(startRecord.flags.dialogueResult.failure, undefined);
+  assert.deepEqual(startRecord.flags.dialogueResult.history, opened.history);
+  assert.equal(f.events.filter(event => event.name === "opened").length, 1);
+});
+
 test("Debug records dialogue steps and errors without logging lease traffic", async (t) => {
   const f = fixture();
   game.settings = { get: () => true };
@@ -113,6 +177,9 @@ test("transcript snapshots accepted replies once and preserves prior page text a
 });
 
 function addListener(f) {
+  // These scenarios deliberately exercise an open conversation. Unspecified
+  // presentation is private and has separate denial coverage.
+  f.runtime().state.dialogues[0].presentation = { visibility: "public" };
   const token = { id: "listener", documentName: "Token", name: "Listener", x: 0, y: 0, width: 1, height: 1,
     actor: { id: "listener-actor", testUserPermission: (user) => user.id === f.other.id }, object: { checkCollision: () => false } };
   f.scene.tokens.set(token.id, token); return token;

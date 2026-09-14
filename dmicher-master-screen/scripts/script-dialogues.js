@@ -63,7 +63,7 @@ export function planScriptDialogues(command, { context, validate, users = game.u
 
 /** GM script starts use real player sessions, not manual projections. Chat carries
  * a private delivery envelope; it never grants the recipient additional rights. */
-export function createScriptDialogueService({ context, validate, process, authority, chat, openWindow }) {
+export function createScriptDialogueService({ context, validate, process, authority, chat, openWindow, presentChat }) {
   const shown = new Set(), localDeliveries = new Map();
   const processScriptInvitation = async (message, initiatingUserId) => {
     const packet = message.getFlag?.(MODULE_ID, "scriptDialogue");
@@ -143,6 +143,8 @@ export function createScriptDialogueService({ context, validate, process, author
         try {
           await admitDelivery();
           if (waitForAdmission) { await renew(); await admitDelivery(); }
+          if (presentChat) await presentChat(plan.command, view);
+          if (view.presentation?.mode === "chat" && presentChat) continue;
           const messages = await chat.create({ author: game.user.id,
             content: `<p>${generics.utilities.escapeHTML(text("Ширма: начало диалога.", "Master screen: dialogue started."))}</p>`,
             flags: { [MODULE_ID]: { scriptDialogue: { version: 1, userId: plan.user.id, command: plan.command, view } } } },

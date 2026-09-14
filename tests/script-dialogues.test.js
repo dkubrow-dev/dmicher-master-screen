@@ -6,7 +6,7 @@ import { createGroupDefinition } from "../dmicher-master-screen/scripts/model.js
 import { isInteractionPaused, beginInteractionPause } from "../dmicher-master-screen/scripts/interaction-pause.js";
 
 const MODULE_ID = "dmicher-master-screen", clone = (value) => structuredClone(value);
-function fixture({ onSignal = () => {}, realContext = false } = {}) {
+function fixture({ onSignal = () => {}, realContext = false, presentScriptChat } = {}) {
   let serial = 0, runtime, locked = false, queue = Promise.resolve();
   const gm = { id: "gm", isGM: true, role: 4, active: true };
   const player = { id: "player", isGM: false, role: 1, active: true, character: "actor-pc" };
@@ -44,7 +44,7 @@ function fixture({ onSignal = () => {}, realContext = false } = {}) {
     queue = result.catch(() => {}); return result;
   };
   const service = createDialogueService({ ...(realContext ? {} : { context, scriptContext: context }), runtimeOf: () => clone(runtime), save: async (_scene, state) => { runtime = clone(state); }, lock,
-    authority: () => game.user.id === gm.id, messageService: chat,
+    authority: () => game.user.id === gm.id, messageService: chat, presentScriptChat,
     openScriptWindow: async (command, view) => { windows.push({ command, view }); },
     emitSignal: async (_scene, signal) => { assert.equal(locked, false); signals.push(signal); await onSignal(signal); return { status: "done", allowed: true }; } });
   const command = { sceneId: scene.id, groupId: "main", runId: "run", target: { type: "Token", id: npc.id }, dialogueId: dialogue.id, tokenUuids: [pc.uuid] };
@@ -216,6 +216,32 @@ test("a script admission callback receives its already-opened sessions without e
   });
   assert.equal(refs.length, 2); assert.deepEqual([...new Set(seen)], [0, 1, 2]);
   assert.equal(f.messages.length, 2);
+});
+
+test("default scripted dialogue presents in chat and preserves its own admitted script session", async () => {
+  const presented = [], seen = [];
+  const f = fixture({ presentScriptChat: async (command, view) => presented.push({ command, view }) });
+  const refs = await f.service.startScriptDialogues(f.command, { isCurrent: opened => {
+    seen.push(opened.length); return !isInteractionPaused(f.scene, f.command.target, Date.now(), { excludeDialogueSessions: opened });
+  } });
+  assert.equal(presented.length, 1); assert.equal(presented[0].view.presentation.mode, "chat");
+  assert.equal(presented[0].view.sessionId, refs[0].sessionId); assert.deepEqual([...new Set(seen)], [0, 1]);
+  assert.equal(f.messages.length, 0); assert.equal(f.windows.length, 0);
+  assert.equal(isInteractionPaused(f.scene, f.command.target, Date.now(), { excludeDialogueSessions: refs }), false);
+  assert.equal(scriptDialoguesPending(f.runtime(), refs), true);
+});
+
+test("chat presentation waits for delivery admission without recreating the paused session", async () => {
+  const gate = admissionGate(), presented = [];
+  const f = fixture({ onSignal: signal => { if (signal.name === "opened") gate.pause(); },
+    presentScriptChat: async (command, view) => presented.push({ command, view }) });
+  const task = f.service.startScriptDialogues(f.command, gate); await flush();
+  const original = Object.values(f.runtime().dialogueSessions)[0]; assert.ok(original);
+  assert.equal(presented.length, 0); assert.equal(f.messages.length, 0); assert.equal(f.windows.length, 0);
+  gate.resume(); const refs = await task;
+  assert.equal(presented.length, 1); assert.equal(presented[0].view.sessionId, original.sessionId);
+  assert.equal(refs[0].sessionId, original.sessionId); assert.equal(f.signals.filter(signal => signal.name === "opened").length, 1);
+  assert.equal(f.messages.length, 0); assert.equal(f.windows.length, 0);
 });
 
 test("script dialogue waits for completion and scoped pause excludes only its exact sessions", async () => {

@@ -1,15 +1,15 @@
-import { message as localizedMessage } from "../localization.js";
 import { MODULE_ID } from "../model.js";
 import { themedClasses } from "../ui.js";
 import { dialogueObjectMessage, dialoguePlayerMessage } from "../dialogue-history.js";
-import { dialogueMessages, captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
+import { dialogueMessages, renderDialogueMessages, renderDialogueResponses, dialogueResponseId, bindDialogueResponses, dialogueWindowTitle,
+  captureDialogueScroll, restoreDialogueScroll, confirmDialogueClose, renderDialogueAudio, disposeDialogueAudio } from "./dialogue-presentation.js";
 import { debugTrace } from "../debug.js";
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 /** This window navigates text locally. It has no runtime, event bus, socket or permission-changing method. */
 export class ManualDialogueApplication extends HandlebarsApplicationMixin(ApplicationV2) {
-  get title() { return localizedMessage("Ширма мастера · Ручной диалог"); }
+  get title() { return dialogueWindowTitle(this.dialogue?.name); }
   static DEFAULT_OPTIONS = {
     classes: themedClasses("ms-dialogue", "ms-manual-dialogue"), position: { width: 660, height: 580 },
     window: { icon: "fa-solid fa-comments", resizable: true },
@@ -36,17 +36,22 @@ export class ManualDialogueApplication extends HandlebarsApplicationMixin(Applic
   async _prepareContext(options) {
     const base = await super._prepareContext(options);
     const page = this.dialogue.pages.find((entry) => entry.id === this.pageId);
+    const responses = this.finished ? [] : (page?.responses ?? []).map((response) => ({ ...response, pageId: this.pageId }));
+    const messages = dialogueMessages({ history: this.history });
     return { ...base, targetName: this.sourceName, title: this.dialogue.name, text: page?.text ?? "", art: page?.art ?? "",
-      messages: dialogueMessages({ history: this.history }, this.finished ? [] : (page?.responses ?? []).map((response) => ({ ...response, pageId: this.pageId }))),
-      responses: this.finished ? [] : (page?.responses ?? []).map((response) => ({ ...response, pageId: this.pageId })),
+      messages, responses, messagesHTML: renderDialogueMessages(messages),
+      responsesHTML: renderDialogueResponses(responses, { canFinish: !this.finished, groupName: `${this.id}-response` }),
       finished: this.finished, canFinish: !this.finished, manual: true, gmPreview: this.gmPreview,
       signalId: this.gmPreview ? this.signalId : "" };
   }
-  async _onRender(context, options) { await super._onRender(context, options); restoreDialogueScroll(this); renderDialogueAudio(this, context.messages); }
+  async _onRender(context, options) {
+    await super._onRender(context, options); bindDialogueResponses(this.element);
+    restoreDialogueScroll(this); renderDialogueAudio(this, context.messages);
+  }
   static answer(_event, button) {
     if (this.finished || button.dataset.pageId !== this.pageId) return;
     const page = this.dialogue.pages.find((entry) => entry.id === this.pageId);
-    const response = page?.responses.find((entry) => entry.id === button.dataset.responseId);
+    const response = page?.responses.find((entry) => entry.id === dialogueResponseId(button));
     if (!response) return;
     if (response.nextPageId && !this.dialogue.pages.some((entry) => entry.id === response.nextPageId)) return;
     captureDialogueScroll(this);
