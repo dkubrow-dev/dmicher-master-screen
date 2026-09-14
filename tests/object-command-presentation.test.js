@@ -1,27 +1,56 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import { pickCommandParameters, findCommandDoor } from "../dmicher-master-screen/scripts/object-command-picker.js";
 import { createObjectCommandBadges } from "../dmicher-master-screen/scripts/object-command-badges.js";
 
 function pickerFixture() {
   const stage = new EventEmitter(); stage.scale = { x: 1 };
-  const scene = { id: "one", walls: new Map() }, board = { stage, scene }, document = new EventTarget(), callbacks = new Map();
+  const view = {}, scene = { id: "one", walls: new Map() }, board = { stage, scene, app: { view } }, document = new EventTarget(), callbacks = new Map();
   const hooks = { on(name, callback) { callbacks.set(name, callback); return callback; }, off(name) { callbacks.delete(name); } };
   globalThis.canvas = board; globalThis.game = { user: { isGM: false }, i18n: { lang: "en" } };
   globalThis.ui = { notifications: { info() {} } };
   const options = { scene, actor: {}, object: {}, board, document, hooks };
-  const event = (point, target = null) => ({ button: 0, target, stopped: false, stopPropagation() { this.stopped = true; }, getLocalPosition: () => point });
-  return { ...options, options, event, callbacks };
+  const event = (point, target = null) => ({ button: 0, target, stopped: false, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, getLocalPosition: () => point });
+  const press = (target = view, button = 0) => {
+    const event = new Event("pointerdown", { cancelable: true });
+    Object.defineProperties(event, { target: { value: target }, button: { value: button } });
+    document.dispatchEvent(event); return event;
+  };
+  return { ...options, options, event, press, callbacks };
 }
 
 test("command destination selection consumes native pointer events and clears every listener", async () => {
   const f = pickerFixture(), picking = pickCommandParameters("go", f.options), down = f.event({ x: 10.5, y: 20.1 });
   f.board.stage.emit("pointerdowncapture", down); assert.equal(down.stopped, true);
-  f.board.stage.emit("pointerupcapture", f.event({ x: 10.5, y: 20.1 }));
+  const up = f.event({ x: 10.5, y: 20.1 }); f.board.stage.emit("pointerupcapture", up);
+  assert.equal(up.defaultPrevented, false, "release must not ask Foundry to continue a drag workflow");
   const tap = f.event({ x: 10.5, y: 20.1 }); f.board.stage.emit("pointertapcapture", tap); assert.equal(tap.stopped, true);
   assert.deepEqual(await picking, { point: { x: 11, y: 20 } });
   assert.equal(f.board.stage.eventNames().length, 0); assert.equal(f.callbacks.size, 0);
+  assert.equal(getEventListeners(f.document, "pointerdown").length, 0);
+});
+
+test("command picking consumes only left canvas presses before PIXI and releases DOM capture on every exit", async () => {
+  for (const exit of ["choose", "cancel", "escape", "teardown"]) {
+    const f = pickerFixture(), picking = pickCommandParameters("go", f.options);
+    assert.equal(getEventListeners(f.document, "pointerdown").length, 1);
+    assert.equal(f.press().defaultPrevented, true, "canvas press is intercepted before the native drag manager");
+    assert.equal(f.press({}, 0).defaultPrevented, false, "other UI remains usable");
+    assert.equal(f.press(f.board.app.view, 2).defaultPrevented, false, "right-button panning remains native");
+    if (exit === "choose") f.board.stage.emit("pointerupcapture", f.event({ x: 10, y: 20 }));
+    else if (exit === "cancel") picking.cancel();
+    else if (exit === "teardown") f.callbacks.get("canvasTearDown")();
+    else {
+      const event = new Event("keydown"); Object.defineProperty(event, "key", { value: "Escape" }); f.document.dispatchEvent(event);
+    }
+    await picking;
+    assert.equal(getEventListeners(f.document, "pointerdown").length, 0);
+    assert.equal(getEventListeners(f.document, "keydown").length, 0);
+    assert.equal(f.press().defaultPrevented, false, "ordinary presses work immediately after selection ends");
+    assert.equal(f.board.stage.eventNames().length, 0);
+  }
 });
 
 test("patrol asks for two points and Escape or scene teardown cancels without keeping handlers", async () => {

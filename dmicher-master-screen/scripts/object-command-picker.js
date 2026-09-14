@@ -35,12 +35,16 @@ export function pickCommandParameters(commandId, { scene, actor, object, board =
     if (!stage || board.scene?.id !== scene?.id || !actor || !object) { resolve(null); return; }
     let done = false, finishing = false;
     const points = [], sceneId = scene.id, listeners = [];
-    const stop = event => { event.preventDefault?.(); event.stopImmediatePropagation?.(); event.stopPropagation?.(); };
+    const view = board.app?.renderer?.events?.domElement ?? board.app?.view;
+    // Foundry interprets defaultPrevented on a PIXI pointerup as a request to
+    // continue dragging. Stop propagation without setting that workflow flag.
+    const stop = event => { event.stopImmediatePropagation?.(); event.stopPropagation?.(); };
     const current = () => globalThis.canvas?.scene?.id === sceneId && board.scene?.id === sceneId;
     const finish = result => {
       if (done) return;
       done = true;
       for (const [name, callback] of listeners) stage.off(name, callback);
+      document?.removeEventListener("pointerdown", down, { capture: true });
       document?.removeEventListener("keydown", key, { capture: true });
       if (tearDown != null) hooks?.off("canvasTearDown", tearDown);
       resolve(result);
@@ -50,7 +54,16 @@ export function pickCommandParameters(commandId, { scene, actor, object, board =
       : commandId === "patrol" ? points.length ? t("Укажите вторую точку патруля. Escape — отмена.", "Choose the second patrol point. Escape cancels.")
         : t("Укажите первую точку патруля. Escape — отмена.", "Choose the first patrol point. Escape cancels.")
         : t("Укажите точку для команды. Escape — отмена.", "Choose the command's destination. Escape cancels."));
-    const key = event => { if (event.key === "Escape") { stop(event); finish(null); } };
+    const key = event => { if (event.key === "Escape") { event.preventDefault?.(); stop(event); finish(null); } };
+    // PIXI 7 still calls a sole at-target listener after its capture listener
+    // stops propagation. Empty canvas clicks therefore reach Foundry's drag
+    // manager unless intercepted in the DOM, before PIXI receives the press.
+    // Keep PIXI release/tap capture for hit testing and any prior press target.
+    const down = event => {
+      if (event.button > 0 || !view || event.target !== view && !view.contains?.(event.target)) return;
+      event.preventDefault?.(); stop(event);
+      if (!current()) finish(null);
+    };
     const consume = event => { if (event.button > 0) return; stop(event); if (!current()) finish(null); };
     const choose = event => {
       if (event.button > 0 || done) return;
@@ -76,6 +89,7 @@ export function pickCommandParameters(commandId, { scene, actor, object, board =
     const tearDown = hooks?.on("canvasTearDown", () => finish(null));
     listeners.push(["pointerdowncapture", consume], ["pointerupcapture", choose], ["pointertapcapture", consume]);
     for (const [name, callback] of listeners) stage.on(name, callback);
+    document?.addEventListener("pointerdown", down, { capture: true });
     document?.addEventListener("keydown", key, { capture: true });
     cancel = () => finish(null); prompt();
   });
