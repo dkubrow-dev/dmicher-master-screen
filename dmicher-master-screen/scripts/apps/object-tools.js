@@ -1,3 +1,6 @@
+import { objectCapabilities } from "../object-capabilities.js";
+import { renderObjectInformation, readObjectInformation } from "./object-information-fields.js";
+import { renderObjectVariables, readObjectVariables, renderObjectActionList, renderObjectAction, readObjectAction, renderConditionMacro } from "./object-property-fields.js";
 import { text as t } from "../localization.js";
 import { ScreenFormApplication } from "./screen-form.js";
 import { scenePreparationKey } from "./scene-refresh.js";
@@ -5,6 +8,10 @@ import { themedClasses, notifyError } from "../ui.js";
 import { currentScene, getDefinitions, getObjectTags } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
 import { registeredToolIds, toolRegistration } from "../object-binding-model.js";
+import { getWorkspacePresets } from "../workspace-presets-store.js";
+import { signalMacroSnippet } from "../signal-macros.js";
+import { objectVariableMacroSnippet } from "../object-variables.js";
+import { objectActionContracts } from "../object-action-contract.js";
 import { getInteractionCatalog } from "../scene-assets.js";
 import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
 import { normalizeConditions } from "../model.js";
@@ -130,10 +137,10 @@ class ObjectForm extends ScreenFormApplication {
     this.lockSaveControls();
     this.persistTask = Promise.resolve().then(async () => {
       this.assertCurrentScene(); const scene = this.context().scene;
-      const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues", "commands"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
+      const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues", "commands", "variables", "signals", "actions", "eventScripts", "reactionScripts"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
       const warnings = changedScriptWarnings(this.original, this.draft);
       if (warnings.length) {
-        const kindNames = { initial: t("Исходное состояние", "Initial state"), transition: t("Переход", "Transition"), routine: t("Рутина", "Routine"), "command-before": t("До команды", "Before command"), "command-after": t("После команды", "After command") };
+        const kindNames = { initial: t("Исходное состояние", "Initial state"), transition: t("Переход", "Transition"), routine: t("Рутина", "Routine"), event:t("Событие","Event"),reaction:t("Реакция","Reaction"), "command-before": t("До команды", "Before command"), "command-after": t("После команды", "After command") };
         const items = warnings.map(warning => {
           const details = [];
           if (warning.zeroDelayCycle) details.push(t(`Цикл без задержек (0 с): ${warning.zeroDelayCycle.join(" → ")}. Наибольший риск перегрузки: добавьте ожидание или проверьте выход из цикла. Длительность параллельного эффекта не задерживает следующий шаг.`, `Zero-delay cycle (0 sec.): ${warning.zeroDelayCycle.join(" → ")}. Highest overload risk: add a wait or check the cycle's exit. A parallel effect's duration does not delay the next step.`));
@@ -161,43 +168,77 @@ class ObjectForm extends ScreenFormApplication {
   async handleAction(action) { if (action === "cancel" && await this.mayDiscard()) return this.close(); if (action === "save") { this.capture(); return this.persist(); } }
 }
 
-export class ObjectInfoApplication extends ObjectForm {
-  static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-info"), position: { width: 570, height: "auto" }, window: { resizable: true } };
-  get title() { return t("Информация об объекте", "Object information"); }
-  async _prepareContext() {
-    const { document, definitions } = this.context({ reload: true });
-    const facts = [[t("Название", "Name"), document.name ?? document.label ?? ""], [t("Тип", "Type"), this.descriptor.type], ["ID", document.id], ["UUID", document.uuid], ["Actor UUID", document.actor?.uuid ?? ""]];
-    const actions = `<div class="ms-object-native-actions">${button("native-settings", t("Настройки", "Settings"))}${button("focus-object", t("К объекту", "Go to object"))}</div>`;
-    return { body: layout(`<dl class="ms-object-metadata">${facts.map(([label, text]) => `<dt>${e(label)}</dt><dd><span>${e(text)}</span>${button("copy-value", "⧉", `class="ms-copy-value" data-copy-value="${e(text)}" aria-label="${e(t(`Скопировать ${label}`, `Copy ${label}`))}"`)}</dd>`).join("")}</dl>${actions}${this.descriptor.type === "Token" ? `<label class="ms-check"><input type="checkbox" name="object-player-character"${this.draft.playerCharacter ? " checked" : ""}>${t("Персонаж игрока", "Player character")}</label>` : ""}<label>${t("Группа", "Group")}<select name="object-group">${options(definitions.map((item) => ({ id: item.groupId, name: item.groupName })), this.draft.groupId, t("Без группы", "Unassigned"))}</select></label>${input("object-tags", t("Теги, через запятую", "Tags, comma separated"), this.draft.tags?.join(", ") ?? "")}<label>${t("Заметки мастера", "GM notes")}<textarea name="object-notes" rows="4" maxlength="8000">${e(this.draft.notes)}</textarea></label>`) };
-  }
-  capture() { this.draft = { ...this.draft, groupId: value(this.element, "object-group") || null, tags: splitTags(value(this.element, "object-tags")), notes: value(this.element, "object-notes"), playerCharacter: this.descriptor.type === "Token" && this.element.querySelector('[name="object-player-character"]')?.checked === true }; }
-  async _onRender(context, options) {
-    await super._onRender(context, options);
-    this.element.addEventListener("keydown", (event) => { if (event.key !== "Enter" || event.isComposing || event.repeat || event.shiftKey || !event.target.matches("input, select, textarea")) return; event.preventDefault(); event.stopPropagation(); if (this.saving) return; this.saving = true; void Promise.resolve().then(() => { this.capture(); return this.persist({ close: true }); }).catch(notifyError).finally(() => { this.saving = false; }); }, { signal: this.events.signal });
-  }
-  async handleAction(action, target) {
-    if (action === "focus-object") return this.controller.focusObject(this.descriptor, { sceneId: this.sceneId, explicit: true });
-    if (action === "copy-value") { const text = target.dataset.copyValue, clipboard = this.element.ownerDocument.defaultView.navigator?.clipboard; if (clipboard?.writeText) await clipboard.writeText(text); else if (game.clipboard?.copyPlainText) await game.clipboard.copyPlainText(text); else throw new Error(t("Буфер обмена недоступен.", "Clipboard is unavailable.")); return; }
-    if (action === "native-settings") { const doc = this.context().document, sheet = doc.sheet ?? doc.object?.sheet; if (!sheet?.render) throw new Error(t("У этого объекта нет окна настроек.", "This object has no configuration sheet.")); return sheet.render(true); }
-    return super.handleAction(action, target);
-  }
-}
-
-export class ObjectBehaviorApplication extends ObjectForm {
+export class ObjectAutomationApplication extends ObjectForm {
   static DEFAULT_OPTIONS = { classes: themedClasses("ms-object-behavior"), position: { width: 790, height: 740 }, window: { resizable: true } };
-  tab = "properties"; selectedScript = null; selectedFeature = null; selectedCommand = null; signalDraft = null; subscriptionDraft = null; validation = null;
-  get title() { return t("Поведение объекта", "Object behavior"); }
+  tab = "information"; behaviorTab = "routine"; propertyTab = "subscriptions"; selectedAction = null; selectedScript = null; selectedFeature = null; selectedCommand = null; signalDraft = null; subscriptionDraft = null; validation = null;
+  get title() { return t("Автоматизация", "Automation"); }
+  sectionNavigation(items, current, action) {
+    return `<nav class="ms-object-subtabs">${items.map(([id, name]) => button(action, name, `data-tab="${id}" aria-pressed="${current === id}"`)).join("")}</nav>`;
+  }
+  propertyNavigation() {
+    return this.sectionNavigation([["subscriptions",t("Подписки","Subscriptions")],["signals",t("Сигналы","Signals")],["macros",t("Макросы","Macros")],["actions",t("Действия","Actions")],["commands",t("Команды","Commands")],["variables",t("Переменные","Variables")]],this.propertyTab,"property-tab");
+  }
+  behaviorNavigation() {
+    return this.sectionNavigation([["routine",t("Рутина","Routine")],["event",t("События","Events")],["reaction",t("Реакции","Reactions")]],this.behaviorTab,"behavior-tab");
+  }
+  invokedScriptTable({scene}) {
+    const kind = this.behaviorTab, catalog = getSignalCatalog(scene);
+    const rows = kind === "event" ? catalog.subscriptions.filter(entry => entry.ownerKey === this.ownerKey && entry.handler === "script").map(entry => ({id:entry.id,name:catalog.signals.find(signal => signal.id === entry.signalId)?.name ?? entry.signalId})) : this.draft.actions ?? [];
+    const collection = kind === "event" ? "eventScripts" : "reactionScripts", key = kind === "event" ? "subscriptionId" : "actionId";
+    return `<table class="ms-state-script-table"><tbody>${rows.map(entry => {
+      const script = this.draft[collection]?.find(row => row[key] === entry.id)?.script;
+      const attrs = `data-kind="${kind}" data-reference-id="${e(entry.id)}" data-name="${e(entry.name)}"`;
+      return `<tr><td>${e(entry.name)}</td><td>${e(script?.name ?? "—")}${button("edit-script",script ? t("Править","Edit") : t("Создать","Create"),attrs)}${script ? button("delete-script","×",attrs) : ""}</td></tr>`;
+    }).join("")}</tbody></table>${rows.length ? "" : `<p class="ms-note">${t("Сначала зарегистрируйте подписку на скрипт или действие в свойствах объекта.","First register a script subscription or action in the object's properties.")}</p>`}`;
+  }
+  async informationAction(action, target) {
+    if (action === "focus-object") { await this.controller.focusObject(this.descriptor,{sceneId:this.sceneId,explicit:true}); return true; }
+    if (action === "copy-value") {
+      const text = target.dataset.copyValue, clipboard = this.element.ownerDocument.defaultView.navigator?.clipboard;
+      if (clipboard?.writeText) await clipboard.writeText(text); else if (game.clipboard?.copyPlainText) await game.clipboard.copyPlainText(text);
+      else throw new Error(t("Буфер обмена недоступен.","Clipboard is unavailable."));
+      return true;
+    }
+    if (action === "native-settings") {
+      const document = this.context().document, sheet = document.sheet ?? document.object?.sheet;
+      if (!sheet?.render) throw new Error(t("У этого объекта нет окна настроек.","This object has no configuration sheet."));
+      sheet.render(true); return true;
+    }
+    return false;
+  }
+  async propertyAction(action,target) {
+    if (action === "add-variable") {
+      const entries = this.draft.variables ??= []; let index = entries.length+1;
+      while(entries.some(entry => entry.name === `value${index}`)) index++;
+      entries.push({name:`value${index}`,type:"text",value:"",access:{internal:true,externalRead:false,externalWrite:false}});
+    } else if (action === "remove-variable") this.draft.variables.splice(Number(target.dataset.index),1);
+    else if (action === "add-action") {
+      const entries = this.draft.actions ??= [];
+      const id = foundry.utils.randomID(); entries.push({id,name:t("Новое действие","New action"),enabled:false,audience:"players",range:5,order:0,conditions:normalizeConditions({repeat:"always"}),parameters:{}}); this.selectedAction=id;
+    } else if (action === "edit-action") { this.selectedAction=target.dataset.id; return true; }
+    else if (action === "remove-action") { this.draft.actions=this.draft.actions.filter(entry => entry.id !== target.dataset.id); this.draft.reactionScripts=(this.draft.reactionScripts ?? []).filter(entry => entry.actionId !== target.dataset.id); this.selectedAction=null; }
+    else if (action === "condition-template") {
+      const field = this.element.querySelector(`[name="${target.dataset.field}"]`);
+      if (field && !field.value.trim()) { field.value = "// variables contains this object's current values.\n// const value = await GetValue(objectUuid, 'name');\nreturn true;"; this.capture(); }
+    } else return false;
+    this.dirty=true; return true;
+  }
   scriptParameterContext(context = this.context()) {
     const ownDialogues = new Set(registeredToolIds(this.draft, "dialogue"));
-    return { ownerKey: this.ownerKey, document: context.document, definitions: context.definitions,
+    const catalog = getSignalCatalog(context.scene), subscription = this.selectedScript?.kind === "event" && catalog.subscriptions.find(entry=>entry.id === this.selectedScript.referenceId);
+    const actionSignals=objectActionContracts(this.draft);
+    return { ownerKey: this.ownerKey, document: context.document, definitions: context.definitions, scene:context.scene,
+      shopOptions:context.catalog.shops.filter(entry=>registeredToolIds(this.draft,"shop").includes(entry.id)), workspacePresets:getWorkspacePresets(context.scene),
+      signalOptions:subscription ? catalog.signals.filter(signal=>signal.id===subscription.signalId) : this.selectedScript?.kind === "reaction" ? actionSignals.filter(signal=>signal.id.endsWith(`:${this.selectedScript.referenceId}`)) : [],
       dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
-      catalog: getSignalCatalog(context.scene) };
+      catalog:{...catalog,signals:[...catalog.signals,...actionSignals]} };
   }
   activeCommand() { return this.draft?.commands?.find(command => command.id === this.selectedCommand); }
   activeScript() {
     const ref = this.selectedScript;
     if (!ref || !this.draft) return null;
     if (ref.kind === "command") return this.draft.commands?.find(command => command.id === ref.commandId)?.[ref.phase];
+    if (["event", "reaction"].includes(ref.kind)) return this.draft[ref.kind === "event" ? "eventScripts" : "reactionScripts"]?.find(entry => entry[ref.kind === "event" ? "subscriptionId" : "actionId"] === ref.referenceId)?.script;
     if (ref.kind === "initial") return this.draft.initialScript;
     if (ref.kind === "transition") return this.draft.transitionScripts?.[ref.stateId];
     return this.draft.scripts?.find(script => script.stateId === ref.stateId);
@@ -217,24 +258,33 @@ export class ObjectBehaviorApplication extends ObjectForm {
     const ref = this.selectedScript;
     if (!ref) return;
     if (ref.kind === "command") { const command = this.draft.commands?.find(entry => entry.id === ref.commandId); if (command) command[ref.phase] = script; }
+    else if (["event", "reaction"].includes(ref.kind)) {
+      const collection = ref.kind === "event" ? "eventScripts" : "reactionScripts", key = ref.kind === "event" ? "subscriptionId" : "actionId";
+      this.draft[collection] = (this.draft[collection] ?? []).filter(entry => entry[key] !== ref.referenceId);
+      if (script) this.draft[collection].push({[key]: ref.referenceId, script});
+    }
     else if (ref.kind === "initial") this.draft.initialScript = script;
     else if (ref.kind === "transition") { this.draft.transitionScripts ??= {}; if (script) this.draft.transitionScripts[ref.stateId] = script; else delete this.draft.transitionScripts[ref.stateId]; }
     else { this.draft.scripts ??= []; const i = this.draft.scripts.findIndex((item) => item.stateId === ref.stateId); if (i >= 0) this.draft.scripts.splice(i, 1); if (script) this.draft.scripts.push(script); }
   }
   async _prepareContext() {
     const context = this.context({ reload: true }), { definition } = context;
-    const nav = `<nav class="ms-object-tabs">${[["properties", t("Свойства", "Properties")], ["transitions", t("Переходы", "Transitions")], ["player-actions", t("Действия игроков", "Player actions")], ["commands", t("Команды", "Commands")], ["routine", t("Рутина", "Routine")]].map(([tab, name]) => button("tab", name, `data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")}</nav>`;
+    const tabs = [["information",t("Информация","Information")],["states",t("Состояния","States")],["properties",t("Свойства","Properties")],["behavior",t("Поведение","Behavior")]];
+    if (objectCapabilities(this.descriptor.type).tools) tabs.push(["shops",toolTitle("shop")],["dialogues",toolTitle("dialogue")]);
+    const nav = '<nav class="ms-object-tabs">'+tabs.map(([tab,name]) => button("tab",name,`data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")+"</nav>";
     let body;
-    if (this.tab === "properties") {
+    if (this.tab === "information") body = renderObjectInformation(context.document, context.definitions, this.draft);
+    else if (this.tab === "properties") {
       const catalog = getSignalCatalog(context.scene);
       this.macroValidation = new Map(await Promise.all(catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey).map(async (macro) => [macro.uuid, await macroValidationSummary(catalog, macro)])));
       body = this.propertyFields(context);
     }
-    else if (this.tab === "player-actions") body = this.playerActionFields(context);
-    else if (this.tab === "commands") body = this.commandFields(context);
+    else if (["shops", "dialogues"].includes(this.tab)) { const kind = this.tab.slice(0,-1); body = this.registrationFields(context.catalog,[kind]) + this.playerActionFields(context,[kind]); }
     else {
-      body = this.tab === "transitions" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p><div class="ms-initial-script-actions">${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}</div>`) : "";
-      body += definition ? this.stateScriptTable(definition, this.tab === "transitions" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
+      body = this.tab === "states" ? section(t("Исходное состояние", "Initial state"), `<p class="ms-note">${t("Возвращение объекта к началу приключения выполняется только по явной команде.", "Resetting the object to the beginning runs only on an explicit command.")}</p><div class="ms-initial-script-actions">${this.scriptEntry(this.draft.initialScript, "initial")}${this.draft.initialScript ? button("restore-initial", t("Восстановить исходное состояние", "Restore initial state")) : ""}</div>`) : "";
+      if (this.tab === "behavior") body += this.behaviorNavigation();
+      if (this.tab === "behavior" && this.behaviorTab !== "routine") body += this.invokedScriptTable(context);
+      else body += definition ? this.stateScriptTable(definition, this.tab === "states" ? "transition" : "routine") : `<p>${t("Назначьте группу в информации об объекте, чтобы настроить состояния.", "Assign a group in object information to configure states.")}</p>`;
       const script = this.activeScript();
       if (script) { const scriptContext = this.scriptParameterContext(context); body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, scriptContext.catalog, { ...scriptContext, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) }); }
     }
@@ -242,7 +292,7 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   scriptEntry(script, kind, stateId = "") { const attrs = `data-kind="${kind}" data-state-id="${e(stateId)}"`; return `<span>${e(script?.name || "—")}</span>${button("edit-script", script ? t("Править", "Edit") : t("Создать", "Create"), attrs)}${script ? button("delete-script", "×", attrs) : ""}`; }
   commandFields(context) {
-    let html = renderObjectCommandList(this.draft.commands, this.selectedCommand);
+    let html = renderObjectCommandList(this.draft.commands, this.selectedCommand, this.descriptor.type);
     const command = this.activeCommand();
     if (!command) return html;
     html += renderObjectCommandFields(command, context.definitions);
@@ -254,13 +304,13 @@ export class ObjectBehaviorApplication extends ObjectForm {
     if (script) { const scriptContext = this.scriptParameterContext(context); html += buildScriptFields([script], context.definition ?? { states: [] }, this.descriptor.type, scriptContext.catalog, { ...scriptContext, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) }); }
     return html;
   }
-  stateScriptTable(group, kind) { return section(t("Состояния", "States"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Скрипт", "Script")}</th></tr></thead><tbody>${group.states.map((state) => `<tr><td>${e(state.name)}</td><td>${this.scriptEntry(kind === "transition" ? this.draft.transitionScripts?.[state.id] : this.draft.scripts?.find((script) => script.stateId === state.id), kind, state.id)}</td></tr>`).join("")}</tbody></table>`); }
+  stateScriptTable(group, kind) { return section(kind === "transition" ? t("Переходы", "Transitions") : t("Рутина", "Routine"), `<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Скрипт", "Script")}</th></tr></thead><tbody>${group.states.map((state) => `<tr><td>${e(state.name)}</td><td>${this.scriptEntry(kind === "transition" ? this.draft.transitionScripts?.[state.id] : this.draft.scripts?.find((script) => script.stateId === state.id), kind, state.id)}</td></tr>`).join("")}</tbody></table>`); }
   registeredTools(kind, catalog) {
     const ids = new Set(registeredToolIds(this.draft, kind));
     return catalog[`${kind}s`].filter((asset) => ids.has(asset.id));
   }
-  registrationFields(catalog) {
-    return toolKinds.map((kind) => {
+  registrationFields(catalog, kinds = toolKinds) {
+    return kinds.map((kind) => {
       const ids = registeredToolIds(this.draft, kind), available = catalog[`${kind}s`].filter((asset) => !ids.includes(asset.id));
       const rows = ids.map((id) => {
         const asset = catalog[`${kind}s`].find((entry) => entry.id === id), attrs = `data-kind="${kind}" data-id="${e(id)}"`;
@@ -269,9 +319,9 @@ export class ObjectBehaviorApplication extends ObjectForm {
       return section(toolTitle(kind), `<table class="ms-object-registration"><tbody>${rows}</tbody></table><div class="ms-object-registration-add"><select name="register-${kind}" aria-label="${e(toolTitle(kind))}"${available.length ? "" : " disabled"}>${options(available, available[0]?.id)}</select>${button("register-tool", t("Добавить", "Add"), `data-kind="${kind}"${available.length ? "" : " disabled"}`)}</div>`);
     }).join("");
   }
-  playerActionFields({ definition, catalog }) {
+  playerActionFields({ definition, catalog }, kinds = toolKinds) {
     if (!definition) return `<p>${t("Назначьте объекту группу.", "Assign the object to a group.")}</p>`;
-    let html = toolKinds.map((kind) => {
+    let html = kinds.map((kind) => {
       const registered = this.registeredTools(kind, catalog);
       const rows = definition.states.map((state) => {
         const assignments = (this.draft[`${kind}s`] ?? []).map((entry, index) => ({ entry, index }))
@@ -283,34 +333,46 @@ export class ObjectBehaviorApplication extends ObjectForm {
       return section(toolTitle(kind), `${hint}<table class="ms-state-script-table"><thead><tr><th>${t("Состояние", "State")}</th><th>${t("Инструменты", "Tools")}</th></tr></thead><tbody>${rows}</tbody></table>`);
     }).join("");
     const ref = this.selectedFeature, binding = this.activeFeature();
-    if (binding && binding.playerAction !== false) html += section(t("Настройка действия игрока", "Player action settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(this.registeredTools(ref.kind, catalog), binding[`${ref.kind}Id`])}</select></label>${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
+    if (binding && binding.playerAction !== false) html += section(t("Настройка действия игрока", "Player action settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(this.registeredTools(ref.kind, catalog), binding[`${ref.kind}Id`])}</select></label>
+      ${input("feature-name",t("Отображаемое имя","Display name"),binding.displayName ?? "")}${input("feature-order",t("Порядок","Order"),binding.order ?? 0,'type="number" min="0" step="1"')}
+      <label class="ms-check"><input type="checkbox" name="feature-unavailable"${binding.showWhenUnavailable ? " checked" : ""}>${t("Показывать в меню, если недоступно","Show in menu when unavailable")}</label>
+      ${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${renderConditionMacro("feature-macro",binding.conditionMacro)}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
     return html;
   }
   propertyFields({ scene, catalog: assets }) {
     const catalog = getSignalCatalog(scene), signals = catalog.signals.filter((signal) => signal.emitterKey === this.ownerKey), macros = catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey);
     const scripts = [this.draft.initialScript, ...Object.values(this.draft.transitionScripts ?? {}), ...(this.draft.scripts ?? []), ...(this.draft.commands ?? []).flatMap(command => [command.beforeScript, command.afterScript])].filter(Boolean);
-    let html = this.registrationFields(assets);
+    let html = this.propertyNavigation();
+    if (this.propertyTab === "commands") return html + this.commandFields(this.context());
+    if (this.propertyTab === "variables") return html + renderObjectVariables(this.draft.variables);
+    if (this.propertyTab === "actions") { const action = this.draft.actions?.find(entry => entry.id === this.selectedAction); return html + renderObjectActionList(this.draft.actions,this.selectedAction) + (action ? renderObjectAction(action,this.context().definition) : ""); }
+    if (this.propertyTab === "macros")
     html += section(t("Макросы объекта", "Object macros"), `<div data-object-macro-drop><table><tbody>${macros.map((macro) => `<tr><td>${e(macroName(macro.uuid))}<small>${e(scripts.filter((script) => script.steps.some((step) => step.kind === "macro" && step.parameters.macroUuid === macro.uuid)).map((script) => script.name).join(", "))}</small></td><td>${e(this.macroValidation?.get(macro.uuid)?.text ?? "")}</td><td>${button("edit-object-macro", t("Править", "Edit"), `data-uuid="${e(macro.uuid)}"`)}${button("remove-object-macro", "×", `data-uuid="${e(macro.uuid)}"`)}</td></tr>`).join("")}</tbody></table><p class="ms-note">${t("Перетащите макрос Foundry сюда. Подписки проверяются при сохранении.", "Drop a Foundry macro here. Subscriptions are validated when saved.")}</p>${button("create-object-macro", `+ ${t("Макрос", "Macro")}`)}</div>`);
-    html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog));
-    if (this.subscriptionDraft) html += renderSubscriptionFields(this.subscriptionDraft, catalog, { fixedOwner: this.ownerKey });
-    html += section(t("Сигналы объекта", "Object signals"), `<table><tbody>${signals.map((signal) => `<tr><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
-    if (this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
+    if (this.propertyTab === "subscriptions") html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog));
+    if (this.propertyTab === "subscriptions" && this.subscriptionDraft) html += renderSubscriptionFields(this.subscriptionDraft, catalog, { fixedOwner: this.ownerKey });
+    if (this.propertyTab === "signals") html += section(t("Сигналы", "Signals"), `<table><tbody>${signals.map((signal) => `<tr><td><input type="checkbox" data-object-signal="${e(signal.id)}" aria-label="${e(t("Включить сигнал","Enable signal"))}"${this.draft.signals?.enabledIds?.includes(signal.id) ? " checked" : ""}></td><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
+    if (this.propertyTab === "signals" && this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
     return html + renderMacroValidation(this.validation);
   }
   capture() {
     if (!this.draft || !this.element) return;
-    if (this.tab === "commands") this.draft.commands = readObjectCommandFields(this.element, this.draft.commands, this.selectedCommand, this.context().definitions);
-    if (["routine", "transitions", "commands"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
-    if (this.tab === "player-actions" && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) {
+    if (this.tab === "information") this.draft = readObjectInformation(this.element,this.draft);
+    if (this.tab === "properties" && this.propertyTab === "commands") this.draft.commands = readObjectCommandFields(this.element, this.draft.commands, this.selectedCommand, this.context().definitions);
+    if (["behavior", "states", "properties"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
+    if (["shops", "dialogues"].includes(this.tab) && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) {
       const ref = this.selectedFeature, previous = this.activeFeature(), key = `${ref.kind}Id`, id = value(this.element, "feature-asset") || previous[key];
       if (!registeredToolIds(this.draft, ref.kind).includes(id)) throw new Error(t("Сначала добавьте инструмент в «Свойствах» объекта.", "First add a tool in the object's Properties."));
-      const conditions = readConditionFields(this.element, "feature-conditions"), next = { ...previous, [key]: id, playerAction: true, stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), conditions };
+      const conditions = readConditionFields(this.element, "feature-conditions"), next = { ...previous, [key]: id, playerAction: true, stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), displayName: value(this.element,"feature-name"), order: Number(value(this.element,"feature-order")), showWhenUnavailable: this.element.querySelector('[name="feature-unavailable"]')?.checked === true, conditionMacro: value(this.element,"feature-macro"), conditions };
       this.draft[`${ref.kind}s`][ref.index] = next;
       // Keep row indexes stable until this DOM is replaced: another action may
       // already refer to a row in the same form. Registrations are deduplicated by ID.
       this.keepRegistration(ref.kind, previous[key]);
     }
-    if (this.tab === "properties") { if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
+    if (this.tab === "properties") {
+      if (this.propertyTab === "variables") this.draft.variables = readObjectVariables(this.element,this.draft.variables);
+      if (this.propertyTab === "actions") { const index = this.draft.actions?.findIndex(entry => entry.id === this.selectedAction); if (index >= 0) this.draft.actions[index] = readObjectAction(this.element,this.draft.actions[index]); }
+      if (this.propertyTab === "signals") this.draft.signals = {enabled:this.draft.signals?.enabled !== false,enabledIds:[...this.element.querySelectorAll("[data-object-signal]:checked")].map(input => input.dataset.objectSignal)};
+      if (this.signalDraft && this.element.querySelector("[data-signal-fields]")) this.signalDraft = readSignalFields(this.element, this.signalDraft); if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, getSignalCatalog(this.context().scene), { fixedOwner: this.ownerKey }); }
   }
   keepRegistration(kind, id) {
     if (!registeredToolIds(this.draft, kind).includes(id)) (this.draft[`${kind}s`] ??= []).push(toolRegistration(kind, id));
@@ -350,6 +412,10 @@ export class ObjectBehaviorApplication extends ObjectForm {
   }
   async _onRender(context, options) {
     await super._onRender(context, options); const listeners = { signal: this.events.signal };
+    this.element.addEventListener("keydown", event => {
+      if (this.tab !== "information" || event.key !== "Enter" || event.isComposing || event.repeat || event.shiftKey || !event.target.matches("input,select,textarea")) return;
+      event.preventDefault(); event.stopPropagation(); this.capture(); void this.persist({close:true}).catch(notifyError);
+    },listeners);
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
     bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
     bindScriptInterruptions(this.element, listeners);
@@ -362,19 +428,34 @@ export class ObjectBehaviorApplication extends ObjectForm {
     this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
     this.element.addEventListener("change", (event) => { const target = event.target; try {
       if (target.matches("[data-script-kind]")) { this.capture(); const step = this.activeScript()?.steps[Number(target.dataset.step)]; if (!step) { void this.render({ force: true }); return; } step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); this.dirty = true; void this.render({ force: true }); }
-      else if (target.matches('[name="subscription-signal"]')) { this.capture(); void this.render({ force: true }); }
+      else if (target.matches('[name="subscription-signal"],[name="subscription-handler"]')) { this.capture(); void this.render({ force: true }); }
+      else if (target.matches('[name^="variable-"][name$="-type"]')) {
+        const row = target.closest("[data-object-variable]"), field = row?.querySelector('[name$="-value"]');
+        if (field) { field.value = target.value === "text" ? field.value : Number.isFinite(Number(field.value)) ? String(target.value === "integer" ? Math.trunc(Number(field.value)) : Number(field.value)) : "0"; }
+        this.capture(); void this.render({force:true});
+      }
     } catch (error) { notifyError(error); } }, listeners);
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);
     this.element.addEventListener("drop", (event) => { if (!event.target.closest("[data-object-macro-drop]")) return; event.preventDefault(); void this.attachMacro(event).catch(notifyError); }, listeners);
   }
   async attachMacro(event) { const data = JSON.parse(event.dataTransfer.getData("text/plain")), macro = data.uuid && await fromUuid(data.uuid); if (macro?.documentName !== "Macro") throw new Error(t("Перетащите макрос Foundry.", "Drop a Foundry macro.")); this.capture(); await new SignalCatalog(this.context().scene).attachMacro(this.ownerKey, macro.uuid); return this.render({ force: true }); }
   async handleAction(action, target) {
-    if (action === "information") return this.controller.openObjectInfo(this.descriptor);
+    if (await this.informationAction(action,target)) return;
     // A button from the previous DOM cannot edit the newly loaded selection.
     if (action !== "cancel" && this.renderedDraft && this.renderedDraft !== this.draft) return this.render({ force: true });
     if (["cancel", "save"].includes(action)) return super.handleAction(action, target);
     this.capture(); const context = this.context(), catalog = new SignalCatalog(context.scene);
-    if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; }
+    if (["script-macro-open","script-macro-template"].includes(action)) {
+      const step=this.activeScript()?.steps[Number(target.dataset.step)]; if(step?.kind !== "macro") return;
+      if(action === "script-macro-open") return (await fromUuid(step.parameters.macroUuid))?.sheet?.render(true);
+      const signal=this.scriptParameterContext(context).catalog.signals.find(entry=>entry.id===step.parameters.signalId);
+      const snippet=signal ? signalMacroSnippet(signal,{variables:this.draft.variables,objectUuid:context.document.uuid}) : `${objectVariableMacroSnippet(this.draft.variables,{objectUuid:context.document.uuid})}\nreturn {};`;
+      return new foundry.applications.api.DialogV2({window:{title:t("Шаблон макроса","Macro template")},content:`<textarea readonly rows="18" style="width:100%;font-family:monospace">${e(snippet)}</textarea>`,buttons:[{action:"close",label:t("Закрыть","Close"),default:true}]}).render({force:true});
+    }
+    if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; this.selectedFeature = null; }
+    else if (action === "property-tab") { this.propertyTab = target.dataset.tab; this.selectedScript = null; }
+    else if (action === "behavior-tab") { this.behaviorTab = target.dataset.tab; this.selectedScript = null; }
+    else if (await this.propertyAction(action,target,context)) { /* Handled by a content section. */ }
     else if (action === "edit-command") {
       this.selectedCommand = target.dataset.commandId; this.selectedScript = null;
       if (!this.activeCommand()) { (this.draft.commands ??= []).push(defaultObjectCommand(this.selectedCommand)); this.dirty = true; }
@@ -390,10 +471,10 @@ export class ObjectBehaviorApplication extends ObjectForm {
     }
     else if (["edit-script", "delete-script"].includes(action)) {
       const { kind, stateId } = target.dataset, state = context.definition?.states.find((entry) => entry.id === stateId);
-      if (kind !== "initial" && !state) { this.selectedScript = null; return this.render({ force: true }); }
-      this.selectedScript = { kind, stateId };
+      if (!["initial", "event", "reaction"].includes(kind) && !state) { this.selectedScript = null; return this.render({ force: true }); }
+      this.selectedScript = { kind, stateId, referenceId: target.dataset.referenceId };
       if (action === "delete-script") { this.setActiveScript(null); this.selectedScript = null; this.dirty = true; }
-      else if (!this.activeScript()) { this.setActiveScript(newScript(kind === "initial" ? t("Исходное состояние", "Initial state") : state.name, kind === "routine" ? stateId : null)); this.dirty = true; }
+      else if (!this.activeScript()) { this.setActiveScript(newScript(kind === "initial" ? t("Исходное состояние", "Initial state") : state?.name ?? target.dataset.name ?? kind, kind === "routine" ? stateId : null)); this.dirty = true; }
     }
     else if (action === "restore-initial") { if (await this.persist()) return this.controller.restoreObjectInitial(this.descriptor); return; }
     else if (["add-script-step", "remove-script-step", "script-point", "script-sound", "script-current-position", "script-current-size"].includes(action)) {

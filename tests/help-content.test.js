@@ -27,3 +27,17 @@ test("help language selection preserves deep links and translates page content",
   assert.deepEqual(getScreenHelpContent("de"), en);
   assert.deepEqual(ru.footer, ["author", "thanks", "modules"]);
 });
+
+test("workspace and object-property help links remain unique and resolve in both languages", () => {
+  const selectors = ["workspacePresetName", "workspaceActiveWindow", "workspaceSidebarTab", "workspaceCloseUnmanaged", "action-name", "action-enabled", "action-audience", "action-range", "action-order", "action-unavailable", "action-parameters", "action-macro", "feature-name", "feature-order", "feature-unavailable", "feature-macro"];
+  for (const language of ["ru", "en"]) {
+    const entries = getScreenSettingHelp(language);
+    for (const name of selectors) assert.equal(entries.filter(entry => entry.selector === `[name="${name}"]`).length, 1, name);
+    const workspace = entries.filter(entry => entry.pageId === "settings-workspace-presets");
+    assert.equal(workspace.length, 18);
+    assert.equal(new Set(workspace.map(entry => entry.anchor)).size, workspace.length);
+    const variables = entries.filter(entry => entry.selector.startsWith('[name^="variable-"]'));
+    assert.equal(variables.length, 6);
+    assert.equal(new Set(variables.map(entry => entry.anchor)).size, variables.length);
+  }
+});

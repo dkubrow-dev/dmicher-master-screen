@@ -57,7 +57,7 @@ export class DialogueVolumeController {
     row.dataset.dmicherDialogueVolume = ""; row.dataset.tooltip = hint();
     const title = document.createElement("label"), icon = document.createElement("i");
     title.textContent = label(); title.setAttribute("for", "dmicher-dialogue-volume-slider");
-    const badge = document.createElement("span"); badge.className = "dmicher-premium-badge"; badge.textContent = "Premium"; title.append(badge);
+    // Native volume controls deliberately omit a badge; access remains gated.
     icon.className = "volume-icon fa-fw fa-solid fa-volume-low";
     const RangePicker = globalThis.foundry?.applications?.elements?.HTMLRangePickerElement;
     const value = toInput(getDialogueVolume());

@@ -7,16 +7,20 @@ import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities } f
 import { speechRecipients, createFoundryEffects } from "../dmicher-master-screen/scripts/effects.js";
 import { createCombatAdapter } from "../dmicher-master-screen/scripts/combat-adapter.js";
 import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
+import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";
 const clone = structuredClone;
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
 function merge(a, b) { if (!b || typeof b !== "object" || Array.isArray(b)) return clone(b); const out = a && typeof a === "object" ? clone(a) : {}; for (const [key, value] of Object.entries(b)) out[key] = merge(out[key], value); return out; }
 function fixture(raw, options = {}) {
+  const gm = { id: "gm", isGM: true, role: 4, active: true };
+  globalThis.game = { user: gm, users: new Map([[gm.id, gm]]), paused: false };
   const script = normalizeScript({ stateId: "calm", ...raw }), scene = { id: "scene", grid: { size: 100, distance: 5 } };
   const object = { id: "npc", documentName: "Token", name: "NPC", parent: scene, x: 0, y: 0, width: 1, height: 1, rotation: 0, hidden: false,
     object: { checkCollision: () => false }, async update(changes) { Object.assign(this, changes); } };
+  scene.tokens = new Map([[object.id, object]]); globalThis.canvas = { scene };
   let state = { runId: "run", groupId: "group", state: { id: "calm" }, scriptStates: {} }, owned = true;
   const calls = [], combat = options.combat ?? { context: () => null };
-  const runtime = { combat, scriptState: () => clone(state), saveScriptState: async (_scene, value) => { state = merge(state, value); }, currentObject: () => owned, refreshObject: () => {}, onChange: () => {},
+  const runtime = { combat, canUsePremiumStep: () => true, scriptState: () => clone(state), saveScriptState: async (_scene, value) => { state = merge(state, value); }, currentObject: () => owned, refreshObject: () => {}, onChange: () => {},
     effects: { speak: async (...args) => { calls.push(["speech", ...args]); return [{ id: "message" }]; }, removeSpeech: async (ids) => calls.push(["remove", ids]), sound: async (...args) => calls.push(["sound", ...args]), macro: async (...args) => calls.push(["macro", ...args]) },
     emitObjectSignal: async (...args) => calls.push(["signal", ...args]), isObjectMacroAttached: () => true };
   const executor = new ObjectScriptRuntime(runtime), key = scriptProgressKey({ type: "Token", id: object.id }, script);
@@ -30,6 +34,71 @@ test("each wait owns its full duration despite recursive flag merges and stable 
   await f.tick(); assert.equal(f.progress().stepId, 18); assert.equal(f.progress().action.remainingMs, 10000);
   for (let i = 0; i < 19; i++) await f.tick(); assert.equal(f.progress().stepId, 18);
   await f.tick(); assert.equal(f.progress().status, "done");
+});
+
+test("Next row uses visual order while explicit Any of retains stable IDs", async () => {
+  const next = { ...step(1, "wait", { seconds: 1 }, [9]), transition: { mode: "next" } };
+  const f = fixture({ steps: [step(9, "wait", { seconds: 10 }), next, step(4, "wait", { seconds: 10 })] });
+  await f.tick(1); assert.equal(f.progress().stepId, 4);
+  const g = fixture({ steps: [step(9, "wait", { seconds: 10 }), { ...next, transition: { mode: "any" } }, step(4, "wait", { seconds: 10 })] });
+  await g.tick(1); assert.equal(g.progress().stepId, 9);
+});
+
+test("inline branch macros are free, receive execution context and choose valid authored targets", async () => {
+  const f = fixture({ steps: [{ ...step(1, "wait", { seconds: 1 }), transition: { mode: "macro", macro: "const values = await context.getVariables(); return context.stepId === 1 && context.stateId === 'calm' ? [4, 99] : [];" } }, step(4, "wait", { seconds: 10 })] });
+  // Only premium kinds are denied by the host; all ordinary actions remain enabled.
+  f.runtime.canUsePremiumStep = kind => !["focus", "sound", "playlist", "macro"].includes(kind);
+  await f.tick(1); assert.equal(f.progress().stepId, 4);
+});
+
+test("missing Premium skips the physical next row instead of the authored branch", async () => {
+  const f = fixture({ steps: [step(1, "sound", { src: "audio.ogg" }, [9]), step(4, "wait", { seconds: 10 }), step(9, "visibility", { visible: false })] });
+  f.runtime.canUsePremiumStep = kind => kind !== "sound";
+  await f.tick(); assert.equal(f.calls.length, 0); assert.equal(f.progress().stepId, 4); assert.equal(f.object.hidden, false);
+});
+
+test("Premium is checked again between claim and effect", async () => {
+  const f = fixture({ steps: [step(1, "sound", { src: "audio.ogg" }), step(4, "wait", { seconds: 10 })] });
+  const job = await f.executor.tick(f.scene, f.state(), f.object, f.script, 0.1);
+  f.runtime.canUsePremiumStep = () => false;
+  await f.executor.execute(job); assert.equal(f.calls.length, 0); assert.equal(f.progress().stepId, 4);
+});
+
+test("inline transition cancellation releases a pending macro and ignores its late result", async () => {
+  let release, begin;
+  globalThis.branchStarted = new Promise(resolve => { begin = resolve; });
+  globalThis.branchWait = () => { begin(); return new Promise(resolve => { release = resolve; }); };
+  const f = fixture({ steps: [{ ...step(1, "wait", { seconds: 1 }), transition: { mode: "macro", macro: "await globalThis.branchWait(); return [4];" } }, step(4, "visibility", { visible: false })] });
+  try {
+    const pending = f.tick(1); await globalThis.branchStarted;
+    f.stop(); notifyExecutionChange(f.scene, "test-halt");
+    await pending; release(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.object.hidden, false); assert.notEqual(f.progress().stepId, 4);
+  } finally { release?.(); delete globalThis.branchWait; delete globalThis.branchStarted; }
+});
+
+test("typed Macro steps use the captured event contract and preserve return values", async () => {
+  const contract = { id: "Action:Token:npc:inspect", parameters: [{ name: "amount", type: "integer", nullable: false }],
+    returns: [{ name: "answer", type: "integer", nullable: false }] };
+  const f = fixture({ steps: [step(1, "macro", { macroUuid: "Macro.typed", signalId: contract.id, before: 0, after: 0 })] });
+  f.state().executionContext = { signal: contract, parameters: { amount: 4 } };
+  const command = signalMacroSnippet(contract), factory = new (Object.getPrototypeOf(async function () {}).constructor)(command);
+  const original = globalThis.fromUuid;
+  globalThis.fromUuid = async () => ({ documentName: "Macro", type: "script", canExecute: true, command,
+    execute: async () => { const instance = await factory(); instance.execute = function(context) {
+      assert.equal(context.objectUuid, "Scene.scene.Token.npc");
+      this.returns.answer.value = this.parameters.amount.value * 2;
+    }; return instance; } });
+  try { await f.tick(); assert.deepEqual(f.progress().returns, { answer: 8 }); }
+  finally { globalThis.fromUuid = original; }
+});
+
+test("the native standalone macro adapter passes the executor's context into Foundry scope", async () => {
+  const original = globalThis.fromUuid, context = { objectUuid: "Scene.scene.Token.npc", isCurrent: () => true, GetValue: async () => 5 };
+  let scope;
+  globalThis.fromUuid = async () => ({ documentName: "Macro", type: "script", canExecute: true, execute: async value => { scope = value; } });
+  try { await createFoundryEffects().macro("Macro.own", context); assert.equal(scope.context, context); assert.equal(await scope.context.GetValue(), 5); }
+  finally { globalThis.fromUuid = original; }
 });
 test("script slots maintain independent progress and disabled scripts have no side effects", async () => {
   const f = fixture({ steps: [step(1, "wait", { seconds: 2 })] });

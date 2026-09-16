@@ -93,6 +93,38 @@ test("scene export omits only command-owned runtime lights without editing sourc
   assert.deepEqual(f.calls.find(call => call.type === "Scene").data.lights, bundle.scene.lights);
 });
 
+test("scene transfer preserves preset preparation and remaps its typed references without carrying runtime ownership", async () => {
+  const f = fixture();
+  f.sceneData.notes = [{ _id: "visibleNote", x: 20, y: 30, entryId: "oldJournal", pageId: "oldPage", flags: {
+    [MODULE_ID]: { workspacePreset: { version: 1, presetId: "mapnotes", entryId: "entry" } }, other: { preserved: true }
+  } }];
+  f.scene.notes = new Map(f.sceneData.notes.map(data => [data._id, { ...data, id: data._id, toObject: () => copy(data) }]));
+  f.sceneData.flags[MODULE_ID].workspacePresets = { revision: 2, windows: [{ id: "gm", name: "GM", entries: [
+    { id: "sheet", name: "Actor", target: { kind: "document", uuid: f.actor.uuid } },
+    { id: "page", name: "Journal", target: { kind: "document", uuid: f.page.uuid } }
+  ], activeWindowId: "page" }], notes: [{ id: "mapnotes", name: "Notes", entries: [{ id: "entry", name: "A", sourceId: "oldDeletedNote", sourceSceneId: f.scene.id,
+    data: { entryId: f.journal.id, pageId: "oldPage", x: 1, y: 2 } }] }] };
+  f.sceneData.flags[MODULE_ID].workspaceNotesRuntime = { presetId: "mapnotes", entries: [{ noteId: "visibleNote", id: "entry", removeOnLeave: true }] };
+  f.sceneData.flags[MODULE_ID].objectVariableValues = { "Token:oldToken": { secret: "runtime" } };
+  const before = copy(f.sceneData), bundle = await exportBundle(f.scene);
+  assert.deepEqual(f.sceneData, before);
+  assert.equal(bundle.workspacePresets.notes[0].entries[0].sourceId, "visibleNote");
+  assert.equal(bundle.scene.notes[0].flags[MODULE_ID]?.workspacePreset, undefined);
+  assert.equal(bundle.scene.notes[0].flags.other.preserved, true);
+  await importBundle(bundle);
+  const sceneData = f.calls.find(call => call.type === "Scene").data, imported = f.created.find(doc => doc.documentName === "Scene");
+  const actor = f.created.find(doc => doc.documentName === "Actor"), journal = f.created.find(doc => doc.documentName === "JournalEntry");
+  const flags = sceneData.flags[MODULE_ID], presets = flags.workspacePresets;
+  assert.equal(presets.windows[0].entries[0].target.uuid, actor.uuid);
+  assert.equal(presets.windows[0].entries[1].target.uuid, `${journal.uuid}.JournalEntryPage.oldPage`);
+  assert.equal(presets.windows[0].activeWindowId, "page");
+  assert.equal(presets.notes[0].entries[0].data.entryId, journal.id);
+  assert.equal(presets.notes[0].entries[0].data.pageId, "oldPage");
+  assert.equal(presets.notes[0].entries[0].sourceId, "visibleNote");
+  assert.equal(presets.notes[0].entries[0].sourceSceneId, imported.id);
+  assert.equal(flags.workspaceNotesRuntime, undefined); assert.equal(flags.objectVariableValues, undefined);
+});
+
 test("Actor compendium spawn is included and its exact UUID maps to the new world Actor", async () => {
   const f = fixture();
   const compendium = f.document("Actor", "compendiumActor", { name: "Reinforcement", type: "npc" });

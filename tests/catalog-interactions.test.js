@@ -15,6 +15,7 @@ import { SignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.j
 import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";
 import { SCENE_OBJECT_COLLECTIONS } from "../dmicher-master-screen/scripts/scene-object-types.js";
 import { freezeInteractionClock } from "../dmicher-master-screen/scripts/interaction-pause.js";
+import { objectCapabilities } from "../dmicher-master-screen/scripts/object-capabilities.js";
 
 const copy = (value) => structuredClone(value);
 
@@ -40,7 +41,8 @@ for (const [type, geometry] of Object.entries({
     ...copy(f.flags.objectBindings.bindings["Token:waiter"]), ...target
   };
   const available = listAvailableInteractions(f.scene, target, f.pc, f.player);
-  assert.deepEqual(available.map((entry) => entry.kind), ["shop", "dialogue"]);
+  if(!objectCapabilities(type).tools) { assert.deepEqual(available,[]); return; }
+  assert.deepEqual(available.map((entry) => entry.kind).sort(), ["dialogue", "shop"]);
   assert.deepEqual(listAvailableInteractions(f.scene, target, f.pc, f.stranger), []);
   const command = { ...f.intent(target), kind: "start", dialogueId: "talk" };
   const opened = await f.dialogueCommand(command);
@@ -185,7 +187,7 @@ test("one group's halt blocks its conversations and trades while another group r
 
 test("readonly interaction menu and isolated condition preview consume no flags, sessions or events", async () => {
   const f = await fixture(), before = copy(f.flags), writes = f.writes();
-  assert.deepEqual(listAvailableInteractions(f.scene, { type: "Token", id: "waiter" }, f.pc, f.player).map((entry) => entry.kind), ["shop", "dialogue"]);
+  assert.deepEqual(listAvailableInteractions(f.scene, { type: "Token", id: "waiter" }, f.pc, f.player).map((entry) => entry.kind).sort(), ["dialogue", "shop"]);
   assert.deepEqual(listAvailableInteractions(f.scene, { type: "Token", id: "waiter" }, f.pc, f.stranger), []);
   const config = resolveObjectShop(f.scene, { type: "Token", id: "waiter" }, { groupId: "main", stateId: "calm" }).config;
   config.conditions = { allowTags: ["hero"], denyTags: ["outlaw"] };

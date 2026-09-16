@@ -4,6 +4,7 @@ import { renderSchema, readSignalSchemaField } from "./signal-schema-fields.js";
 export { renderSchema, bindSignalFields } from "./signal-schema-fields.js";
 import { localizedDescription } from "../model.js";
 import { validateSignalMacro, validateStandaloneMacro } from "../signal-macros.js";
+import { isNativeObjectEmitter } from "../object-signal-settings.js";
 
 const choose = (name, label, items, current) => `<label>${e(label)}<select name="${e(name)}">${selectOptions(items, current, t("Выберите…", "Choose…"))}</select></label>`;
 export const emitterName = (catalog, key) => catalog.emitters.find((item) => item.key === key)?.name ?? key;
@@ -35,16 +36,24 @@ export function readSignalFields(root, previous) {
 }
 
 export function renderSubscriptions(rows, catalog) {
-  return `<table class="ms-automation-table"><thead><tr><th>${t("Подписчик", "Subscriber")}</th><th>${t("Макрос", "Macro")}</th><th>${t("Сигнал", "Signal")}</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td>${e(emitterName(catalog, row.ownerKey))}</td><td>${e(macroName(row.macroUuid))}${row.enabled === false ? ` · ${t("выключен", "disabled")}` : ""}</td><td>${e(catalog.signals.find((signal) => signal.id === row.signalId)?.name ?? row.signalId)}</td><td><button type="button" data-screen-action="editSignalSubscription" data-id="${e(row.id)}">${t("Править", "Edit")}</button><button type="button" data-screen-action="deleteSignalSubscription" data-id="${e(row.id)}">×</button></td></tr>`).join("")}</tbody></table><button type="button" data-screen-action="newSignalSubscription">+ ${t("Подписка", "Subscription")}</button>`;
+  return `<table class="ms-automation-table"><thead><tr><th>${t("Подписчик", "Subscriber")}</th><th>${t("Обработчик", "Handler")}</th><th>${t("Сигнал", "Signal")}</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td>${e(emitterName(catalog, row.ownerKey))}</td><td>${row.handler === "script" ? t("Скрипт события","Event script") : e(macroName(row.macroUuid))}${row.enabled === false ? ` · ${t("выключен", "disabled")}` : ""}</td><td>${e(catalog.signals.find((signal) => signal.id === row.signalId)?.name ?? row.signalId)}</td><td><button type="button" data-screen-action="editSignalSubscription" data-id="${e(row.id)}">${t("Править", "Edit")}</button><button type="button" data-screen-action="deleteSignalSubscription" data-id="${e(row.id)}">×</button></td></tr>`).join("")}</tbody></table><button type="button" data-screen-action="newSignalSubscription">+ ${t("Подписка", "Subscription")}</button>`;
 }
 
 export function renderSubscriptionFields(row, catalog, { fixedOwner, fixedSignal } = {}) {
-  return `<fieldset data-subscription-fields><legend>${t("Подписка макроса", "Macro subscription")}</legend>${fixedOwner ? "" : choose("subscription-owner", t("Подписчик", "Subscriber"), catalog.emitters.map((item) => ({ id: item.key, name: item.name })), row.ownerKey)}${choose("subscription-macro", t("Макрос объекта", "Object macro"), catalog.macros.filter((item) => item.ownerKey === (fixedOwner ?? row.ownerKey)).map((item) => ({ id: item.uuid, name: macroName(item.uuid) })), row.macroUuid)}${fixedSignal ? "" : choose("subscription-signal", t("Сигнал эмитента", "Emitter signal"), catalog.signals.map((signal) => ({ id: signal.id, name: `${emitterName(catalog, signal.emitterKey)} · ${signal.name}` })), row.signalId)}<label class="ms-check"><input type="checkbox" name="subscription-enabled"${row.enabled !== false ? " checked" : ""}>${t("Включена", "Enabled")}</label><button type="button" data-screen-action="saveSignalSubscription">${t("Проверить и сохранить", "Validate and save")}</button></fieldset>`;
+  const fixedNative = !fixedOwner || isNativeObjectEmitter(fixedOwner);
+  const handler = fixedNative ? row.handler ?? (row.ownerKey && !isNativeObjectEmitter(row.ownerKey) ? "macro" : "script") : "macro";
+  const owners = catalog.emitters.filter(item => handler !== "script" || isNativeObjectEmitter(item.key));
+  const handlers = [...(fixedNative ? [{ id: "script", name: t("Скрипт события", "Event script") }] : []), { id: "macro", name: t("Зарегистрированный макрос", "Registered macro") }];
+  return `<fieldset data-subscription-fields><legend>${t("Подписка", "Subscription")}</legend>${fixedOwner ? "" : choose("subscription-owner", t("Подписчик", "Subscriber"), owners.map((item) => ({ id: item.key, name: item.name })), row.ownerKey)}
+    ${choose("subscription-handler",t("Обработчик","Handler"),handlers,handler)}
+    ${handler === "macro" ? choose("subscription-macro", t("Макрос объекта", "Object macro"), catalog.macros.filter((item) => item.ownerKey === (fixedOwner ?? row.ownerKey)).map((item) => ({ id: item.uuid, name: macroName(item.uuid) })), row.macroUuid) : `<p class="ms-note">${t("После сохранения настройте скрипт в «Поведение → События» объекта-подписчика.","After saving, configure the script in Behavior → Events on the subscribing object.")}</p>`}
+    ${fixedSignal ? "" : choose("subscription-signal", t("Сигнал эмитента", "Emitter signal"), catalog.signals.filter(signal=>signal.enabled !== false || signal.id === row.signalId).map((signal) => ({ id: signal.id, name: `${emitterName(catalog, signal.emitterKey)} · ${signal.name}` })), row.signalId)}<label class="ms-check"><input type="checkbox" name="subscription-enabled"${row.enabled !== false ? " checked" : ""}>${t("Включена", "Enabled")}</label><button type="button" data-screen-action="saveSignalSubscription">${t("Проверить и сохранить", "Validate and save")}</button></fieldset>`;
 }
 
 export function readSubscriptionFields(root, previous, catalog, { fixedOwner, fixedSignal } = {}) {
   const signalId = fixedSignal ?? value(root, "subscription-signal");
-  return { ...previous, ownerKey: fixedOwner ?? value(root, "subscription-owner"), signalId, emitterKey: catalog.signals.find((signal) => signal.id === signalId)?.emitterKey, macroUuid: value(root, "subscription-macro"), enabled: root.querySelector('[name="subscription-enabled"]')?.checked === true };
+  const handler=value(root,"subscription-handler") || previous.handler || "script";
+  return { ...previous,handler, ownerKey: fixedOwner ?? value(root, "subscription-owner"), signalId, emitterKey: catalog.signals.find((signal) => signal.id === signalId)?.emitterKey, macroUuid: handler === "macro" ? value(root, "subscription-macro") : "", enabled: root.querySelector('[name="subscription-enabled"]')?.checked === true };
 }
 
 export function renderMacroValidation(result) {

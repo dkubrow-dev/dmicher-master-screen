@@ -1,0 +1,31 @@
+.dmicher-master-screen.ms-interaction-settings .window-content{min-height:0;overflow:hidden}
+.ms-interaction-settings .ms-settings-body{display:flex;flex-direction:column;min-height:0;height:100%;gap:8px}
+.ms-interaction-settings .ms-settings-scroll{overflow:auto;min-height:0;flex:1}
+.ms-interaction-settings fieldset{margin:6px 0 12px;padding:8px;border:1px solid var(--color-border-light-primary,#69717c);min-width:0}
+.ms-interaction-settings legend{font-size:var(--font-size-14,14px);font-weight:bold}
+.ms-interaction-settings table{font-size:12px;margin:4px 0}
+.ms-interaction-settings td,.ms-interaction-settings th{padding:3px 4px;vertical-align:middle;text-align:left}
+.ms-interaction-settings th{font-weight:500}
+.ms-interaction-settings input,.ms-interaction-settings select{height:26px;font-size:12px;padding:1px 4px;min-width:0}
+.ms-interaction-settings input[type=number]{width:66px}
+.ms-interaction-settings .ms-setting-symbol{width:38px;text-align:center}
+.ms-interaction-settings input[type=checkbox]{height:16px;width:16px;flex:none}
+.ms-interaction-settings .ms-setting-check{display:flex;align-items:center;gap:5px;line-height:24px}
+.ms-interaction-settings .ms-setting-color{display:flex;align-items:center;gap:3px}
+.ms-interaction-settings .ms-setting-color input[type=color]{width:24px;min-width:24px;padding:0;border:0}
+.ms-interaction-settings .ms-setting-color input:not([type=color]){width:70px;font-family:monospace}
+.ms-interaction-settings .ms-setting-activation{display:flex;align-items:end;gap:8px;flex-wrap:wrap;margin:6px 0}
+.ms-interaction-settings .ms-setting-activation>label{display:flex;flex-direction:column;gap:4px;min-width:160px}
+.ms-interaction-settings .ms-setting-shortcut{display:flex;gap:3px;flex:1;min-width:180px}
+.ms-interaction-settings .ms-setting-shortcut input{flex:1}
+.ms-interaction-settings .ms-setting-shortcut button{height:26px;width:28px;min-height:0;padding:0;flex:none;line-height:24px}
+.ms-interaction-settings .ms-setting-shortcut[hidden]{display:none}
+.ms-interaction-settings .ms-setting-table-scroll{overflow-x:auto}
+.ms-interaction-settings .ms-setting-table-scroll select{width:88px;display:block}
+.ms-interaction-settings footer{display:flex;justify-content:flex-end;gap:6px;flex-shrink:0}
+.ms-interaction-settings footer button{flex:0 0 auto;width:auto;min-width:90px}
+.ms-interaction-settings .dmicher-premium-badge{font-size:9px;vertical-align:middle;padding:1px 4px}
+.ms-highlight-key-dialog{width:min(430px,calc(100vw - 32px));border:1px solid var(--color-border-light-primary,#75849a);border-radius:8px;padding:16px;background:var(--color-bg-option,#222936);color:var(--color-text-primary,#eee);box-shadow:0 8px 40px #0009}
+.ms-highlight-key-dialog::backdrop{background:#0006}
+.ms-highlight-key-dialog output{display:block;min-height:36px;font-size:18px;text-align:center;margin:14px 0}
+.ms-highlight-key-dialog button{display:block;margin-left:auto;width:auto}

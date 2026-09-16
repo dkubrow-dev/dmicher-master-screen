@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fixture } from "./signal-fixture.js";
 import { normalizeSignalFields, validateParameters, validateSignalValues } from "../dmicher-master-screen/scripts/signal-types.js";
-import { exportCatalogDependencies, mergeCatalogDependencies } from "../dmicher-master-screen/scripts/signal-catalog.js";
+import { exportCatalogDependencies, mergeCatalogDependencies, normalizeCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
 
 test("reading built-ins creates no world data and covers every requested emitter", () => {
   const f = fixture(), catalog = f.catalog.list();
@@ -29,6 +29,26 @@ test("builtin fields are immutable, while custom fields can be added and removed
   await assert.rejects(f.catalog.saveSignal({ ...base, name: "replacement" }));
   await assert.rejects(f.catalog.removeSignal(base.id));
 });
+
+test("changing a prepared door into a wall retains disabled references without writes or broken catalogs", async () => {
+  for (const customize of [false, true]) {
+    const f = fixture(), wall = { id: "door", door: 1, ds: 0, c: [0, 0, 0, 100] };
+    f.scene.walls = new Map([[wall.id, wall]]);
+    let signal = f.catalog.list().signals.find(row => row.name === "doorOpened");
+    if (customize) signal = await f.catalog.saveSignal({ ...signal, parameters: [...signal.parameters, { name: "extra", type: "string", default: "" }] });
+    await f.subscribe(signal);
+    f.data.objectBindings.bindings["Wall:door"] = { signals: { enabledIds: [signal.id] } };
+    const before = f.writes();
+    wall.door = 0;
+    const retained = f.catalog.list().signals.find(row => row.id === signal.id);
+    assert.equal(retained.available, false); assert.equal(retained.enabled, false);
+    const output = await f.bus.emit(f.scene, { emitterKey: "Wall:door", signalId: signal.id, parameters: { objectUuid: "Scene.scene.Wall.door", userUuid: "User.gm", x: 0, y: 50 } });
+    assert.equal(output.status, "disabled"); assert.equal(f.writes(), before);
+    wall.door = 1;
+    assert.equal(f.catalog.list().signals.find(row => row.id === signal.id).enabled, true);
+    assert.equal(f.writes(), before);
+  }
+});
 test("strict values reject coercion, undeclared names, invalid nulls and numeric bounds", () => {
   const fields = normalizeSignalFields([{ name: "s", type: "string", minLength: 2, maxLength: 3 }, { name: "n", type: "number", min: 0, max: 2, decimals: 1 }, { name: "i", type: "integer" }, { name: "b", type: "boolean" }, { name: "optional", type: "string", nullable: true, default: null }]);
   const valid = { s: "ab", n: 1.1, i: 2, b: true };
@@ -49,6 +69,35 @@ test("subscription requires an owned macro and validates without executing it", 
   assert.equal(executions, 0);
   await assert.rejects(f.catalog.removeMacro("Token:other", "Macro.m"));
   await assert.rejects(f.catalog.removeSignal(signal.id));
+});
+
+test("event script subscribers require a native scene object in saves and imports", async () => {
+  const f = fixture(), signal = f.catalog.list().signals.find(row => row.emitterKey === "Scene:scene");
+  for (const ownerKey of ["Scene:scene", "Group:main", "Shop:shop", "Dialogue:dialogue"]) {
+    const subscription = { id: "sub", ownerKey, emitterKey: signal.emitterKey, signalId: signal.id, handler: "script" };
+    const before = f.writes();
+    await assert.rejects(f.catalog.saveSubscription(subscription));
+    assert.throws(() => normalizeCatalog({ subscriptions: [subscription] }));
+    assert.equal(f.writes(), before);
+  }
+  await f.catalog.saveSubscription({ ownerKey: "Token:other", emitterKey: signal.emitterKey, signalId: signal.id, handler: "script" });
+  assert.equal(f.catalog.list().subscriptions[0].handler, "script");
+});
+
+test("editing a signal or subscription revalidates its prepared event input without invoking macros", async () => {
+  const f = fixture(), original = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Input", parameters: [{ name: "value", type: "integer" }] });
+  const other = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Other", parameters: original.parameters });
+  const subscription = await f.catalog.saveSubscription({ ownerKey: "Token:other", emitterKey: original.emitterKey, signalId: original.id, handler: "script" });
+  const macro = f.macro("Macro.input", original); let calls = 0; macro.execute = () => { calls++; };
+  f.data.objectBindings.bindings["Token:other"] = { type: "Token", id: "other", eventScripts: [{ subscriptionId: subscription.id, script: { steps: [{ kind: "macro", parameters: { macroUuid: "Macro.input", signalId: original.id } }] } }] };
+  const before = f.writes();
+  await assert.rejects(f.catalog.saveSignal({ ...original, parameters: [{ name: "value", type: "string" }] }));
+  await assert.rejects(f.catalog.saveSubscription({ ...subscription, signalId: other.id }));
+  await assert.rejects(f.catalog.saveSubscription({ ...subscription, ownerKey: "Token:npc" }));
+  await assert.rejects(f.catalog.removeSubscription(subscription.id));
+  assert.equal(f.writes(), before); assert.equal(calls, 0);
+  await f.catalog.saveSubscription({ ...subscription, enabled: false });
+  assert.equal(f.catalog.list().subscriptions[0].enabled, false);
 });
 test("concurrent editor revision rejects stale changes without world writes", async () => {
   const f = fixture(); await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "one" }, { expectedRevision: 0 });

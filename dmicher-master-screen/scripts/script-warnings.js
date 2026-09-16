@@ -1,4 +1,5 @@
 import { normalizeScript } from "./script-model.js";
+import { scriptTransitionCandidates } from "./script-transitions.js";
 
 /** Preparation diagnostics only: unknown target-dependent time is not zero.
  * Presentation lifetimes count even when the next step starts in parallel. */
@@ -9,6 +10,7 @@ function declaredDuration(step) {
   if (["signal", "macro"].includes(step.kind)) return p.before + p.after;
   if (["move", "approach"].includes(step.kind)) return p.timeMode === "duration" ? p.duration : null;
   if (step.kind === "dialogue") return p.waitMode === "none" || !p.tokenUuids.length ? 0 : null;
+  if (step.kind === "shop") return p.wait && p.tokenUuid ? null : 0;
   if (step.kind === "follow") return null;
   return 0;
 }
@@ -32,7 +34,7 @@ export function analyzeScriptWarnings(source) {
       if (colors.get(id) === 1) { cycle ??= [...path.slice(path.indexOf(id)), id]; return; }
       if (colors.get(id) === 2) return;
       colors.set(id, 1); path.push(id);
-      for (const next of step.next.length ? step.next : script.repeat ? [1] : []) visit(next);
+      for (const next of scriptTransitionCandidates(script, step)) visit(next);
       path.pop(); colors.set(id, 2);
     };
     roots.forEach(visit);
@@ -53,6 +55,8 @@ function blocks(binding = {}) {
     { key: "initial", kind: "initial", script: binding.initialScript },
     ...Object.entries(binding.transitionScripts ?? {}).map(([stateId, script]) => ({ key: `transition:${stateId}`, kind: "transition", stateId, script })),
     ...(binding.scripts ?? []).map(script => ({ key: `routine:${script.stateId}`, kind: "routine", stateId: script.stateId, script })),
+    ...(binding.eventScripts ?? []).map(entry => ({ key: `event:${entry.subscriptionId}`, kind: "event", script: entry.script })),
+    ...(binding.reactionScripts ?? []).map(entry => ({ key: `reaction:${entry.actionId}`, kind: "reaction", script: entry.script })),
     ...(binding.commands ?? []).flatMap(command => [
       { key: `command:${command.id}:before`, kind: "command-before", script: command.beforeScript },
       { key: `command:${command.id}:after`, kind: "command-after", script: command.afterScript }

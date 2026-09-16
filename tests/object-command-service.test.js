@@ -140,13 +140,13 @@ test("player request uses private Generics delivery and shows the GM's human war
 
 test("all native object types expose typed localized command lifecycle signals with validation only before acceptance", () => {
   for (const type of Object.keys(SCENE_COLLECTIONS)) {
-    const signals = builtinSignals({ type, key: `${type}:test` });
+    const signals = builtinSignals({ type, key: `${type}:test` }).filter(signal => signal.name.startsWith("command"));
     assert.deepEqual(signals.map(signal => signal.name), ["commandRequested", "commandStarted", "commandCompleted", "commandCancelled"]);
     for (const signal of signals) {
       assert.ok(signal.builtin && signal.label.ru && signal.label.en && signal.description.ru && signal.description.en);
       const fields = normalizeSignalFields(signal.parameters);
       const values = { playerTokenUuid: "Scene.test.Token.pc", objectUuid: `Scene.test.${type}.npc`, commandId: "go", parameters: '{"point":{"x":1,"y":2}}' };
-      assert.deepEqual(validateSignalValues(fields, values), values);
+      assert.deepEqual(validateSignalValues(fields, values), { ...values, startedAt: 0, patronUuid: null });
       assert.ok(fields.every(field => field.builtin && field.description.ru && field.description.en));
       assert.deepEqual(signal.returns.map(field => field.name), signal.name === "commandRequested" ? ["allowed", "message"] : []);
     }

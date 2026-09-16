@@ -24,17 +24,58 @@ export const OBJECT_COMMAND_DEFINITIONS = Object.freeze([
   { id: "light-on", category: "interaction", defaults: { bright: 10, dim: 20 } },
   { id: "light-off", category: "interaction", defaults: {} },
   { id: "stop", category: "interaction", defaults: { issuer: "gm" } },
-  { id: "cancel", category: "interaction", defaults: { issuer: "commander", waitSeconds: 1 } }
+  { id: "cancel", category: "interaction", defaults: { issuer: "commander", waitSeconds: 1 } },
+  { id: "delegate", category: "interaction", defaults: { speed: 5 } },
+  { id: "visible", category: "interaction", defaults: {} },
+  { id: "invisible", category: "interaction", defaults: {} },
+  { id: "signals-on", category: "interaction", defaults: {} },
+  { id: "signals-off", category: "interaction", defaults: {} },
+  { id: "behavior-on", category: "interaction", defaults: {} },
+  { id: "behavior-off", category: "interaction", defaults: {} },
+  { id: "delete", category: "interaction", defaults: {} },
+  { id: "open", category: "interaction", defaults: {} },
+  { id: "close", category: "interaction", defaults: {} },
+  { id: "source-on", category: "interaction", defaults: {} },
+  { id: "source-off", category: "interaction", defaults: {} },
+  { id: "note-open", category: "interaction", defaults: {} }
 ].map(entry => Object.freeze({ ...entry, defaults: Object.freeze(entry.defaults) })));
 export const OBJECT_COMMAND_IDS = Object.freeze(OBJECT_COMMAND_DEFINITIONS.map(entry => entry.id));
 
-export function objectCommandName(id) {
+const controls = ["signals-on", "signals-off", "behavior-on", "behavior-off"];
+const motion = ["come", "away", "go", "follow", "patrol", "wait", "cancel", "light-on", "light-off"];
+export const OBJECT_COMMAND_TYPES = Object.freeze({
+  Token: Object.freeze(["delegate", ...motion, ...controls]),
+  Tile: Object.freeze(["visible", "invisible", ...controls, "delete"]),
+  Drawing: Object.freeze([...motion, "visible", "invisible", ...controls, "delete"]),
+  Wall: Object.freeze(["open", "close", ...controls, "delete"]),
+  AmbientLight: Object.freeze(["source-on", "source-off", ...controls, "delete"]),
+  AmbientSound: Object.freeze(["source-on", "source-off", ...controls, "delete"]),
+  Region: Object.freeze([...controls, "delete"]),
+  Note: Object.freeze(["visible", "invisible", "note-open", ...controls, "delete"]),
+  MeasuredTemplate: Object.freeze(["visible", "invisible", ...controls, "delete"])
+});
+export const commandDefinitionsFor = type => (OBJECT_COMMAND_TYPES[type] ?? []).map(id => OBJECT_COMMAND_DEFINITIONS.find(entry => entry.id === id));
+// Token door travel remains the executor of a delegated door operation, with the
+// same footprint collision rules. The old menu shortcuts are no longer exposed.
+export const objectSupportsCommand = (type, id) => OBJECT_COMMAND_TYPES[type]?.includes(id) === true
+  || type === "Token" && ["open-door", "close-door", "stop"].includes(id);
+export const commandStopsBehavior = id => ["stop", "behavior-off"].includes(id);
+export const commandPermitsDisabledBehavior = id => ["stop", "cancel", "behavior-on", "behavior-off", "signals-on", "signals-off"].includes(id);
+
+export function objectCommandName(id, type) {
+  if (type === "AmbientLight" && ["source-on", "source-off"].includes(id)) return id === "source-on" ? text("Зажгись", "Light up") : text("Погасни", "Extinguish");
+  if (type === "Note" && ["visible", "invisible"].includes(id)) return id === "visible" ? text("Видимая", "Visible") : text("Невидимая", "Hidden");
   const names = {
     come: text("Подойди", "Come here"), away: text("Отойди", "Move away"), go: text("Встань там", "Stand there"),
-    follow: text("Следуй за мной", "Follow me"), patrol: text("Патрулируй", "Patrol"), wait: text("Жди", "Wait"),
+    follow: text("Следуй за мной", "Follow me"), patrol: text("Патрулируй", "Patrol"), wait: text("Жди здесь", "Wait here"),
     "open-door": text("Открой дверь", "Open the door"), "close-door": text("Закрой дверь", "Close the door"),
     "light-on": text("Зажги свет", "Light on"), "light-off": text("Потуши свет", "Light off"),
-    stop: text("Стой", "Stop"), cancel: text("Отмена", "Cancel")
+    stop: text("Стой", "Stop"), cancel: text("Отмена", "Cancel"), delegate: text("Поручение", "Delegate"),
+    visible: text("Видимый", "Visible"), invisible: text("Невидимый", "Hidden"),
+    "signals-on": text("Включить сигналы", "Enable signals"), "signals-off": text("Выключить сигналы", "Disable signals"),
+    "behavior-on": text("Включить поведение", "Enable behavior"), "behavior-off": text("Выключить поведение", "Disable behavior"),
+    delete: text("Удалить", "Delete"), open: text("Открыть", "Open"), close: text("Закрыть", "Close"),
+    "source-on": text("Включить", "Turn on"), "source-off": text("Выключить", "Turn off"), "note-open": text("Открыть заметку", "Open note")
   };
   return Object.hasOwn(names, id) ? names[id] : text("Неизвестная команда", "Unknown command");
 }
@@ -104,7 +145,11 @@ export function normalizeObjectCommand(raw) {
   if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") fail(text("Включение команды должно быть логическим значением.", "Command enabled must be a boolean."));
   const conditions = raw.conditions ?? {};
   if (!record(conditions)) fail(text("Ожидаются условия команды.", "Expected command conditions."));
+  const permissions = raw.permissions ?? {};
+  if (!record(permissions) || Object.keys(permissions).some(key => !["gm", "player", "delegated"].includes(key) || typeof permissions[key] !== "boolean"))
+    fail(text("Права команды должны содержать три логических разрешения: мастер, игрок и поручение.", "Command permissions require boolean GM, player and delegated settings."));
   return { id: raw.id, enabled: raw.enabled ?? false,
+    permissions: { gm: permissions.gm ?? true, player: permissions.player ?? true, delegated: permissions.delegated ?? true },
     conditions: { allowTags: normalizeTags(conditions.allowTags), denyTags: normalizeTags(conditions.denyTags),
       groups: normalizeGroups(conditions.groups), range: numeric(conditions.range ?? 5) },
     parameters: normalizeParameters(raw.id, raw.parameters), interruptions: normalizeScriptInterruptions(raw.interruptions),

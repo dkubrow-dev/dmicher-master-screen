@@ -58,5 +58,6 @@ export function resetStateConditions(run, state = run.state) {
   for (const zone of state?.zones ?? []) reset("zone", zone.id, zone.conditions);
   for (const dialogue of state?.dialogues ?? []) reset("dialogue", `${dialogue.target.type}:${dialogue.target.id}:${dialogue.dialogueId}`, dialogue.conditions);
   for (const interaction of state?.interactions ?? []) reset("interaction", interaction.id, interaction.conditions);
+  for (const action of state?.actions ?? []) reset("action",`${action.target.type}:${action.target.id}:${action.id}`,action.conditions);
   for (const shop of state?.shops ?? []) reset("shop", `${shop.target.type}:${shop.target.id}:${shop.shopId}`, shop.conditions);
 }

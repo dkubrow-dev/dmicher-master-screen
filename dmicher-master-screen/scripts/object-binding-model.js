@@ -5,6 +5,10 @@ import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js
 import { interactionType } from "./interaction-model.js";
 import { validateParameters } from "./signal-types.js";
 import { normalizeObjectCommands } from "./object-command-model.js";
+import { normalizeObjectVariables } from "./object-variables.js";
+import { normalizeObjectSignalSettings } from "./object-signal-settings.js";
+import { normalizeObjectActions, normalizeInvokedScripts, normalizeActionConditionMacro } from "./object-action-model.js";
+import { objectCapabilities } from "./object-capabilities.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -22,7 +26,10 @@ function references(raw, kind) {
     const range = entry.range ?? 5;
     if (!validId(entry[`${kind}Id`])) fail(localizedMessage("Выберите инструмент из каталога."));
     if (!Number.isFinite(range) || range < 0 || range > 100000) fail(localizedMessage("Дальность должна быть неотрицательным числом."));
-    return { [`${kind}Id`]: entry[`${kind}Id`], ...(entry.playerAction === false ? { playerAction: false } : {}), stateIds: ids(entry.stateIds), range, conditions: normalizeConditions(entry.conditions) };
+    const displayName = entry.displayName ?? "", order = entry.order ?? 0;
+    if (typeof displayName !== "string" || displayName.length > 200 || !Number.isSafeInteger(order) || order < 0 || entry.showWhenUnavailable !== undefined && typeof entry.showWhenUnavailable !== "boolean") fail(text("Проверьте название и порядок действия.", "Check the action's display name and order."));
+    return { [`${kind}Id`]: entry[`${kind}Id`], ...(entry.playerAction === false ? { playerAction: false } : {}), stateIds: ids(entry.stateIds), range,
+      displayName, order, showWhenUnavailable: entry.showWhenUnavailable ?? false, conditionMacro: normalizeActionConditionMacro(entry.conditionMacro), conditions: normalizeConditions(entry.conditions) };
   });
 }
 /** A player assignment also registers its tool. A registration-only entry never
@@ -43,7 +50,8 @@ export function normalizeObjectBinding(raw) {
     initialScript: raw.initialScript ? normalizeScript(raw.initialScript) : null,
     transitionScripts: Object.fromEntries(entries.map(([id, script]) => [id, normalizeScript(script)])),
     scripts: normalizeScripts(raw.scripts ?? []), shops: references(raw.shops, "shop"), dialogues: references(raw.dialogues, "dialogue"),
-    commands: normalizeObjectCommands(raw.commands) };
+    commands: normalizeObjectCommands(raw.commands), variables: normalizeObjectVariables(raw.variables), signals: normalizeObjectSignalSettings(raw.signals),
+    actions: normalizeObjectActions(raw.actions), eventScripts: normalizeInvokedScripts(raw.eventScripts, "subscriptionId"), reactionScripts: normalizeInvokedScripts(raw.reactionScripts, "actionId") };
 }
 export function normalizeObjectBindings(raw = {}) {
   if (!raw || raw.schemaVersion !== undefined && raw.schemaVersion !== 1 || raw.bindings != null && (typeof raw.bindings !== "object" || Array.isArray(raw.bindings))) fail(localizedMessage("Неверные привязки объектов."));
@@ -58,7 +66,8 @@ export function normalizeObjectBindings(raw = {}) {
 export function bindingScripts(binding) {
   return [binding?.initialScript, ...Object.values(binding?.transitionScripts ?? {}),
     ...(Array.isArray(binding?.scripts) ? binding.scripts : []),
-    ...(binding?.commands ?? []).flatMap(command => [command.beforeScript, command.afterScript])].filter(Boolean);
+    ...(binding?.commands ?? []).flatMap(command => [command.beforeScript, command.afterScript]),
+    ...(binding?.eventScripts ?? []).map(entry => entry.script), ...(binding?.reactionScripts ?? []).map(entry => entry.script)].filter(Boolean);
 }
 export function bindingScriptSteps(binding) {
   return bindingScripts(binding).flatMap((script) => Array.isArray(script.steps) ? script.steps : []);
@@ -68,6 +77,8 @@ export function validateBindingReferences(binding, { definitions, signals, macro
   if (binding.groupId && !group) fail(localizedMessage("Назначенная группа больше не существует."));
   if (!group && (binding.scripts.length || Object.keys(binding.transitionScripts).length || [...binding.shops, ...binding.dialogues].some((entry) => entry.playerAction !== false))) fail(localizedMessage("Сначала назначьте объект группе."));
   if (binding.playerCharacter && binding.type !== "Token") fail(localizedMessage("Персонажем игрока может быть только токен."));
+  if (!objectCapabilities(binding.type).tools && (binding.shops.length || binding.dialogues.length)) fail(text("Магазины и диалоги доступны токенам, тайлам, рисункам и регионам.", "Shops and dialogues are available to tokens, tiles, drawings and regions."));
+  for (const entry of binding.reactionScripts ?? []) if (!binding.actions.some(action => action.id === entry.actionId)) fail(text("Реакция должна ссылаться на действие объекта.", "A reaction must refer to an object action."));
   const checkStates = (values) => { if (values.some((id) => !stateIds.has(id))) fail(localizedMessage("Настройка ссылается на отсутствующее состояние группы.")); };
   checkStates(Object.keys(binding.transitionScripts)); checkStates(binding.scripts.map((script) => script.stateId));
   for (const command of binding.commands ?? []) for (const scope of command.conditions.groups) {
@@ -151,24 +162,26 @@ export function reconcileBindingGroups(raw, previous, definitions) {
 }
 
 export function resolveBindingTools(binding, catalog, context, kind) {
-  if (!binding?.groupId || binding.playerCharacter || binding.groupId !== context.groupId) return [];
+  if (!binding?.groupId || binding.playerCharacter || binding.groupId !== context.groupId || !objectCapabilities(binding.type).tools) return [];
   const { collection, referenceId } = interactionType(kind), assets = catalog[collection];
   const seen = new Set();
   return binding[collection].filter((ref) => ref.playerAction !== false && (!ref.stateIds.length || ref.stateIds.includes(context.stateId))).flatMap((reference) => {
     const asset = assets.find((entry) => entry.id === reference[referenceId]);
     if (!asset || seen.has(asset.id)) return [];
     seen.add(asset.id);
-    const config = { ...clone(asset), enabled: true, [referenceId]: asset.id, target: { type: binding.type, id: binding.id }, range: reference.range, conditions: clone(reference.conditions) };
+    const config = { ...clone(asset), enabled: true, [referenceId]: asset.id, target: { type: binding.type, id: binding.id }, range: reference.range,
+      displayName: reference.displayName, order: reference.order, showWhenUnavailable: reference.showWhenUnavailable, conditionMacro: reference.conditionMacro, conditions: clone(reference.conditions) };
     return [{ asset, binding, config }];
   });
 }
 
 export function materializeStateDefinition(bindings, assets, definition, source) {
-  const state = { ...clone(source), objects: [], scripts: [], transitions: [], shops: [], dialogues: [] };
+  const state = { ...clone(source), objects: [], scripts: [], transitions: [], shops: [], dialogues: [], actions: [] };
   for (const binding of Object.values(bindings)) {
     if (binding.groupId !== definition.groupId || binding.playerCharacter) continue;
     const target = { type: binding.type, id: binding.id };
     state.objects.push({ target });
+    state.actions.push(...(binding.actions ?? []).map(action=>({...clone(action),target})));
     const script = binding.scripts.find((entry) => entry.stateId === source.id);
     if (script?.enabled) state.scripts.push({ ...clone(script), target });
     const transition = binding.transitionScripts[source.id];

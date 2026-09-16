@@ -3,12 +3,17 @@ import { withSceneLock } from "./store.js";
 import { notifyExecutionChange, createExecutionScope } from "./execution.js";
 import { planScriptMovement, advanceScriptMovement, scriptObjectCapabilities, stopObjectAnimation } from "./script-movement.js";
 import { createCombatAdapter } from "./combat-adapter.js";
-import { DEFAULT_EMOTION_SIZE, scriptProgressKey } from "./script-model.js";
+import { DEFAULT_EMOTION_SIZE, scriptProgressKey, isPremiumScriptStep } from "./script-model.js";
 export { scriptProgressKey } from "./script-model.js";
 import { planScriptApproach, planScriptFollow, advanceScriptFollow } from "./script-target-movement.js";
-import { scriptDialoguesPending } from "./interaction-session-model.js";
+import { scriptDialoguesPending, scriptShopsPending } from "./interaction-session-model.js";
 import { debugTrace, debugError } from "./debug.js";
 import { interruptScriptProgress, resumeScriptProgress, scriptHasActivity, clearScriptPresentation } from "./script-interruptions.js";
+import { chooseScriptSuccessor, scriptRowSuccessor, executeScriptTransition } from "./script-transitions.js";
+import { ObjectVariableService } from "./object-variables.js";
+import { canExecuteScriptKind } from "./premium-provider.js";
+import { executeSignalMacro } from "./signal-macros.js";
+import { SCRIPT_TOOL_KINDS, executeScriptToolAction } from "./script-tool-actions.js";
 
 const clone = structuredClone;
 const LIMIT = 16;
@@ -21,7 +26,7 @@ const visualTime = (state) => Math.max(Date.now(), ...Object.values(state.script
 export function initialScriptProgress(script) {
   return { stepId: script.steps.length ? 1 : null, status: script.steps.length && script.enabled !== false ? "ready" : "done", sequence: 0,
     action: null, nextStepId: null, emoji: "", emojiSize: DEFAULT_EMOTION_SIZE, emojiAt: 0, emojiEffect: null, bubble: null, bubbleAt: 0,
-    speechEffect: null, messageIds: [], dialogueSessions: [], deleteMessages: false, combat: null,
+    speechEffect: null, messageIds: [], dialogueSessions: [], shopSessions: [], deleteMessages: false, combat: null,
     generation: 0, errorRetries: 0, interruption: null };
 }
 const duration = (step, action) => {
@@ -69,7 +74,17 @@ export class ObjectScriptRuntime {
     for (const key of failures.keys()) if (key.startsWith(prefix)) failures.delete(key);
     if (!failures.size) this.persistenceFailures.delete(scene);
   }
-  next(script, step) { return step.next.length ? step.next[Math.min(step.next.length - 1, Math.floor(this.random() * step.next.length))] : script.repeat ? 1 : null; }
+  next(script, step) { return step.transition?.mode === "macro" ? step.id : chooseScriptSuccessor(script, step, this.random); }
+  complete(progress, script, step) {
+    if (step.transition?.mode === "macro") {
+      progress.status = "ready"; progress.action = { stepId: step.id, phase: "branch", remainingMs: 0 };
+    } else this.advance(progress, this.next(script, step));
+  }
+  canExecute(kind) { return !isPremiumScriptStep(kind) || (this.runtime.canUsePremiumStep?.(kind) ?? canExecuteScriptKind(kind)); }
+  variableContext(scene, object, current, extra = {}) {
+    this.runtime.variables ??= new ObjectVariableService();
+    return { ...extra, ...this.runtime.variables.scope(scene, { object: targetOf(object), current }) };
+  }
   advance(progress, next) {
     progress.stepId = next; progress.status = next === null ? "done" : "ready";
     // Explicit null is essential: Foundry recursively merges flag objects.
@@ -335,6 +350,12 @@ export class ObjectScriptRuntime {
       // instead of spending this whole tick repeating the same zero-time work.
       if (instantSteps.has(step.id)) return;
       instantSteps.add(step.id);
+      if (progress.action?.phase === "branch") return this.claim(scene, state, object, script, progress, key, "branch", step);
+      if (!this.canExecute(step.kind)) {
+        debugTrace("script", "step.skipped", () => traceContext(scene, state, object, script, step, { reason: "premium-unavailable" }));
+        this.advance(progress, scriptRowSuccessor(script, step));
+        await this.save(scene, state); continue;
+      }
       if (progress.action?.stepId !== step.id) {
         progress.action = actionFor(scene, object, step);
         debugTrace("script", "step.start", () => traceContext(scene, state, object, script, step, { slot, next: step.next, parameters: step.parameters }));
@@ -383,8 +404,10 @@ export class ObjectScriptRuntime {
         if (combat) { progress.combat.remaining = Math.max(0, progress.combat.remaining - consumed); this.consumeEffectTime(scene, state, object, consumed, progress); }
         available = Math.max(0, available - consumed);
         if (!movement.done) { await this.save(scene, state); return; }
-      } else if (step.kind === "dialogue" && action.phase === "dialogue") {
-        if (scriptDialoguesPending(this.interactionState(scene, state), action.sessions, Date.now(), params.waitMode)) {
+      } else if ((step.kind === "dialogue" || step.kind === "shop") && action.phase === step.kind) {
+        const sessions = this.interactionState(scene, state);
+        const pending = step.kind === "shop" ? scriptShopsPending(sessions, action.sessions) : scriptDialoguesPending(sessions, action.sessions, Date.now(), params.waitMode);
+        if (pending) {
           if (combat) {
             const remaining = Math.max(0, progress.combat.remaining - available);
             combatChanged ||= remaining !== progress.combat.remaining;
@@ -409,7 +432,7 @@ export class ObjectScriptRuntime {
       if (consumed > 0) instantSteps.clear();
       const next = this.next(script, step);
       debugTrace("script", "step.complete", () => traceContext(scene, state, object, script, step, { slot, nextStepId: next, repeating: !step.next.length && script.repeat }));
-      this.advance(progress, next);
+      this.complete(progress, script, step);
       await this.save(scene, state); this.runtime.refreshObject(object);
       if (progress.status === "done") return;
       if (!combat) available = 0; // A new step always starts with its own full timer.
@@ -418,6 +441,18 @@ export class ObjectScriptRuntime {
   async effect(job, admitted, executionCurrent) {
     const { scene, object, target, script, step, runId, stage } = job, p = step.parameters, effects = this.runtime.effects;
     const current = job.background ?? this.state(scene, runId)?.scriptStates?.[job.progressKey];
+    if (stage === "branch") {
+      const state = this.state(scene, runId);
+      const context = this.variableContext(scene, object, admitted, { ...state?.executionContext, stepId: step.id, stateId: state?.stateId ?? state?.state?.id });
+      const candidates = await executeScriptTransition(script, step, context, admitted);
+      return { next: candidates?.length ? candidates[Math.min(candidates.length - 1, Math.floor(this.random() * candidates.length))] : null };
+    }
+    // Check again after claim: a prepared Premium value never grants execution.
+    if (!this.canExecute(step.kind) && stage !== "combat" && stage !== "endTurn") return { premiumSkipped: true };
+    if (SCRIPT_TOOL_KINDS.includes(step.kind) && stage !== "combat" && stage !== "endTurn") return executeScriptToolAction(job, {
+      runtime: this.runtime, current: admitted, executionCurrent, scriptKey: job.progressKey,
+      waitUntilAdmitted: current => this.waitUntilAdmitted(job, current, executionCurrent)
+    });
     if (stage === "combat") {
       await this.combat.notify(object, script, step, job.rounds, `${job.key}:${job.sequence}`);
       if (!admitted()) return;
@@ -464,7 +499,7 @@ export class ObjectScriptRuntime {
       return {};
     }
     if (step.kind === "dialogue") {
-      if (this.state(scene, runId)?.manual) throw new Error(text("Диалог скрипта доступен в переходах и рутине запущенной группы. Для ручного показа используйте окно диалогов.",
+      if (this.state(scene, runId)?.manual && !this.state(scene, runId)?.purpose) throw new Error(text("Диалог скрипта доступен в переходах и рутине запущенной группы. Для ручного показа используйте окно диалогов.",
         "Scripted dialogue is available in the transitions and routines of a running group. Use the Dialogues window for manual presentation."));
       if (!this.runtime.startScriptDialogues) throw new Error(localizedMessage("Неизвестное действие скрипта."));
       // Opening our first window pauses the object before the result references
@@ -481,7 +516,18 @@ export class ObjectScriptRuntime {
     }
     if (step.kind === "macro") {
       if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error(localizedMessage("Этот макрос не прикреплён к объекту скрипта."));
-      await effects.macro(p.macroUuid, { scene, token: object, state: this.state(scene, runId)?.state, runId, stepId: step.id, isCurrent: admitted });
+      const active = () => admitted() && this.canExecute(step.kind);
+      const state = this.state(scene, runId), context = this.variableContext(scene, object, active,
+        { ...state?.executionContext, scene, token: object, state: state?.state, runId, stepId: step.id, isCurrent: active });
+      if (p.signalId) {
+        // The authority captured this input contract when invoking an event or
+        // reaction. Reactions are local action contracts, not global emitters.
+        const signal = state?.executionContext?.signal;
+        if (!signal || signal.id !== p.signalId) throw new Error(text("Выбранный интерфейс не совпадает с сигналом этого события.", "The selected interface does not match this event's signal."));
+        const macro = await globalThis.fromUuid(p.macroUuid);
+        const macroReturns = await executeSignalMacro(macro, signal, context.parameters ?? {}, context, { isCurrent: active });
+        return { macroReturns };
+      } else await effects.macro(p.macroUuid, context);
       return {};
     }
     throw new Error(localizedMessage("Неизвестное действие скрипта."));
@@ -551,6 +597,8 @@ export class ObjectScriptRuntime {
         if (progress?.status !== "pending" || progress.sequence !== sequence) return;
         if (outcome.error?.code === "script-deferred") progress.status = "ready";
         else if (outcome.error) { await this.fail(scene, state, job.object, script, job.progressKey, outcome.error); return; }
+        else if (outcome.result?.premiumSkipped) this.advance(progress, scriptRowSuccessor(script, step));
+        else if (job.stage === "branch") this.advance(progress, outcome.result?.next ?? null);
         else if (job.stage === "combat") {
           progress.status = "ready";
           if (progress.combat?.turnKey === job.combat.turnKey) {
@@ -559,12 +607,18 @@ export class ObjectScriptRuntime {
             else progress.combat.remaining = 0;
           }
         } else if (job.stage === "endTurn") { progress.status = progress.stepId === null ? "done" : "ready"; progress.combat.ended = true; }
-        else if (step.kind === "dialogue") {
+        else if (step.kind === "shop") {
+          const sessions = outcome.result?.shopSessions ?? [];
+          progress.shopSessions = [...(progress.shopSessions ?? []).filter(reference => scriptShopsPending(this.interactionState(scene, state), [reference])), ...sessions]
+            .filter((reference, index, entries) => entries.findIndex(other => other.sessionId === reference.sessionId) === index);
+          progress.status = "ready"; progress.action.phase = "shop"; progress.action.sessions = sessions;
+          if (!step.parameters.wait) this.complete(progress, script, step);
+        } else if (step.kind === "dialogue") {
           const sessions = outcome.result?.sessions ?? [];
           progress.dialogueSessions = [...(progress.dialogueSessions ?? []).filter(reference => scriptDialoguesPending(this.interactionState(scene, state), [reference])), ...sessions]
             .filter((reference, index, entries) => entries.findIndex(other => other.sessionId === reference.sessionId) === index);
           progress.status = "ready"; progress.action.phase = "dialogue"; progress.action.sessions = sessions;
-          if (step.parameters.waitMode === "none") this.advance(progress, this.next(script, step));
+          if (step.parameters.waitMode === "none") this.complete(progress, script, step);
         } else if (step.kind === "speech" && job.stage === "effect") {
           progress.messageIds = outcome.result.messageIds; progress.deleteMessages = step.parameters.chat.deleteAfter;
           progress.bubble = step.parameters.bubble.enabled ? { text: step.parameters.bubble.text, fontSize: step.parameters.bubble.fontSize } : null;
@@ -572,16 +626,17 @@ export class ObjectScriptRuntime {
           progress.speechEffect = parallel(step) ? { id: progress.bubbleAt, remainingMs: step.parameters.duration * 1000,
             step: clone(step), script: { name: script.name, combat: clone(script.combat) }, combat: clone(script.combat), status: "ready",
             messageIds: clone(progress.messageIds), deleteMessages: progress.deleteMessages } : null;
-          if (parallel(step)) this.advance(progress, this.next(script, step));
+          if (parallel(step)) this.complete(progress, script, step);
           else { progress.status = "ready"; progress.action.phase = "duration"; progress.action.remainingMs = step.parameters.duration * 1000; }
         } else if (["signal", "macro"].includes(step.kind)) {
+          if (outcome.result?.macroReturns) progress.returns = clone(outcome.result.macroReturns);
           progress.status = "ready"; progress.action.phase = "after"; progress.action.remainingMs = step.parameters.after * 1000;
         } else {
           if (job.stage === "speechEnd") {
             if (step.parameters.duration > 0) { progress.bubble = null; progress.bubbleAt = visualTime(state); }
             progress.messageIds = outcome.result.messageIds;
           }
-          this.advance(progress, this.next(script, step));
+          this.complete(progress, script, step);
         }
         debugTrace("script", "action.result", () => traceContext(scene, state, job.object, script, step,
           { stage: job.stage, status: progress.status, nextStepId: progress.stepId, background: Boolean(progress.speechEffect) }));

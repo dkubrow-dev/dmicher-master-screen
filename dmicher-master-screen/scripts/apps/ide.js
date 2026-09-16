@@ -23,10 +23,14 @@ import { getDialogueAudioPickerOptions } from "../premium-provider.js";
 import { DirectorConsole, renderDirectorConsole } from "./director-console.js";
 import { DirectorActivity, renderDirectorActivity } from "./director-activity.js";
 import { notifyError } from "../ui.js";
+import { WorkspacePresetStore, getWorkspacePresets } from "../workspace-presets-store.js";
+import { normalizeWorkspacePreset, normalizeNoteEntry } from "../workspace-presets-model.js";
+import { presetSelectionKind, renderWorkspacePresetList, renderWorkspacePresetForm, readWorkspacePresetForm } from "./workspace-presets-view.js";
 
 const clone = (value) => structuredClone(value);
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
 const notify = (error) => notifyError(error);
+const presetKind = selection => selection?.kind === "windowPreset" ? "windows" : selection?.kind === "notePreset" ? "notes" : null;
 
 /** The IDE owns navigation and draft forms. The existing state editors remain isolated under Other. */
 export class MasterScreenApplication extends EditorApplication {
@@ -239,6 +243,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (base.missing) return { ...base, ...presentation, isDirector: this.mode === "director" };
     const catalog = current.scene ? new SignalCatalog(current.scene).list() : { emitters: [], signals: [], subscriptions: [], macros: [] };
     const assets = current.scene ? new SceneAssets(current.scene).list() : { shops: [], dialogues: [], revision: 0 };
+    const presets = getWorkspacePresets(current.scene);
     const objectState = current.scene ? new SceneObjects(current.scene).list() : { bindings: {}, revision: 0 };
     const bindings = Object.values(objectState.bindings), objects = current.scene ? listNativeSceneObjects(current.scene) : [];
     this.objectsRevision = objectState.revision;
@@ -253,9 +258,10 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.selection.kind === "macro") selected = catalog.macros.find((macro) => macroKey(macro) === this.selection.id);
     if (this.selection.kind === "shop") selected = assets.shops.find((shop) => shop.id === this.selection.id);
     if (this.selection.kind === "dialogue") selected = assets.dialogues.find((dialogue) => dialogue.id === this.selection.id);
+    if (presetKind(this.selection)) selected = presets[presetKind(this.selection)].find(entry => entry.id === this.selection.id);
     if (!this.dirty || !this.parameterDraft) {
       this.parameterDraft = selected ? clone(selected) : null;
-      this.parameterRevision = ["group", "state"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
+      this.parameterRevision = presetKind(this.selection) ? presets.revision : ["group", "state"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
     }
     if (this.selection.kind === "dialogue" && this.selection.pageId && !this.parameterDraft?.pages?.some(page => page.id === this.selection.pageId)) {
       this.selection.pageId = null;
@@ -280,6 +286,11 @@ export class MasterScreenApplication extends EditorApplication {
       if (this.mode === "constructor") nodeActions = actionButton("createMacro", t("+ Макрос", "+ Macro")) + actionButton("deleteSelected", t("Убрать из ширмы", "Remove from screen"));
     }
     if (activeMain === "other") mainHTML = renderOtherList(this.mode, this.otherBlock);
+    if (["windows", "notes"].includes(activeMain)) {
+      const activeId = this.controller.workspacePresets?.activePreset(current.scene, activeMain);
+      mainHTML = renderWorkspacePresetList(activeMain, presets[activeMain], { selectedId: this.selection.id, activeId, mode: this.mode });
+      if (this.mode === "constructor") nodeActions = generics.components.renderJSONControls({ id: `workspace-${activeMain}`, importLabel: t("Импорт", "Import"), exportLabel: t("Экспорт", "Export") });
+    }
     if (["shops", "dialogues"].includes(activeMain)) {
       const kind = activeMain === "shops" ? "shop" : "dialogue";
       const rows = assets[activeMain].map((entry) => ({ ...entry, detail: `${bindings.filter((binding) => binding[`${kind}s`]?.some((link) => link[`${kind}Id`] === entry.id)).length}${t(" об.", " obj.")}` }));
@@ -293,8 +304,11 @@ export class MasterScreenApplication extends EditorApplication {
     } else if (activeDetail === "console" && this.mode === "director") {
       detailHTML = renderDirectorConsole();
     } else if (activeDetail === "reference") {
-      const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", other: "start" }[activeMain];
+      const page = { scene: "constructor", signals: "signals", macros: "macros", shops: "shops", dialogues: "dialogues", windows: "workspace-presets", notes: "workspace-presets", other: "start" }[activeMain];
       detailHTML = `<p class="ms-note">${t("Выберите элемент в основной зоне. Параметры сохраняются отдельно от запуска; ручной переход доступен в Режиссёре.", "Select an entry in the main area. Saving parameters does not start automation; manual transitions are available in Director mode.")}</p>${actionButton("contextHelp", t("Открыть справку", "Open help"), `data-page="${page}"`)}`;
+    } else if (["windows", "notes"].includes(activeMain)) {
+      detailHTML = renderWorkspacePresetForm(activeMain, presetKind(this.selection) === activeMain ? this.parameterDraft : null,
+        { mode: this.mode, active: this.controller.workspacePresets?.activePreset(current.scene, activeMain) === this.selection.id });
     } else if (["shops", "dialogues"].includes(activeMain)) {
       detailHTML = renderAssetForm({ kind: activeMain === "shops" ? "shop" : "dialogue", draft: this.parameterDraft, pageId: this.selection.pageId, mode: this.mode, catalog, bindings, objects, definitions, scene: current.scene });
     } else if (activeMain === "other") {
@@ -441,6 +455,7 @@ export class MasterScreenApplication extends EditorApplication {
     const root = this.element?.querySelector("[data-ide-parameters]");
     const draft = clone(this.parameterDraft);
     if (!root || !draft) return draft;
+    if (presetKind(this.selection)) return this.mode === "constructor" ? readWorkspacePresetForm(root, presetKind(this.selection), draft) : draft;
     if (["shop", "dialogue"].includes(this.selection.kind)) return this.mode === "constructor" ? readAssetForm(root, draft, this.selection.kind) : draft;
     const description = (input, name, original) => { const text = fieldValue(input, name); return text === localizedDescription(original) ? clone(original ?? "") : text; };
     if (["group", "state"].includes(this.selection.kind)) draft.description = description(root, "description", draft.description);
@@ -581,6 +596,7 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.selection.kind === "signal") await catalog.saveSignal(draft, options);
     if (this.selection.kind === "shop") await new SceneAssets(scene).saveShop(draft, options);
     if (this.selection.kind === "dialogue") await new SceneAssets(scene).saveDialogue(draft, options);
+    if (presetKind(this.selection)) await new WorkspacePresetStore(scene).save(presetKind(this.selection), draft, options);
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);
     return this.render({ force: true });
   }
@@ -602,6 +618,7 @@ export class MasterScreenApplication extends EditorApplication {
   }
 
   async handleAction(action, button, event) {
+    if (["captureWorkspacePreset", "recaptureWorkspacePreset", "applyWorkspacePreset", "deactivateWorkspacePreset", "saveWorkspacePreset", "deleteWorkspacePreset", "removeWorkspacePresetEntry", "workspacePresetEntryJSON"].includes(action)) return this.workspacePresetAction(action, button);
     // Dispatch controls synchronously, before asynchronous editor/selection work.
     if (Object.hasOwn(SCENE_COMMANDS, action) || Object.hasOwn(GROUP_COMMANDS, action) || ["resumeGroup", "resumeSelectedGroup"].includes(action)) return super.handleAction(action, button, event);
     if (action === "showActivity" && this.mode === "director") {
@@ -628,7 +645,7 @@ export class MasterScreenApplication extends EditorApplication {
         field.value = path; field.dispatchEvent(new field.ownerDocument.defaultView.Event("input", { bubbles: true }));
       } }).render({ force: true });
     }
-    if (action === "objectInfo") return this.controller.openObjectInfo({ type: button.dataset.objectType, id: button.dataset.objectId });
+    if (action === "objectInfo") return this.controller.openObjectAutomation({ type: button.dataset.objectType, id: button.dataset.objectId });
     if (action === "assignObject") {
       const [type, id] = fieldValue(this.element, "newOwnedObject").split(":");
       if (!type || !id) throw new Error(t("Выберите объект сцены.", "Select a scene object."));
@@ -673,7 +690,7 @@ export class MasterScreenApplication extends EditorApplication {
     }
     if (action === "configureTool") {
       const row = this.toolRows.find((entry) => entry.id === this.selection.id); if (!row) return;
-      if (row.objectTarget) return this.controller.openObjectBehavior(row.objectTarget);
+      if (row.objectTarget) return this.controller.openObjectAutomation(row.objectTarget);
       if (row.type === "dialogue") return this.openAsset("dialogue", row.assetId);
       if (row.type === "interaction") { await this.switchMainTab("other"); this.controller.selectGroup(row.groupId, { render: false }); this.controller.selectState(row.stateId, { render: false }); this.otherBlock = "dialogues"; return this.render({ force: true }); }
       if (row.type === "state") { await this.switchMainTab("scene"); return this.selectNode("state", row.stateId, row.groupId); }
@@ -842,7 +859,89 @@ export class MasterScreenApplication extends EditorApplication {
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene); return this.render({ force: true });
   }
 
+  async workspacePresetAction(action, button) {
+    const kind = button.dataset.presetKind, scene = this.assertScene(), runtime = this.controller.workspacePresets;
+    if (!["windows", "notes"].includes(kind) || !game.user.isGM) return;
+    if (action === "applyWorkspacePreset" || action === "deactivateWorkspacePreset") {
+      if (action === "applyWorkspacePreset") await runtime.activate(scene, kind, button.dataset.id ?? this.selection.id);
+      else await runtime.deactivate(scene, kind);
+      this.captureParameterDraft(); return this.render({ force: true });
+    }
+    if (this.mode !== "constructor") return;
+    const store = new WorkspacePresetStore(scene);
+    if (action === "captureWorkspacePreset") {
+      if (!(await this.mayDiscard())) return;
+      if (this.assertScene().id !== scene.id || this.mode !== "constructor") return;
+      const name = nextName(store.list(kind), kind === "windows" ? t("Окна", "Windows") : t("Заметки", "Notes"));
+      this.resetDraft(); this.parameterDraft = runtime.capture(scene, kind, { name });
+      this.parameterRevision = store.list().revision;
+      this.selection = { kind: presetSelectionKind(kind), id: this.parameterDraft.id, groupId: this.selection.groupId };
+      this.layout.selectDetailTab("parameters"); this.dirty = true; return this.render({ force: true });
+    }
+    if (presetKind(this.selection) !== kind || !this.parameterDraft) return;
+    this.parameterDraft = this.readParameterDraft(); this.pendingTabInputs = null;
+    if (action === "saveWorkspacePreset") return this.saveParameters();
+    if (action === "deleteWorkspacePreset") {
+      const selectionKey = JSON.stringify(this.selection), selectedId = this.selection.id, revision = this.parameterRevision;
+      if (!await foundry.applications.api.DialogV2.confirm({ window: { title: t("Удалить конфигурацию", "Delete configuration") }, content: `<p>${esc(this.parameterDraft.name)}</p>`, rejectClose: false })) return;
+      if (this.assertScene().id !== scene.id || JSON.stringify(this.selection) !== selectionKey || this.mode !== "constructor") return;
+      if (store.find(kind, selectedId)) await store.remove(kind, selectedId, { expectedRevision: revision });
+      this.resetDraft(); this.parameterDraft = null; this.selection = { kind: null, id: null, groupId: this.selection.groupId };
+      this.controller.changed(scene); return this.render({ force: true });
+    }
+    if (action === "recaptureWorkspacePreset") this.parameterDraft = runtime.capture(scene, kind, { id: this.parameterDraft.id, name: this.parameterDraft.name });
+    if (action === "removeWorkspacePresetEntry") this.parameterDraft.entries = this.parameterDraft.entries.filter(entry => entry.id !== button.dataset.id);
+    if (action === "workspacePresetEntryJSON") {
+      const source = this.parameterDraft.entries.find(entry => entry.id === button.dataset.id); if (!source) return;
+      const selectionKey = JSON.stringify(this.selection);
+      const data = await foundry.applications.api.DialogV2.wait({ window: { title: t("Параметры заметки · JSON", "Note parameters · JSON") },
+        content: `<textarea name="workspaceNoteJSON" rows="18" spellcheck="false">${esc(JSON.stringify(source.data, null, 2))}</textarea>`,
+        buttons: [{ action: "save", label: t("Применить к черновику", "Apply to draft"), callback: (_event, _button, dialog) => {
+          const value = JSON.parse(dialog.element.querySelector('[name="workspaceNoteJSON"]').value);
+          return normalizeNoteEntry({ ...source, data: value }).data;
+        } }, { action: "cancel", label: t("Отмена", "Cancel"), callback: () => null }], rejectClose: false });
+      this.assertScene();
+      if (!data || JSON.stringify(this.selection) !== selectionKey) return;
+      const entry = this.parameterDraft?.entries.find(item => item.id === source.id); if (entry) entry.data = data;
+    }
+    this.dirty = true; return this.render({ force: true });
+  }
+
+  bindWorkspacePresetJSON() {
+    for (const kind of ["windows", "notes"]) {
+      const id = `workspace-${kind}`;
+      if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
+      const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);
+      const assert = () => {
+        const scene = this.assertScene();
+        if (!game.user.isGM || this.mode !== "constructor" || scene.id !== originalScene || JSON.stringify(this.selection) !== JSON.stringify(originalSelection)) throw new Error(t("Выбор изменился. Повторите импорт или экспорт.", "The selection changed. Repeat the import or export."));
+        return scene;
+      };
+      const transfer = generics.components.createJSONTransfer({ filename: () => `master-screen-${kind}-${originalSelection.id ?? "configuration"}.json`,
+        validate: value => {
+          if (value?.format !== MODULE_ID || value.version !== 1 || value.kind !== id) throw new Error(t("JSON не соответствует выбранному виду конфигурации.", "The JSON does not match the selected configuration kind."));
+          return { ...value, data: normalizeWorkspacePreset(kind, value.data) };
+        },
+        exportValue: () => {
+          assert(); const draft = this.readParameterDraft();
+          if (presetKind(originalSelection) !== kind || !draft) throw new Error(t("Выберите конфигурацию для экспорта.", "Select a configuration to export."));
+          return { format: MODULE_ID, kind: id, version: 1, data: draft };
+        },
+        importValue: async value => {
+          const scene = assert(); if (!await this.mayDiscard()) return;
+          assert(); this.resetDraft();
+          const catalog = getWorkspacePresets(scene), draft = normalizeWorkspacePreset(kind, { ...value.data, id: randomId(), name: nextName(catalog[kind], value.data.name) });
+          if (kind === "notes") for (const entry of draft.entries) { entry.sourceId = ""; entry.sourceSceneId = ""; }
+          this.parameterDraft = draft; this.parameterRevision = catalog.revision; this.dirty = true;
+          this.selection = { kind: presetSelectionKind(kind), id: draft.id, groupId: this.selection.groupId };
+          this.layout.selectDetailTab("parameters"); return this.render({ force: true });
+        }, onError: notify });
+      this.componentsDisposers.push(transfer.bind(this.element, id));
+    }
+  }
+
   bindJSON() {
+    this.bindWorkspacePresetJSON();
     for (const id of ["selection", "group-list", "asset-selection", "shop-list", "dialogue-list"]) {
       if (!this.element.querySelector(`[data-dmicher-json-id="${id}"]`)) continue;
       const originalScene = this.selectionSceneId, originalSelection = clone(this.selection);

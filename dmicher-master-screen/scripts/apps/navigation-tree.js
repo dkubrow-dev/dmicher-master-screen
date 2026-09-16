@@ -1,6 +1,6 @@
 export const MAIN_MENU = Object.freeze([
   { id: "scene", label: "Сцена", labelEn: "Scene" },
-  { id: "tools", label: "Инструменты", labelEn: "Tools", children: [{ id: "shops", label: "Магазины", labelEn: "Shops" }, { id: "dialogues", label: "Диалоги", labelEn: "Dialogues" }] },
+  { id: "tools", label: "Инструменты", labelEn: "Tools", children: [{ id: "shops", label: "Магазины", labelEn: "Shops" }, { id: "dialogues", label: "Диалоги", labelEn: "Dialogues" }, { id: "windows", label: "Окна", labelEn: "Windows" }, { id: "notes", label: "Заметки", labelEn: "Notes" }] },
   { id: "automation", label: "Автоматизация", labelEn: "Automation", children: [{ id: "signals", label: "Сигналы", labelEn: "Signals" }, { id: "macros", label: "Макросы", labelEn: "Macros" }] },
   { id: "other", label: "Иное", labelEn: "Other" }
 ]);

@@ -48,6 +48,24 @@ test("step form preserves branching identities through normalization and rejects
   assert.throws(() => readScriptFields(root, scripts), /positive step numbers/);
 });
 
+test("unlicensed premium steps expose marked disabled parameters and JSON but retain prepared values on save", () => {
+  globalThis.game = { i18n: { lang: "en" }, modules: new Map() };
+  for (const kind of ["focus", "sound", "playlist", "macro"]) {
+    const step = { id: 1, kind, parameters: scriptStepTemplate(kind).parameters, next: [] };
+    const html = buildScriptFields([{ steps: [step], name: "Prepared", repeat: false }], { states: [] }, "Token", {});
+    assert.ok(html.includes(`data-script-premium="${kind}" disabled`));
+    assert.ok(html.includes('class="dmicher-premium-badge">Premium</span>'));
+    assert.match(html, /data-script-json[^>]* disabled/);
+    assert.match(html, /data-script-json-value[^>]* disabled/);
+    assert.doesNotMatch(html, /<select[^>]*data-script-kind[^>]* disabled/);
+    const values = { "script-0-name": "Prepared", "script-0-step-0-kind": kind, "script-0-step-0-next": "", "script-0-step-0-parameters": "{broken input" };
+    const root = { querySelector(selector) { const name = selector.match(/name="([^"]+)"/)[1]; return Object.hasOwn(values, name) ? { value: values[name] } : null; } };
+    const saved = readScriptFields(root, [{ steps: [step] }])[0];
+    assert.deepEqual(saved.steps[0].parameters, step.parameters);
+    assert.notEqual(saved.steps[0].parameters, step.parameters);
+  }
+});
+
 test("script interruption fields share the editor, localize both languages and retain disabled limits", () => {
   const previous = globalThis.game;
   try {
@@ -76,7 +94,7 @@ test("changing error behavior toggles only its own limits without recreating con
   let listener;
   const fields = [{ disabled: true, value: "9" }, { disabled: true, value: "0.25" }];
   const root = { addEventListener(type, callback) { assert.equal(type, "change"); listener = callback; } };
-  const target = { value: "restart-script", matches: () => true, closest: () => ({ querySelectorAll: () => fields }) };
+  const target = { value: "restart-script", matches: selector => selector === "[data-script-error-mode]", closest: () => ({ querySelectorAll: () => fields }) };
   bindScriptInterruptions(root);
   listener({ target });
   assert.deepEqual(fields.map(field => field.disabled), [false, false]);

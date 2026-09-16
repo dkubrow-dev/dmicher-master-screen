@@ -8,7 +8,7 @@ test("fixed command catalog is localized and leaves an empty binding empty", () 
   for (const lang of ["ru", "en"]) {
     globalThis.game = { i18n: { lang } };
     const commands = [], html = renderObjectCommandList(commands);
-    assert.equal((html.match(/data-command-enabled=/g) ?? []).length, 12);
+    assert.equal((html.match(/data-command-enabled=/g) ?? []).length, 14);
     assert.equal((html.match(/ checked/g) ?? []).length, 0);
     assert.match(html, new RegExp(lang === "ru" ? "Команды движения" : "Movement commands"));
     assert.match(html, new RegExp(lang === "ru" ? "Команды взаимодействия" : "Interaction commands"));

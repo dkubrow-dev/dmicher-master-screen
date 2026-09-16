@@ -10,7 +10,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), page = await context.newPage(), errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${fixture.origin}/?version=${version}&lang=${lang}`); await page.waitForFunction(() => globalThis.ready);
-    await page.evaluate(() => controller.openObjectBehavior({ type: "Token", id: "guard" }));
+    await page.evaluate(() => controller.openObjectAutomation({ type: "Token", id: "guard" }));
     const app = page.locator(".ms-object-behavior");
     const checkInterruptionHelp = async (hasScript = false) => {
       const rows = await app.locator('.ms-script-interruptions tr').evaluateAll(rows => rows.map(row => ({
@@ -28,8 +28,9 @@ try {
         assert.equal(links[0].tabIndex, -1); assert.ok(links[0].hint);
       }
     };
-    await app.locator('[data-screen-action="tab"][data-tab="commands"]').click();
-    assert.equal(await app.locator("[data-command-enabled]").count(), 12);
+    await app.locator('[data-screen-action="tab"][data-tab="properties"]').click();
+    await app.locator('[data-screen-action="property-tab"][data-tab="commands"]').click();
+    assert.equal(await app.locator("[data-command-enabled]").count(), 14);
     assert.equal(await app.locator("[data-command-enabled]:checked").count(), 0);
     await app.locator('[data-screen-action="edit-command"][data-command-id="come"]').click();
     await app.locator('[data-command-fields="come"]').waitFor();
@@ -87,9 +88,12 @@ try {
       controller.openObjectMenu({ type: "Token", id: "guard" }, { x: 20, y: 120 });
     });
     const menu = page.locator(".ms-object-menu");
-    await menu.waitFor(); assert.equal(await menu.locator(".ms-object-menu-heading").count(), 1);
-    assert.equal(await menu.locator("button").count(), 2);
-    await page.keyboard.press("End"); assert.equal(await menu.locator("button").last().evaluate(button => button === document.activeElement), true);
+    await menu.waitFor();
+    const commandMenu = menu.locator('.ms-object-menu-group').last();
+    await commandMenu.locator(':scope > button').focus();
+    await page.keyboard.press("ArrowRight");
+    const waitButton = commandMenu.locator('.ms-object-submenu button').filter({hasText:lang === "ru" ? "Жди здесь" : "Wait here"}).first();
+    await waitButton.focus();
     await page.keyboard.press("Enter"); await page.waitForFunction(() => globalThis.commandRequest);
     assert.deepEqual(await page.evaluate(() => commandRequest), { target: { type: "Token", id: "guard" }, actorTokenId: "waiter", commandId: "wait", parameters: {} });
     assert.deepEqual(errors, []); console.log(`${version} ${lang}: command editor saved conditions, parameters and before/after scripts`);

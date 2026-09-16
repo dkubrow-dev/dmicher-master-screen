@@ -25,18 +25,34 @@ export function requireShopSession(current, intent, user) {
 }
 
 /** A Scene shop asset owns one lease; a waiter only identifies its admission point. */
-export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange, emitSignal }) {
+export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange, emitSignal,
+  scriptValidate = validate, evaluateOpenCondition = async () => true }) {
   const pending = new Map();
-  const processOnce = async (command, user) => {
+  const signature = current => JSON.stringify([current.runtime?.runId, current.runtime?.stateId, current.target, current.behavior?.shop]);
+  const processOnce = async (command, user, { script = false, isCurrent = () => true } = {}) => {
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail(localizedMessage("Неизвестная команда магазина."));
     if (!command.shopId) fail(localizedMessage("Нужно выбрать конкретный магазин."));
     const initial = context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId);
     if (!initial.scene) fail(localizedMessage("Сцена магазина не найдена."));
     const target = initial.target;
-    const releasePause = command.kind === "open" ? beginInteractionPause(initial.scene, target) : () => {};
+    const releasePause = command.kind === "open" && !script ? beginInteractionPause(initial.scene, target) : () => {};
+    const initialSignature = signature(initial);
+    const currentPreparation = () => isCurrent() && signature(context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId)) === initialSignature;
+    const admittedSession = initial.runtime?.shopSessions?.[shopKey(initial)];
+    const resuming = shopSessionIsLive(admittedSession) && admittedSession.sessionId === command.sessionId
+      && admittedSession.userId === user.id && admittedSession.actorTokenId === command.actorTokenId
+      && admittedSession.runId === command.runId && objectKey(admittedSession.target) === objectKey(target);
+    // Menu macros run outside the scene queue. An accepted lease does not rerun them for each update.
+    try {
+      if (command.kind === "open" && !script && !resuming) {
+        validate(initial, command, user);
+        if (!await evaluateOpenCondition(initial, command, user, currentPreparation)) fail(text("Этот магазин сейчас недоступен по условиям взаимодействия.", "This shop is unavailable under its interaction conditions."));
+      }
+    } catch (error) { releasePause(); throw error; }
     let signal;
     const result = await lock(initial.scene, async () => {
       if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
+      if (!isCurrent() || command.kind === "open" && !currentPreparation()) fail(text("Условия магазина изменились. Откройте его заново.", "The shop conditions changed. Open it again."));
       const current = context(command.sceneId, command.target ?? command.tokenId, command.groupId ?? "main", command.shopId), runtime = clone(current.runtime);
       // Cancelling a persisted lease remains possible after a GM unbinds its source.
       // This path cannot move Items or acquire another lease.
@@ -45,7 +61,7 @@ export function createShopSessions({ context, save, lock, authority, validate, v
       const existing = runtime.shopSessions[shopId];
       let session;
       if (command.kind === "open") {
-        const actor = validate(current, command, user);
+        const actor = script ? scriptValidate(current, command, user) : validate(current, command, user);
         const allStates = current.scene.getFlag ? getRuntimes(current.scene) : [];
         if (allStates.some((state) => state.groupId !== runtime.groupId && shopSessionIsLive(state.shopSessions?.[shopId]))) fail(localizedMessage("Этот магазин уже обслуживается в другой группе. Завершите ту сессию."));
         if (allStates.some((state) => Object.values(state.tradeRequests ?? {}).some((receipt) => ["processing", "uncertain"].includes(receipt.status) && receipt.intent?.shopId === shopId))) fail(localizedMessage("Обмен этого магазина требует сверки мастером. Новый обмен пока недоступен."));
@@ -55,17 +71,18 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         const reusing = shopSessionIsLive(existing) && existing.runId === runtime.runId;
         const conditionKey = getConditionKey(runtime, "shop", interactionConditionId({ ...current.behavior.shop, id: current.object.id }));
         const policy = current.behavior.shop.conditions;
-        const gate = getConditionGate(current.scene, runtime, policy, current.scene.tokens.get(command.actorTokenId), { conditionKey, ignoreQuota: reusing });
+        const gate = script ? { allowed: true } : getConditionGate(current.scene, runtime, policy, current.scene.tokens.get(command.actorTokenId), { conditionKey, ignoreQuota: reusing });
         if (!gate.allowed) fail(gate.reason);
         session = reusing ? existing : {
           sessionId: foundry.utils.randomID(), userId: user.id, actorTokenId: command.actorTokenId,
           shopId, actorId: actor.id, target: clone(current.target),
+          ...(script ? { origin: "script" } : {}),
           runId: runtime.runId, groupId: runtime.groupId ?? "main", status: "editing", revision: 0, draft: { giveItemIds: [], take: [] }
         };
-        if (!reusing) { consumeCondition(runtime, conditionKey, policy); signal = interactionSignal(current.scene, "Shop", shopId, session, "opened"); }
+        if (!reusing) { if (!script) consumeCondition(runtime, conditionKey, policy); signal = interactionSignal(current.scene, "Shop", shopId, session, "opened"); }
         runtime.shops ??= {};
         runtime.shops[shopId] ??= { items: clone(current.behavior.shop.items ?? []) };
-        freezeInteractionClock(runtime, target);
+        freezeInteractionClock(runtime, target, Date.now(), { external: session.origin !== "script" });
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;
         if (existing.userId !== user.id && !user.isGM) fail(localizedMessage("Нельзя завершить чужую сессию магазина."));
@@ -98,13 +115,13 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     if (signal) await notifyInteractionSignal(emitSignal, initial.scene, signal);
     return result;
   };
-  const process = async (command, user) => {
+  const process = async (command, user, options) => {
     const details = () => ({ sceneId: command.sceneId, groupId: command.groupId, runId: command.runId,
       shopId: command.shopId, target: command.target, actorTokenId: command.actorTokenId,
       sessionId: command.sessionId, userId: user.id, revision: command.revision });
     if (command.kind !== "renew") debugTrace("shop", `${command.kind}.begin`, details);
     try {
-      const session = await processOnce(command, user);
+      const session = await processOnce(command, user, options);
       if (command.kind !== "renew") debugTrace("shop", `${command.kind}.result`, () => ({ ...details(),
         sessionId: session?.sessionId ?? command.sessionId, status: session?.status ?? "closed",
         revision: session?.revision, giveItemIds: session?.draft?.giveItemIds, take: session?.draft?.take }));
@@ -127,6 +144,14 @@ export function createShopSessions({ context, save, lock, authority, validate, v
     try { return await task; } finally { pending.delete(key); }
   };
   return Object.freeze({
+    openScriptSession: (command, user, { isCurrent } = {}) => {
+      if (!game.user?.isGM || !authority() || typeof isCurrent !== "function") fail(text("Магазин скрипта запускает исполняющий мастер.", "Only the authoritative GM can start a scripted shop."));
+      return process({ ...command, kind: "open" }, user, { script: true, isCurrent });
+    },
+    renewScriptSession: (command, user, { isCurrent } = {}) => {
+      if (!game.user?.isGM || !authority() || typeof isCurrent !== "function") fail(text("Магазин скрипта запускает исполняющий мастер.", "Only the authoritative GM can start a scripted shop."));
+      return process({ ...command, kind: "renew" }, user, { isCurrent });
+    },
     requestSession: (command) => send({ ...command, kind: "open" }),
     updateOffer: (command) => send({ ...command, kind: "offer" }),
     renewSession: (command) => send({ ...command, kind: "renew" }),

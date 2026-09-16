@@ -48,6 +48,7 @@ function fixture({ interruptions, steps = [wait(9, 10, [4, 25]), wait(1, 1, [9])
   const calls = { macro: 0, stop: 0, errors: [] };
   const runtime = new GroupRuntime({ now: () => clock, effects: { sound: async () => {}, stop: () => calls.stop++,
     macro: async (...args) => { calls.macro++; return macroEffect(...args); } } });
+  runtime.canUsePremiumStep = () => true;
   runtime.report = error => calls.errors.push(error); runtime.isObjectMacroAttached = () => true; runtime.scripts.random = () => 0.99;
   const current = () => getRuntime(scene);
   const progress = () => {

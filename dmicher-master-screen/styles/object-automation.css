@@ -1,0 +1,19 @@
+.ms-object-subtabs { display:flex; flex-wrap:wrap; gap:3px; margin:0 0 8px; }
+.ms-object-subtabs button { width:auto; flex:0 1 auto; font-size:var(--font-size-12,12px); padding:2px 6px; min-height:24px; }
+.ms-object-subtabs button[aria-pressed="true"] { border-color:var(--color-border-highlight,#d88932); background:var(--ms-selected-background,rgba(210,146,57,.15)); }
+.ms-object-variables { width:100%; table-layout:fixed; font-size:12px; }
+.ms-object-variables td { padding:3px; vertical-align:top; }
+.ms-object-variables th:last-child { width:30px; }
+.ms-object-variables .ms-check { display:flex; gap:3px; margin:0; font-size:11px; }
+.ms-object-variables .ms-check input { flex:none; }
+.ms-condition-macro textarea { font-family:monospace; font-size:12px; width:100%; }
+.ms-object-menu .ms-object-menu-group { position:relative; }
+.ms-object-menu .ms-object-menu-group>button { width:100%; text-align:left; }
+.ms-object-menu .ms-object-menu-group>button::after { content:"▸"; float:right; margin-left:12px; }
+.ms-object-submenu { position:absolute; left:calc(100% - 3px); top:0; width:max-content; min-width:140px; max-width:340px; max-height:65vh; overflow:auto; border:1px solid var(--color-border-light-primary,#777); background:var(--ms-window-background,var(--color-bg-option,#222)); padding:4px; box-shadow:0 3px 12px #0008; border-radius:4px; }
+.ms-object-menu .ms-menu-gm { color:#e76b67; }
+.ms-object-menu button:disabled { opacity:.5; cursor:not-allowed; }
+.ms-object-submenu[hidden] { display:none; }
+.ms-script-premium { margin:0; padding:0 .2rem .2rem; min-width:0; }
+.ms-script-premium legend { padding:0 .15rem; line-height:1; }
+.ms-script-premium .dmicher-premium-badge { margin:0; padding:1px 4px; font-size:9px; }

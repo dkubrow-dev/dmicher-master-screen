@@ -126,7 +126,7 @@ function fixture(generation, isGM = true) {
     modules: new Map([[MODULE_ID, { id: MODULE_ID, active: true }]]),
     scenes: new Map([[scene.id, scene], [other.id, other]]), messages: new Map(), paused: false,
     release: { generation }, version: `${generation}.0`, i18n: { localize: (key) => key },
-    settings: { register(scope, key, definition) { settings.set(`${scope}.${key}`, definition.default); }, get: (scope, key) => settings.get(`${scope}.${key}`) }
+    settings: { registerMenu(){}, register(scope, key, definition) { settings.set(`${scope}.${key}`, definition.default); }, get: (scope, key) => settings.get(`${scope}.${key}`) }
   };
   globalThis.canvas = { scene, stage: { on(name, callback) { stageEvents.set(callback, name); }, off(_name, callback) { stageEvents.delete(callback); } },
     tokens: { placeables: [], controlled: [], activate() {} } };
@@ -252,7 +252,7 @@ test("an empty scene stays empty through constructor, director and tool windows"
     assert.equal(controller.editor.context.missingGroup, true);
     assert.match(controller.editor.context.nodeActions, /addGroup/);
     assert.equal(controller.editor.context.badgesHTML, "");
-    await controller.openObjectBehavior({ type: "Token", id: "guard" }).render();
+    await controller.openObjectAutomation({ type: "Token", id: "guard" }).render();
     await controller.setMode("director");
     await controller.openDialogues().render();
     assert.deepEqual(controller.dialogueCatalog.context.dialogues, [], "the independent catalog can open before any group exists");
@@ -281,6 +281,7 @@ test("controller wires a Tile's declared signal through an owned macro to a stat
     const { SignalCatalog } = await import("../dmicher-master-screen/scripts/signal-catalog.js");
     const { signalMacroSnippet } = await import("../dmicher-master-screen/scripts/signal-macros.js");
     const catalog = new SignalCatalog(f.scene), signal = await catalog.saveSignal({ id: "lever-used", emitterKey: "Tile:lever", name: "used", parameters: [], returns: [] });
+    f.scene.flags[MODULE_ID].objectBindings.bindings["Tile:lever"].signals={enabled:true,enabledIds:[signal.id]};
     const command = signalMacroSnippet(signal);
     const factory = new (Object.getPrototypeOf(async function () {}).constructor)(command);
     macros.set("Macro.transition", { documentName: "Macro", type: "script", name: "Transition", command, canExecute: true,
@@ -305,14 +306,13 @@ test("constructor context menu opens only the chosen object action and writes no
     const controller = new ScreenController(); controller.mode = "constructor";
     const opened = []; let entries;
     controller.objectMenu.open = (items) => { entries = items; };
-    controller.openObjectInfo = (target) => opened.push(["info", target]);
-    controller.openObjectBehavior = (target) => opened.push(["behavior", target]);
-    assert.equal(controller.openObjectMenu({ type: "Token", id: "guard" }), true);
-    assert.equal(entries.length, 2); assert.equal(opened.length, 0);
-    await entries[1].action(); assert.deepEqual(opened, [["behavior", { type: "Token", id: "guard" }]]);
+    controller.openObjectAutomation = (target) => opened.push(["automation", target]);
+    assert.equal(await controller.openObjectMenu({ type: "Token", id: "guard" }), true);
+    assert.equal(entries.length, 1); assert.equal(opened.length, 0);
+    await entries[0].action(); assert.deepEqual(opened, [["automation", { type: "Token", id: "guard" }]]);
     assert.deepEqual(f.scene.updates, []);
     f.scene.tiles = new Map([["console", { id: "console" }]]);
-    controller.openObjectMenu({ type: "Tile", id: "console" }); assert.equal(entries.length, 2);
+    await controller.openObjectMenu({ type: "Tile", id: "console" }); assert.equal(entries.length, 1);
   } finally { await f.dispose(); }
 });
 
@@ -372,8 +372,8 @@ test("player token menu joins a conversation with separate speaker and listener 
     controller.dialogues = { requestListen: async (command) => { requests.push(command); return view; },
       refreshSession: async () => view, getContext: () => ({ scene: f.scene, runtime }), leaveSession: async () => {} };
     let items; controller.objectMenu.open = (entries) => { items = entries; };
-    assert.equal(controller.openObjectMenu({ type: "Token", id: speaker.id }), true);
-    assert.equal(items.length, 1); const app = await items[0].action();
+    assert.equal(await controller.openObjectMenu({ type: "Token", id: speaker.id }), true);
+    assert.equal(items.length, 1); const app = await items[0].children[0].action();
     assert.equal(requests.length, 1); assert.equal(requests[0].actorTokenId, listener.id);
     assert.equal(requests[0].sessionId, session.sessionId);
     assert.equal(app.actorTokenId, speaker.id); assert.equal(app.listenerTokenId, listener.id);

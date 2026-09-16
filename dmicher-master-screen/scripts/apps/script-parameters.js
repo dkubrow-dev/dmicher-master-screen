@@ -4,6 +4,9 @@ import { scriptStepTemplate } from "../script-model.js";
 import { readObjectGeometry, scriptObjectCapabilities } from "../script-movement.js";
 import { fieldInitialValue } from "../signal-types.js";
 import { openEmojiPicker } from "./emoji-picker.js";
+import { getWorkspacePresets } from "../workspace-presets-store.js";
+import { OBJECT_COMMAND_DEFINITIONS, objectCommandName } from "../object-command-model.js";
+import { isPremiumScriptKind, canExecuteScriptKind, subscribeInteractivePresentationAccess } from "../premium-provider.js";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const clone = (value) => structuredClone(value);
@@ -113,7 +116,11 @@ function fields(parameters, context) {
       rows += group("parameters", t("Параметры сигнала", "Signal parameters"), typedParameters(parameters.parameters, signal?.parameters ?? []));
       rows += delays(); break;
     }
-    case "macro": rows = select(["macroUuid"], t("Макрос", "Macro"), [["", "—"], ...(context.catalog?.macros ?? []).filter((item) => item.ownerKey === context.ownerKey).map((item) => [item.uuid, game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.uuid])]) + delays(); break;
+    case "macro": {
+      rows = select(["macroUuid"], t("Макрос", "Macro"), [["", "—"], ...(context.catalog?.macros ?? []).filter((item) => item.ownerKey === context.ownerKey).map((item) => [item.uuid, game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.uuid])]);
+      rows += select(["signalId"], t("Интерфейс сигнала", "Signal interface"), [["", t("Без проверки интерфейса", "No interface validation")], ...(context.signalOptions ?? []).map(signal => [signal.id, signal.name])]);
+      rows += row(t("Редактирование", "Editing"), action("script-macro-open", t("Править макрос", "Edit macro")) + action("script-macro-template", t("Шаблон", "Template"))) + delays(); break;
+    }
     case "state": rows = row(t("Переходы", "Transitions"), stateTransitionFields(parameters.transitions, context.definitions ?? [])); break;
     case "approach":
       rows = input(["targetUuid"], t("Объект (UUID)", "Object (UUID)"))
@@ -137,12 +144,43 @@ function fields(parameters, context) {
         + select(["waitMode"], t("Ожидание", "Waiting"), [["all", t("Дожидаться всех диалогов", "Wait for all dialogues")], ["first", t("Дождаться завершения первого из диалогов", "Wait for the first dialogue to finish")], ["none", t("Не дожидаться завершения диалогов", "Do not wait for dialogues")]]);
       break;
     }
+    case "shop": {
+      const shops = (context.shopOptions ?? []).map(item => [item.id, item.name]);
+      if (parameters.shopId && !shops.some(([id]) => id === parameters.shopId)) shops.push([parameters.shopId, t(`Недоступен: ${parameters.shopId}`, `Unavailable: ${parameters.shopId}`)]);
+      rows = select(["shopId"], t("Магазин", "Shop"), [["", "—"], ...shops])
+        + input(["tokenUuid"], t("Персонаж (UUID токена)", "Character (token UUID)"))
+        + check(["wait"], t("Дождаться завершения торговли", "Wait for trading to finish"));
+      break;
+    }
+    case "command":
+      rows = input(["objectUuid"], t("Объект (UUID)", "Object (UUID)"))
+        + select(["commandId"], t("Команда", "Command"), [["", "—"], ...(context.commandOptions ?? OBJECT_COMMAND_DEFINITIONS).map(command => [command.id, command.name ?? objectCommandName(command.id)])])
+        + group("parameters", t("Параметры команды", "Command parameters"), typedParameters(parameters.parameters, []));
+      break;
+    case "playlist": {
+      const playlists = Array.from(globalThis.game?.playlists?.values?.() ?? []), playlist = playlists.find(item => item.id === parameters.playlistId);
+      const sounds = Array.from(playlist?.sounds?.values?.() ?? []);
+      rows = select(["playlistId"], t("Плейлист", "Playlist"), [["", "—"], ...playlists.map(item => [item.id, item.name])])
+        + select(["soundId"], t("Композиция", "Track"), [["", parameters.action === "play" ? "—" : t("Текущая", "Current")], ...sounds.map(item => [item.id, item.name])])
+        + select(["action"], t("Действие", "Action"), [["play", t("Воспроизвести", "Play")], ["pause", t("Пауза", "Pause")], ["resume", t("Продолжить", "Resume")], ["volume", t("Громкость", "Volume")], ["stop", t("Остановить", "Stop")]]);
+      if (parameters.action === "volume") rows += num(["volume"], t("Громкость", "Volume"), { min: 0 });
+      break;
+    }
+    case "windows": case "notes": {
+      const presets = context.workspacePresets ?? getWorkspacePresets(context.scene ?? context.document?.parent);
+      const choices = (presets?.[context.kind] ?? []).map(item => [item.id, item.name]);
+      if (parameters.configurationId && !choices.some(([id]) => id === parameters.configurationId)) choices.push([parameters.configurationId, t(`Недоступна: ${parameters.configurationId}`, `Unavailable: ${parameters.configurationId}`)]);
+      rows = select(["configurationId"], t("Конфигурация", "Configuration"), [["", "—"], ...choices]);
+      break;
+    }
   }
   return table(rows);
 }
 
 export function renderScriptParameters(step, context = {}) {
-  return fields(completeScriptParameters(step.kind, step.parameters, context.document), { ...context, kind: step.kind });
+  const content = fields(completeScriptParameters(step.kind, step.parameters, context.document), { ...context, kind: step.kind });
+  if (!isPremiumScriptKind(step.kind)) return content;
+  return `<fieldset class="ms-script-premium" data-script-premium="${e(step.kind)}"${canExecuteScriptKind(step.kind) ? "" : " disabled"}><legend><span class="dmicher-premium-badge">Premium</span></legend>${content}</fieldset>`;
 }
 
 /** Both editors share the same textarea value, which is also what Save reads.
@@ -150,6 +188,18 @@ export function renderScriptParameters(step, context = {}) {
 export function bindScriptParameters(root, getContext, onChange, options) {
   let closePicker = () => {};
   const renderedParameters = new WeakMap();
+  const syncPremium = () => {
+    for (const fieldset of root.querySelectorAll('[data-script-premium]')) {
+      const disabled = !canExecuteScriptKind(fieldset.dataset.scriptPremium);
+      fieldset.disabled = disabled;
+      for (const control of fieldset.closest('[data-script-step]').querySelectorAll('[data-script-json],[data-script-json-value]')) control.disabled = disabled;
+    }
+  };
+  if (root.querySelector('[data-script-premium]')) {
+    syncPremium();
+    const unsubscribe = subscribeInteractivePresentationAccess(syncPremium);
+    if (options?.signal?.aborted) unsubscribe(); else options?.signal?.addEventListener("abort", unsubscribe, { once: true });
+  }
   const controls = (target) => {
     const row = target.closest("[data-script-step]");
     if (!row) return null;
@@ -160,7 +210,7 @@ export function bindScriptParameters(root, getContext, onChange, options) {
     closePicker();
     const host = state.row.querySelector("[data-script-parameter-fields]"), closed = new Set([...host.querySelectorAll("details:not([open])")].map((entry) => entry.dataset.paramGroup));
     const active = host.ownerDocument.activeElement, focused = host.contains(active) ? { path: active.dataset.scriptParam, group: active.dataset.scriptParamGroup, nullable: active.dataset.scriptParamNull } : null;
-    host.innerHTML = fields(parameters, { ...getContext(), index: state.index, stepIndex: state.stepIndex, kind: state.kind });
+    host.innerHTML = renderScriptParameters({ kind: state.kind, parameters }, { ...getContext(), index: state.index, stepIndex: state.stepIndex });
     renderedParameters.set(state.row, JSON.stringify(parameters));
     for (const detail of host.querySelectorAll("details")) if (closed.has(detail.dataset.paramGroup)) detail.open = false;
     if (focused) [...host.querySelectorAll("input,select,textarea")].find((control) => focused.path ? control.dataset.scriptParam === focused.path : focused.group ? control.dataset.scriptParamGroup === focused.group : focused.nullable && control.dataset.scriptParamNull === focused.nullable)?.focus();
@@ -168,7 +218,7 @@ export function bindScriptParameters(root, getContext, onChange, options) {
   const synchronize = (event) => {
     const target = event.target;
     if (!target.matches("[data-script-param],[data-script-param-group],[data-script-param-null],[data-script-json-value],[data-script-state-group],[data-script-state-value]")) return;
-    const state = controls(target); if (!state) return;
+    const state = controls(target); if (!state || !canExecuteScriptKind(state.kind)) return;
     if (target.matches("[data-script-duration]")) target.closest("tr")?.classList.toggle("ms-script-zero-duration", target.valueAsNumber === 0);
     try {
       let parameters = completeScriptParameters(state.kind, JSON.parse(state.area.value), getContext().document);
@@ -201,10 +251,15 @@ export function bindScriptParameters(root, getContext, onChange, options) {
             const signal = getContext().catalog?.signals.find((item) => item.id === entry);
             parameters.parameters = Object.fromEntries((signal?.parameters ?? []).map((field) => [field.name, fieldInitialValue(field)]));
           }
+          if (state.kind === "command" && JSON.parse(target.dataset.scriptParam)[0] === "commandId") {
+            const command = (getContext().commandOptions ?? OBJECT_COMMAND_DEFINITIONS).find(item => item.id === entry);
+            parameters.parameters = clone(command?.defaults ?? {});
+          }
+          if (state.kind === "playlist" && JSON.parse(target.dataset.scriptParam)[0] === "playlistId") parameters.soundId = "";
         }
         state.area.value = JSON.stringify(parameters, null, 2);
         const path = target.dataset.scriptParam && JSON.parse(target.dataset.scriptParam);
-        const changesFields = target.matches("[data-script-param-group],[data-script-param-null]") || path?.[0] === "timeMode" || path?.[0] === "signalId" || path?.at(-1) === "enabled";
+        const changesFields = target.matches("[data-script-param-group],[data-script-param-null]") || ["timeMode", "signalId", "playlistId", "action", "commandId"].includes(path?.[0]) || path?.at(-1) === "enabled";
         if (event.type === "change" && changesFields) repaint(state, parameters);
       }
       renderedParameters.set(state.row, JSON.stringify(parameters));
@@ -241,6 +296,7 @@ export function bindScriptParameters(root, getContext, onChange, options) {
     }
     const button = event.target.closest("[data-script-json]"); if (!button) return;
     event.preventDefault(); event.stopPropagation(); const state = controls(button);
+    if (!canExecuteScriptKind(state.kind)) return;
     state.area.hidden = !state.area.hidden; button.setAttribute("aria-expanded", String(!state.area.hidden));
     if (!state.area.hidden) state.area.focus();
   }, options);

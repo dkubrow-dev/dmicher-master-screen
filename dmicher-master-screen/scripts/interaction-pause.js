@@ -1,6 +1,6 @@
 import { MODULE_ID } from "./model.js";
 import { objectReferenceKey } from "./object-reference.js";
-import { shopSessionIsLive, dialogueSessionIsLive, dialogueSessionMatchesReference } from "./interaction-session-model.js";
+import { shopSessionIsLive, dialogueSessionIsLive, dialogueSessionMatchesReference, shopSessionMatchesReference } from "./interaction-session-model.js";
 import { notifyExecutionChange } from "./execution.js";
 
 const pending = new WeakMap();
@@ -22,7 +22,7 @@ export function beginInteractionPause(scene, target) {
   };
 }
 
-export function isInteractionPaused(scene, target, now = Date.now(), { excludeDialogueSessions = [], playerOnly = false, includeCompleted = false } = {}) {
+export function isInteractionPaused(scene, target, now = Date.now(), { excludeDialogueSessions = [], excludeShopSessions = [], playerOnly = false, includeCompleted = false } = {}) {
   const objectKey = objectReferenceKey(target);
   if (!objectKey) return false;
   // A request still being validated can freeze movement but is not yet a
@@ -35,7 +35,8 @@ export function isInteractionPaused(scene, target, now = Date.now(), { excludeDi
     if (definitions[groupId]?.schemaVersion !== 1 || runtime?.schemaVersion !== 1) return false;
     if (playerOnly && includeCompleted && runtime.interactionClocks?.[objectKey]?.external) return true;
     const ownsSession = (session) => session?.runId === runtime.runId && objectReferenceKey(session.target) === objectKey;
-    return Object.values(runtime.shopSessions ?? {}).some((session) => shopSessionIsLive(session, now) && ownsSession(session))
+    return Object.values(runtime.shopSessions ?? {}).some((session) => shopSessionIsLive(session, now) && ownsSession(session)
+      && (!playerOnly || session.origin !== "script") && !excludeShopSessions.some(reference => shopSessionMatchesReference(session, reference)))
       || Object.values(runtime.dialogueSessions ?? {}).some((session) => dialogueSessionIsLive(session, now) && ownsSession(session)
         && (!playerOnly || session.origin !== "script")
         && !excludeDialogueSessions.some((reference) => dialogueSessionMatchesReference(session, reference)));

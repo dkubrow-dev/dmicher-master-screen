@@ -4,7 +4,9 @@ import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntime, getRuntimes, saveRuntime, withSceneLock, isAuthority, asArray } from "./store.js";
 import { getObjectBindings, resolveObjectShop } from "./scene-objects.js";
 import { getInteractionCatalog } from "./scene-assets.js";
-import { objectDescriptor, objectKey, sceneObject, validateObjectAccess } from "./interaction-access.js";
+import { objectDescriptor, objectKey, sceneObject, validateObjectAccess, validateInteractionIdentity } from "./interaction-access.js";
+import { registeredToolIds } from "./object-binding-model.js";
+import { createScriptShopService } from "./script-shops.js";
 import { generics } from "./generics.js";
 import { createShopSessions, requireShopSession, shopKey } from "./shop-sessions.js";
 import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
@@ -36,14 +38,21 @@ export async function importShopEntry(uuid, { stock = 1 } = {}) {
 }
 export function getShopContext(sceneId, source, groupId = "main", selectedShopId) {
   const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
-  const target = objectDescriptor(source), resolved = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;
+  const target = objectDescriptor(source), binding = scene && getObjectBindings(scene).bindings[objectKey(target)];
+  const asset = selectedShopId && binding?.groupId === groupId && !binding.playerCharacter && registeredToolIds(binding, "shop").includes(selectedShopId)
+    ? getInteractionCatalog(scene).shops.find(item => item.id === selectedShopId) : null;
+  const registered = asset ? { asset, config: { ...copy(asset), enabled: true, shopId: asset.id, target } } : null;
+  const player = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;
+  const session = runtime?.shopSessions?.[selectedShopId];
+  const scriptSession = session?.origin === "script" && objectKey(session.target) === objectKey(target) && session.runId === runtime.runId;
+  const resolved = scriptSession ? registered : player ?? registered;
   const shopId = resolved?.asset.id, object = sceneObject(scene, target);
   const inventories = scene?.getFlag?.(MODULE_ID, "shopInventories");
   const inventory = shopId && (inventories?.[shopId]
     ?? getRuntimes(scene).filter((state) => state.shops?.[shopId])
       .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId])[0]);
   if (runtime && inventory) { runtime.shops ??= {}; runtime.shops[shopId] = copy(inventory); }
-  return { scene, runtime, object, target, shopId, asset: resolved?.asset,
+  return { scene, runtime, object, target, shopId, asset: resolved?.asset, registered, registeredOnly: !player,
     behavior: resolved ? { enabled: !runtime.disabledObjects?.includes(objectKey(target)), shop: resolved.config } : null };
 }
 async function saveInventory(current, inventory) {
@@ -64,9 +73,19 @@ export function validateTradeContext(context, intent, user) {
   if ((intent.groupId ?? "main") !== (runtime?.groupId ?? "main")) fail(localizedMessage("Запрос относится к другой группе магазина."));
   if (!intent.shopId || intent.shopId !== shopKey(context)) fail(localizedMessage("Назначение магазина изменилось. Откройте взаимодействие заново."));
   if (context.target && objectKey(intent.target ?? intent.tokenId) !== objectKey(context.target)) fail(localizedMessage("Объект магазина изменился."));
+  const session = runtime?.shopSessions?.[shopKey(context)];
+  if (session?.origin === "script" && session.sessionId === intent.sessionId) {
+    requireShopSession(context, intent, user);
+    return validateScriptShopAccess(context, intent, user);
+  }
+  if (context.registeredOnly) fail(localizedMessage("Этот магазин сейчас недоступен."));
   if (!behavior?.enabled || !behavior.shop?.enabled) fail(localizedMessage("Этот магазин сейчас недоступен."));
   const descriptor = { ...behavior.shop, id: object?.id, target: context.target ?? { type: "Token", id: object?.id } };
   return validateObjectAccess({ scene, runtime, descriptor, target: object, conditionType: "shop" }, intent.actorTokenId, user, intent.runId).actor;
+}
+export function validateScriptShopAccess(context, intent, user) {
+  if (!context.registered || context.registered.asset.id !== intent.shopId) fail(text("Скрипт может открыть только магазин, зарегистрированный у своего объекта.", "A script can open only a shop registered on its own object."));
+  return validateInteractionIdentity({ scene: context.scene, runtime: context.runtime, descriptor: context.registered.config, target: context.object }, intent.actorTokenId, user, intent.runId).actor;
 }
 export function normalizeExchange(intent) {
   const string = (value) => {
@@ -107,10 +126,16 @@ function trim(receipts) {
 
 /** One elected GM serializes changes. Pending/processing receipts are never automatically replayed. */
 export function createShopService({ emitSignal, onChange = () => {}, context = getShopContext, save = saveRuntime,
-  lock = withSceneLock, authority = isAuthority, validate = validateTradeContext } = {}) {
+  lock = withSceneLock, authority = isAuthority, validate = validateTradeContext, openScriptWindow,
+  evaluateOpenCondition = async (current, command, user, isCurrent) => {
+    if (!current.behavior?.shop?.conditionMacro) return true;
+    const { evaluateInteractionMacro } = await import("./interaction-macro.js");
+    return evaluateInteractionMacro(current.scene, { target: current.target, conditionMacro: current.behavior.shop.conditionMacro,
+      runtime: current.runtime, actorToken: current.scene.tokens.get(command.actorTokenId), user, current: isCurrent });
+  } } = {}) {
   const submitted = new Map(), sent = new Map(), decisions = new Map();
   const chat = generics.chat.createMessageService({ ownerId: MODULE_ID, channel: "commerce-requests" });
-  const sessions = createShopSessions({ context, save, lock, authority, validate, chat, onChange, emitSignal,
+  const sessions = createShopSessions({ context, save, lock, authority, validate, scriptValidate: validateScriptShopAccess, evaluateOpenCondition, chat, onChange, emitSignal,
     validateOffer: (current, draft, user) => {
       if (Array.isArray(draft.giveItemIds) && Array.isArray(draft.take) && !draft.giveItemIds.length && !draft.take.length) return { giveItemIds: [], take: [] };
       const clean = normalizeExchange(draft);
@@ -340,8 +365,10 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       .finally(() => decisions.delete(messageId));
     decisions.set(messageId, task); return task;
   };
+  const scriptShops = createScriptShopService({ context, authority, chat, sessions, openWindow: openScriptWindow });
   return Object.freeze({
     ...sessions,
+    ...scriptShops,
     listSceneShops(scene) {
       if (!scene) return [];
       const definitions = getDefinitions(scene), states = getRuntimes(scene), bindings = Object.values(getObjectBindings(scene).bindings);
@@ -389,6 +416,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
       try { return await task; } finally { submitted.delete(key); }
     },
     async processTradeRequest(message, initiatingUserId) {
+      if (await scriptShops.processScriptShopInvitation(message, initiatingUserId)) return null;
       if (!authority()) return null;
       if (await sessions.processCommand(message, initiatingUserId)) return null;
       const source = message.getFlag?.(MODULE_ID, "trade");

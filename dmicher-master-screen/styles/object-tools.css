@@ -17,14 +17,14 @@
 .dmicher-master-screen .ms-object-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 10px; overflow: auto; scrollbar-gutter: stable; }
 .dmicher-master-screen .ms-object-scroll > * { flex-shrink: 0; }
 .dmicher-master-screen .ms-object-tabs, .dmicher-master-screen .ms-object-form > footer { flex: 0 0 auto; }
-.dmicher-master-screen.ms-object-info > .window-content, .dmicher-master-screen.ms-object-behavior > .window-content { min-height: 0; }
+.dmicher-master-screen.ms-object-behavior > .window-content { min-height: 0; }
 /* Standalone forms must also shrink inside a resized window. */
 .dmicher-master-screen .window-content > .ms-body { flex: 1; min-height: 0; }
 .dmicher-master-screen .ms-script-table-scroll { overflow-x: auto; }
-.dmicher-master-screen .ms-script-table { width: 100%; min-width: 480px; table-layout: fixed; }
+.dmicher-master-screen .ms-script-table { width: 100%; min-width: 660px; table-layout: fixed; }
 .dmicher-master-screen .ms-script-table > thead > tr > th:first-child { width: 32px; }
 .dmicher-master-screen .ms-script-table > thead > tr > th:nth-child(2) { width: 150px; }
-.dmicher-master-screen .ms-script-table > thead > tr > th:nth-child(4) { width: 65px; }
+.dmicher-master-screen .ms-script-table > thead > tr > th:nth-child(4) { width: 145px; }
 .dmicher-master-screen .ms-script-table > thead > tr > th:last-child { width: 35px; }
 .dmicher-master-screen .ms-script-table td, .dmicher-master-screen .ms-automation-table td { vertical-align: top; padding: 4px; }
 .dmicher-master-screen .ms-script-table textarea { width: 100%; min-height: 115px; font-family: monospace; font-size: 12px; }

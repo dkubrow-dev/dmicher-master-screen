@@ -1,5 +1,5 @@
 import { SCENE_OBJECT_TYPES, SCENE_OBJECT_COLLECTIONS } from "../scene-object-types.js";
-import { sceneObjectBounds, sceneObjectCenter } from "../scene-object-geometry.js";
+import { sceneObjectBounds, sceneObjectCenter, isSceneObjectHidden } from "../scene-object-geometry.js";
 
 const supported = new Set(SCENE_OBJECT_TYPES);
 const nativeLayers = Object.freeze({ Token: "tokens", Tile: "tiles", Drawing: "drawings", AmbientLight: "lighting", AmbientSound: "sounds", Note: "notes", MeasuredTemplate: "templates", Wall: "walls", Region: "regions" });
@@ -45,7 +45,7 @@ export function findCanvasObject(board, event, { constructorMode = false } = {})
   for (let object = event.target; object && object !== board.stage; object = object.parent) {
     const descriptor = descriptorOf(object);
     if (!descriptor) continue;
-    if (constructorMode ? belongsToActiveLayer(board, object, descriptor) : object.isVisible !== false && !object.document.hidden) return descriptor;
+    if (constructorMode ? belongsToActiveLayer(board, object, descriptor) : object.isVisible !== false && !isSceneObjectHidden(object.document)) return descriptor;
   }
   const point = event.getLocalPosition(board.stage), layers = constructorMode
     ? board.activeLayer ? [board.activeLayer] : [board.tokens, board.tiles, board.drawings, board.lighting, board.sounds, board.notes, board.templates, board.walls, board.regions]
@@ -57,7 +57,7 @@ export function findCanvasObject(board, event, { constructorMode = false } = {})
     for (const object of [...(layer.placeables ?? [])].reverse()) {
       const document = object.document, type = document?.documentName ?? document?.constructor?.documentName;
       if (!supported.has(type)) continue;
-      if (!constructorMode && (object.isVisible === false || document.hidden)) continue;
+      if (!constructorMode && (object.isVisible === false || isSceneObjectHidden(document))) continue;
       if (containsNative(object, point, event, type)) return { type, id: document.id };
     }
   }

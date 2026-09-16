@@ -42,6 +42,7 @@ export async function commandFixture({ commands = ["wait", "come", "cancel", "st
   scene.tokens.set(npc.id, npc); scene.tokens.set(pc.id, pc); globalThis.canvas = { scene };
   game.scenes = new Map([[scene.id, scene]]);
   const signals = [], errors = [], runtime = new GroupRuntime({ now: () => clock, effects: { stop() {}, sound: async () => {}, macro: async () => {} } });
+  runtime.canUsePremiumStep = () => true;
   runtime.report = error => errors.push(error);
   const executor = new ObjectCommandRuntime({ runtime, core, lights: new ObjectCommandLights(),
     signals: { async emit(scene, signal) { signals.push(signal); return emit ? emit(scene, signal) : { allowed: true }; } } });

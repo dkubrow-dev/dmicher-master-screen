@@ -29,6 +29,7 @@ export function interruptScriptProgress(progress, script, source, { now = Date.n
     sequence: Number(progress.sequence ?? 0) + 1, generation: Number(progress.generation ?? 0) + 1,
     action: null, nextStepId: null,
     interruption: { source, mode, resumeStepId,
+      ...(mode === "next-step" && current?.transition?.mode === "macro" ? { resumeTransition: true } : {}),
       retryAt: source === "error" && mode !== "stop" ? now + error.delaySeconds * 1000 : null }
   });
   return true;
@@ -39,7 +40,8 @@ export function resumeScriptProgress(progress, now = Date.now()) {
   if (progress?.status !== "interrupted" || !interruption || interruption.retryAt > now) return false;
   progress.stepId = interruption.resumeStepId;
   progress.status = progress.stepId === null ? "done" : "ready";
-  progress.action = null; progress.nextStepId = null; progress.interruption = null;
+  progress.action = interruption.resumeTransition ? { stepId: progress.stepId, phase: "branch", remainingMs: 0 } : null;
+  progress.nextStepId = null; progress.interruption = null;
   if (progress.combat) progress.combat.confirmedStepId = null;
   return true;
 }

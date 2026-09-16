@@ -89,8 +89,19 @@ test("script pickers offer only signals and macros belonging to their object",()
 });
 test("subscription editor offers only the selected subscriber's macros and escaped validation examples",()=>{
   const data={...catalog,macros:[{ownerKey:"Token:guard",uuid:"Macro.own"},{ownerKey:"Scene:scene",uuid:"Macro.foreign"}]};
-  const html=renderSubscriptionFields({ownerKey:"Token:guard",signalId:"alert",enabled:true},data,{fixedOwner:"Token:guard"});
+  const html=renderSubscriptionFields({ownerKey:"Token:guard",signalId:"alert",enabled:true,handler:"macro"},data,{fixedOwner:"Token:guard"});
   assert.ok(html.includes('Macro.own'));assert.ok(!html.includes('Macro.foreign'));
   const message=renderMacroValidation({valid:false,error:"<error>",snippet:"return '<script>';"});
   assert.ok(!message.includes("<script>"));assert.ok(message.includes("textarea readonly"));
+});
+
+test("script subscription owner choices exclude scene and group while native objects retain both handlers", () => {
+  const html = renderSubscriptionFields({ handler: "script" }, catalog);
+  const owners = /name="subscription-owner"[^>]*>([\s\S]*?)<\/select>/.exec(html)[1];
+  assert.ok(owners.includes('value="Token:guard"'));
+  assert.ok(!owners.includes('value="Scene:scene"'));
+  assert.ok(!owners.includes('value="Group:market"'));
+  const fixed = renderSubscriptionFields({}, catalog, { fixedOwner: "Scene:scene" });
+  const handlers = /name="subscription-handler"[^>]*>([\s\S]*?)<\/select>/.exec(fixed)[1];
+  assert.ok(handlers.includes('value="macro"')); assert.ok(!handlers.includes('value="script"'));
 });

@@ -6,6 +6,8 @@ import { validateParameters } from "./signal-types.js";
 import { getInteractionCatalog, normalizeInteractionCatalog } from "./scene-assets.js";
 import { normalizeObjectBindings, validateObjectBinding } from "./scene-objects.js";
 import { isCommandLightSource } from "./object-command-model.js";
+import { getWorkspacePresets } from "./workspace-presets-store.js";
+import { normalizeWorkspacePresets, remapWorkspacePresetReferences } from "./workspace-presets-model.js";
 
 const copy = (data) => structuredClone(data);
 function portable(document) {
@@ -31,6 +33,7 @@ export async function exportBundle(scene) {
   if (!scene) throw new Error(localizedMessage("Сначала откройте сцену"));
   const definitions = getDefinitions(scene), actors = [], macros = [], journals = [];
   const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
+  const workspacePresets = getWorkspacePresets(scene);
   const signalCatalog = exportCatalogDependencies(scene);
   const seen = new Set();
   async function include(uuid) {
@@ -50,13 +53,23 @@ export async function exportBundle(scene) {
     for (const entry of [...state.workspace.gm, ...state.workspace.players]) await include(entry.uuid);
   }
   for (const macro of signalCatalog.macros) await include(macro.uuid);
+  for (const preset of workspacePresets.windows) for (const entry of preset.entries) if (entry.target.uuid) await include(entry.target.uuid);
+  for (const preset of workspacePresets.notes) for (const entry of preset.entries) {
+    if (entry.data.entryId) await include(`JournalEntry.${entry.data.entryId}`);
+    const existing = asArray(scene.notes).find(note => {
+      const marker = note.getFlag?.(MODULE_ID, "workspacePreset") ?? note.flags?.[MODULE_ID]?.workspacePreset;
+      return marker?.presetId === preset.id && marker.entryId === entry.id;
+    });
+    if (existing) { entry.sourceId = existing.id; entry.sourceSceneId = scene.id; }
+  }
   const data = portable(scene);
   if (Array.isArray(data.lights)) data.lights = data.lights.filter(light => !isCommandLightSource(light));
   if (data.flags) delete data.flags[MODULE_ID];
+  for (const note of data.notes ?? []) if (note.flags?.[MODULE_ID]) delete note.flags[MODULE_ID].workspacePreset;
   data.active = false;
   return { format: MODULE_ID, schemaVersion: 1, systemId: game.system.id, scene: data,
     sourceSceneId: scene.id, sourceSceneUuid: scene.uuid ?? `Scene.${scene.id}`,
-    definitions, signalCatalog, interactionCatalog, objectBindings, actors, macros, journals, exportedAt: new Date().toISOString() };
+    definitions, signalCatalog, interactionCatalog, objectBindings, workspacePresets, actors, macros, journals, exportedAt: new Date().toISOString() };
 }
 export function validateBundle(value) {
   const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
@@ -71,6 +84,7 @@ export function validateBundle(value) {
   }
   if (typeof value.sourceSceneId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(value.sourceSceneId)) throw new Error(localizedMessage("В JSON отсутствует ID исходной сцены."));
   normalizeCatalog(value.signalCatalog ?? {});
+  normalizeWorkspacePresets(value.workspacePresets ?? {});
   const uuids = new Set();
   for (const [field, type] of [["actors", "Actor"], ["macros", "Macro"], ["journals", "JournalEntry"]]) {
     if (!Array.isArray(value[field]) || value[field].length > 500) throw new Error(localizedMessage("Некорректный список {0}", [field]));
@@ -94,7 +108,8 @@ export function validateBundle(value) {
   const definitions = value.definitions.map((entry) => normalizeDefinition(entry));
   const objectBindings = normalizeObjectBindings(value.objectBindings ?? {});
   const flags = { groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, entry])), signalCatalog: value.signalCatalog,
-    ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings };
+    ...(value.interactionCatalog ? { interactionCatalog: normalizeInteractionCatalog(value.interactionCatalog) } : {}), objectBindings,
+    workspacePresets: normalizeWorkspacePresets(value.workspacePresets ?? {}) };
   const scene = { id: value.sourceSceneId, uuid: value.sourceSceneUuid, getFlag: (_scope, key) => flags[key] };
   for (const key of ["tokens", "tiles", "drawings", "lights", "sounds", "notes", "templates", "walls", "regions"]) {
     if (value.scene[key] !== undefined && !Array.isArray(value.scene[key])) throw new Error(localizedMessage("Объекты сцены должны быть списками."));
@@ -150,10 +165,21 @@ export async function importBundle(value) {
       }
     }
     const definitions = value.definitions.map((entry) => normalizeDefinition(remapReferences(entry, mapping)));
+    const workspacePresets = remapWorkspacePresetReferences(value.workspacePresets ?? {}, {
+      uuid: value => remapReferences(value, mapping),
+      journal: id => mapping.get(`JournalEntry.${id}`)?.slice("JournalEntry.".length) ?? id,
+      // Journal pages keep their embedded IDs in a full Scene import.
+      sceneId: value.sourceSceneId
+    });
+    for (const preset of workspacePresets.notes) for (const entry of preset.entries) {
+      if (entry.sourceSceneId === value.sourceSceneId && (data.notes ?? []).some(note => note._id === entry.sourceId)) entry.sourceSceneId = scene.id;
+      else { entry.sourceId = ""; entry.sourceSceneId = ""; }
+    }
     await scene.update({ [`flags.${MODULE_ID}`]: {
       groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, { ...entry, revision: 1 }])),
       signalCatalog: normalizeCatalog(remapReferences(catalog, mapping)),
       interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog ?? {}, mapping)),
+      workspacePresets,
       objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings ?? {}, mapping))
     } });
     return { scene, created, warnings: [localizedMessage("Медиафайлы должны находиться по сохранённым путям."),

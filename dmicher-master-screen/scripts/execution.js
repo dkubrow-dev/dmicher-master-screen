@@ -3,6 +3,8 @@ import { MODULE_ID } from "./model.js";
 import { debugError } from "./debug.js";
 import { objectReferenceKey } from "./object-reference.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
+import { commandParent, commandBehaviorEnabled, isCommandParentHalted } from "./object-command-state.js";
+import { commandPermitsDisabledBehavior } from "./object-command-model.js";
 
 // One local cancellation barrier shared by scene effects, triggers and event subscriptions.
 // The persisted halted state remains authoritative after reconnect; the barrier closes
@@ -137,14 +139,14 @@ export function scriptPresentationIsCurrent(scene, data) {
   const command = !groupRun && key && scene.getFlag?.(MODULE_ID, "objectCommandRuns")?.[key];
   const commandCurrent = command?.schemaVersion === 1 && command.command === true && command.runId === data.runId
     && ["before", "core", "after"].includes(command.phase) && !command.interruption && objectReferenceKey(command.target) === key;
-  const run = commandCurrent ? presentationRunForId(scene, command.parentRunId) : groupRun;
-  if (commandCurrent && run?.groupId !== command.groupId) return false;
+  const run = commandCurrent ? commandParent(scene, command) : groupRun;
+  if (commandCurrent && (run?.groupId !== command.groupId || run?.runId !== command.parentRunId)) return false;
   const progress = hasScriptScope(data) && (commandCurrent ? command : run)?.scriptStates?.[data.scriptKey];
   const scriptCurrent = !hasScriptScope(data) || progress && (progress.generation ?? 0) === (data.scriptGeneration ?? 0);
   // Stop disables the object's ordinary automation at admission. Its own
   // before/after scripts (and Cancel) retain the executor's narrow exception;
   // group halts, interruptions and generation changes still revoke delivery.
-  const permitsDisabled = commandCurrent && ["stop", "cancel"].includes(command.config?.id);
-  return Boolean(run && scriptCurrent && !isExecutionHalted(scene, run)
-    && (!key || binding.groupId === run.groupId && (permitsDisabled || !run.disabledObjects.includes(key))));
+  const permitsDisabled = commandCurrent && commandPermitsDisabledBehavior(command.config?.id);
+  return Boolean(run && scriptCurrent && !(commandCurrent ? isCommandParentHalted(scene, run) : isExecutionHalted(scene, run))
+    && (!key || binding.groupId === run.groupId && (permitsDisabled || commandBehaviorEnabled(scene, data.target, run))));
 }

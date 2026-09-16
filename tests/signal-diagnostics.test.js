@@ -44,6 +44,7 @@ test("signals record named pending and completed subscribers with Debug off, wit
 
 test("signal validation failures before delivery retain source identity and original errors", async () => {
   const f = setup(), signal = await f.catalog.saveSignal({ emitterKey: "Token:npc", name: "Number", parameters: [{ name: "value", type: "integer" }] });
+  f.data.objectBindings.bindings["Token:npc"] = { signals: { enabled: true, enabledIds: [signal.id] } };
   assert.throws(() => f.bus.emit(f.scene, { id: "invalid", emitterKey: signal.emitterKey, signalId: signal.id, parameters: { value: "wrong" } }));
   let rejected = records().at(-1);
   assert.equal(rejected.event, "rejected"); assert.equal(rejected.level, "error");

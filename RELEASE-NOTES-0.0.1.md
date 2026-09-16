@@ -1,5 +1,25 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+## Система взаимодействий — 16 сентября 2026
+
+- Единое окно «Автоматизация»: информация, состояния, свойства, поведение; магазины и диалоги доступны токенам, тайлам, рисункам и регионам. Поведение разделено на рутину, события подписок и реакции на действия. Переменные объекта имеют тип и отдельные права чтения/изменения. Отправка встроенных сигналов включается явно.
+- Меню объекта группирует магазины, диалоги, действия и команды. Можно назначить несколько диалогов, их имена и порядок, показывать недоступные пункты и задавать бесплатные макросы условий. Команды учитывают тип объекта и отдельные разрешения мастеру, персонажу игрока и поручению другому персонажу.
+- В скриптах добавлены магазин, команда, видимость, плейлист, конфигурации окон и заметок. Переход выбирает следующую строку, случайный ID из списка или результат собственного макроса. Условия и переходы бесплатны; шаги «Фокус», «Звук», «Плейлист», «Макрос» относятся к Premium и без доступа пропускаются на следующую строку.
+- Premium-настройки подсветки и иконок отмечают видимые интерактивные объекты. По умолчанию подсветка активируется удержанием левого Alt; мастер и игрок могут настроить активацию. Настройки без лицензии видны, но недоступны для изменения. В штатной громкости диалогов плашка Premium убрана по отдельному правилу.
+- «Инструменты → Окна / Заметки» сохраняют именованные конфигурации сцены, поддерживают ручное применение и запуск скриптом. Неизвестное стороннее окно после перезагрузки может потребовать открытия вручную; штатные окна документов и зарегистрированные окна dmicher восстанавливаются по сохранённой ссылке.
+- Рефакторинг отделяет условия допуска, контракты сигналов, исполнение и представление. Скрипты событий и реакций используют общий отменяемый исполнитель. Сохранение проверяет соответствие макроса своему сигналу/действию. Справка обновлена на русском и английском; автоматические миграции миров не выполняются.
+
+## Object interaction system — September 16, 2026
+
+- A unified Automation window organizes information, states, properties and behavior. Tokens, tiles, drawings and regions also provide Shops and Dialogues. Routine, subscription events and action reactions share the script editor. Typed object variables have separate read/write permissions; built-in signal publication is opt-in.
+- Object menus group shops, dialogues, actions and commands. Multiple dialogues support display names, ordering, unavailable entries and free condition macros. Commands depend on object type and separate GM, player-character and delegated permissions.
+- New script functions include shop, command, visibility, playlist, window presets and note presets. Transitions select the next row, a random listed step ID or an inline macro result. Conditions and transitions are free; Focus, Sound, Playlist and Macro steps require Premium and otherwise skip to the next physical row.
+- Premium highlighting and icons identify visible interactive objects. Holding Left Alt activates highlighting by default; GM and player settings can change activation. Unlicensed settings stay visible and disabled. The native dialogue volume control intentionally has no Premium badge.
+- Tools → Windows / Notes captures named scene presets for manual or scripted use. Unknown third-party windows may need opening once after reload; native document windows and registered dmicher windows restore by their saved references.
+- Access rules, signal contracts, execution and presentation are separated. Events and reactions use the shared cancelable executor; save-time validation checks each macro against its own signal/action contract. Russian and English help is updated. No automatic world migrations are performed.
+
+## Предыдущие изменения / Earlier changes
+
 - Приватность фиксируется для каждой реплики и ответа. Переключение режима бросков не раскрывает прежние приватные фрагменты слушателям; защищены также изображения, звук и повторные ответы из кэша команд. Повтор запроса слушателя заново проверяет его текущий доступ.
 - Privacy is captured for each line and reply. Changing roll mode never exposes earlier private portions to listeners, including images, audio and cached command replies. Retried listener requests recheck current access.
 

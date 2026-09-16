@@ -12,6 +12,7 @@ globalThis.foundry = { applications: { api: {
   DialogV2: { confirm: async () => true }
 } }, utils: { deepClone: structuredClone } };
 const { MasterScreenApplication } = await import("../dmicher-master-screen/scripts/apps/ide.js");
+const { WorkspacePresetStore } = await import("../dmicher-master-screen/scripts/workspace-presets-store.js");
 
 function appFor(scene = null) {
   return new MasterScreenApplication({
@@ -24,6 +25,41 @@ function deferred() {
   const promise = new Promise((finish) => { resolve = finish; });
   return { promise, resolve };
 }
+
+async function presetDraft() {
+  const f = signalFixture(), app = appFor(f.scene);
+  f.data.interactionCatalog = { shops: [], dialogues: [] };
+  app.selectionSceneId = f.scene.id; app.layout.preferences.mainTab = "windows";
+  app.controller.workspacePresets = { capture: (_scene, _kind, { name }) => ({ id: "layout", name, entries: [] }), activePreset: () => null };
+  await app.workspacePresetAction("captureWorkspacePreset", { dataset: { presetKind: "windows" } });
+  return { ...f, app, store: new WorkspacePresetStore(f.scene) };
+}
+
+test("capturing a workspace is a preserved IDE draft until explicit revision-checked save", async () => {
+  const f = await presetDraft();
+  assert.equal(f.writes(), 0); assert.equal(f.app.dirty, true); assert.equal(f.app.selection.kind, "windowPreset");
+  f.app.parameterDraft.name = "Prepared layout";
+  const view = await f.app._prepareContext({});
+  assert.match(view.detailHTML, /Prepared layout/); assert.equal(f.app.parameterDraft.name, "Prepared layout");
+  await f.app.saveParameters();
+  assert.equal(f.store.find("windows", "layout").name, "Prepared layout"); assert.equal(f.app.dirty, false);
+  await f.app._prepareContext({}); f.app.parameterDraft.name = "Stale layout"; f.app.dirty = true;
+  await f.store.save("windows", { id: "other", name: "Other", entries: [] });
+  await assert.rejects(f.app.saveParameters(), /another window|другим окном/);
+  assert.equal(f.store.find("windows", "layout").name, "Prepared layout");
+});
+
+test("a pending preset deletion cannot remove the next selection or discard its draft", async () => {
+  const f = await presetDraft(); await f.app.saveParameters(); await f.app._prepareContext({});
+  const confirmation = deferred();
+  foundry.applications = { api: { DialogV2: { confirm: () => confirmation.promise } } };
+  const task = f.app.workspacePresetAction("deleteWorkspacePreset", { dataset: { presetKind: "windows" } });
+  await new Promise(setImmediate);
+  f.app.selection = { kind: "windowPreset", id: "newDraft" };
+  f.app.parameterDraft = { id: "newDraft", name: "Unsaved next layout", entries: [] }; f.app.dirty = true;
+  confirmation.resolve(true); await task;
+  assert.ok(f.store.find("windows", "layout")); assert.equal(f.app.parameterDraft.id, "newDraft"); assert.equal(f.app.dirty, true);
+});
 
 test("an open IDE handles a vanished scene even when its remembered tab is macros", async () => {
   for (const tab of ["macros", "shops", "scene"]) {

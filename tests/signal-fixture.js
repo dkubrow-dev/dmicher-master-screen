@@ -31,6 +31,11 @@ export function fixture() {
     macros.set(uuid, result); return result;
   }
   async function subscribe(signal, ownerKey = "Token:other", operation) {
+    if (signal.emitterKey.startsWith("Token:")) {
+      const binding = data.objectBindings.bindings[signal.emitterKey] ??= {};
+      binding.signals ??= { enabled: true, enabledIds: [] };
+      if (!binding.signals.enabledIds.includes(signal.id)) binding.signals.enabledIds.push(signal.id);
+    }
     const uuid = `Macro.${++sequence}`; macro(uuid, signal, operation);
     await catalog.attachMacro(ownerKey, uuid);
     const entry = await catalog.saveSubscription({ ownerKey, emitterKey: signal.emitterKey, signalId: signal.id, macroUuid: uuid });

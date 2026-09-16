@@ -81,7 +81,7 @@ try {
     assert.equal(await page.locator('#foreign-item-dialog').evaluate((element) => element.returnValue), "saved");
     await page.evaluate(() => document.getElementById("foreign-item-dialog").remove());
     const closeForms = () => page.evaluate(async () => { for (const item of [...foundry.applications.instances.values()]) if (item !== controller.editor) await item.close(); });
-    await page.evaluate(() => controller.openObjectInfo({ type: "Token", id: "guard" }));
+    await page.evaluate(() => controller.openObjectAutomation({ type: "Token", id: "guard" }));
     const info = page.locator('.ms-object-info'); await info.locator('[name="object-tags"]').waitFor();
     assert.equal(await info.locator('[data-screen-action="copy-value"]').count(), 5);
     assert.deepEqual(await info.locator('.ms-object-metadata dd span').allTextContents(), ["Guard", "Token", "guard", "Scene.scene-a.Token.guard", "Actor.guard-actor"]);
@@ -91,7 +91,7 @@ try {
     await info.locator('[name="object-notes"]').press('Enter'); await info.waitFor({state:'hidden'});
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:guard"].notes), 'Important notes');
     await page.evaluate(async () => { const {SceneAssets}=await import('/modules/dmicher-master-screen/scripts/scene-assets.js'); const c=new SceneAssets(scene); await c.saveShop({id:'shop-a',name:'Shop A',items:[]}); await c.saveShop({id:'shop-b',name:'Shop B',items:[]}); await c.saveDialogue({id:'talk',name:'Talk',startPageId:'p',pages:[{id:'p',name:'Start',text:'Hello',responses:[]}]}); });
-    await page.evaluate(() => controller.openObjectBehavior({type:'Token',id:'guard'})); const behavior=page.locator('.ms-object-behavior'); await behavior.locator('.ms-object-tabs').waitFor();
+    await page.evaluate(() => controller.openObjectAutomation({type:'Token',id:'guard'})); const behavior=page.locator('.ms-object-behavior'); await behavior.locator('.ms-object-tabs').waitFor();
     assert.deepEqual(await behavior.locator('.ms-object-tabs [data-tab]').evaluateAll(es=>es.map(e=>e.dataset.tab)), ['properties','transitions','player-actions','routine']);
     assert.equal(await behavior.locator('[data-tab="properties"]').getAttribute('aria-pressed'), 'true');
     const registerTool = async (kind, id) => {

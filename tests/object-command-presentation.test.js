@@ -105,11 +105,11 @@ test("command badge animation uses prepared text and releases removed or destroy
   runs["Token:npc"].phase = "waiting"; badges.sync(scene); assert.match(badge.children[1].text, /Waiting for script/);
   assert.equal(counters.draws, 2);
   runs["Token:npc"].phase = "before"; runs["Token:npc"].pendingReplacement = { config: { id: "wait" }, request: { actorName: "Another hero" } };
-  badges.sync(scene); assert.equal(badge.children[1].text, "Hero\nCome here ⚙\nNext: Wait"); assert.equal(counters.draws, 3);
+  badges.sync(scene); assert.equal(badge.children[1].text, "Hero\nCome here ⚙\nNext: Wait here"); assert.equal(counters.draws, 3);
   const beforePendingFrames = { ...counters };
   for (let frame = 0; frame < 1000; frame++) badges.refresh(token);
   assert.deepEqual(counters, beforePendingFrames);
-  game.i18n.lang = "ru"; badges.sync(scene); assert.equal(badge.children[1].text, "Hero\nПодойди ⚙\nЗатем: Жди"); assert.equal(counters.draws, 4);
+  game.i18n.lang = "ru"; badges.sync(scene); assert.equal(badge.children[1].text, "Hero\nПодойди ⚙\nЗатем: Жди здесь"); assert.equal(counters.draws, 4);
   delete runs["Token:npc"].pendingReplacement; badges.sync(scene); assert.equal(badge.children[1].text, "Hero\nПодойди ⚙"); assert.equal(counters.draws, 5);
   badge.destroy(); badges.refresh(token); assert.equal(counters.draws, 6);
   runs = {}; badges.sync(scene); assert.equal(object.children.at(-1).destroyed, true);

@@ -50,6 +50,7 @@ function fixture({ manual = "stop", transition = false } = {}) {
   const calls = { sound: [], workspace: [], errors: [] };
   const runtime = new GroupRuntime({ now: () => clock, effects: { sound: async (...args) => calls.sound.push(args), stop() {} },
     onWorkspace: async (...args) => calls.workspace.push(args) });
+  runtime.canUsePremiumStep = () => true;
   runtime.report = error => calls.errors.push(error);
   const current = () => getRuntime(scene);
   const progress = () => {

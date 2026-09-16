@@ -1,10 +1,20 @@
 import { MODULE_ID } from "./model.js";
 import { generics } from "./generics.js";
+import { isPremiumScriptStep } from "./script-model.js";
 
 const dialogueAudio = generics.premium.forModule(MODULE_ID, {
   apiVersion: 1, methods: ["resolveDialogueAudioPickerOptions", "resolveDialogueAudio"]
 });
 const audioPath = (value) => typeof value === "string" ? value.trim().slice(0, 2048) : "";
+const interactionPresentation = generics.premium.forModule(MODULE_ID, {
+  apiVersion: 1, methods: ["resolveInteractivePresentation", "canExecuteScriptKind"]
+});
+export const isPremiumScriptKind = isPremiumScriptStep;
+export const canExecuteScriptKind = kind => !isPremiumScriptKind(kind) || interactionPresentation.invoke(
+  "canExecuteScriptKind", [kind], () => false, value => typeof value === "boolean");
+export const isInteractivePresentationAvailable = () => interactionPresentation.invoke(
+  "resolveInteractivePresentation", [], () => false, value => typeof value === "boolean");
+export const subscribeInteractivePresentationAccess = listener => interactionPresentation.subscribe(listener);
 export const isDialogueAudioAvailable = () => dialogueAudio.getStatus().active;
 export const subscribeDialogueAudioAccess = (listener) => dialogueAudio.subscribe(listener);
 

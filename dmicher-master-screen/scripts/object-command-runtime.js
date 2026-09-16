@@ -6,7 +6,7 @@ import { createExecutionScope, isExecutionHalted, notifyExecutionChange } from "
 import { isInteractionPaused } from "./interaction-pause.js";
 import { validateCommandAccess, commandDocument, rejectCommand, CommandRejection, commandLevelsOverlap } from "./object-command-access.js";
 import { text } from "./localization.js";
-import { validateCommandPoint } from "./object-command-movement.js";
+import { validateCommandPoint, commandPoint, clipCommandMovement, commandCenter } from "./object-command-movement.js";
 import { commandDoorVisible } from "./object-command-visibility.js";
 import { ObjectCommandCore } from "./object-command-core.js";
 import { scriptProgressKey } from "./script-runtime.js";
@@ -14,12 +14,14 @@ import { scriptHasActivity, clearScriptPresentation } from "./script-interruptio
 import { stopObjectAnimation } from "./script-movement.js";
 import { appendFollowWaypoint } from "./script-target-movement.js";
 import { debugError, commandTrace } from "./debug.js";
+import { normalizeObjectCommand, commandStopsBehavior, commandPermitsDisabledBehavior } from "./object-command-model.js";
+import { commandParent, commandBehaviorEnabled, setCommandBehavior, isCommandParentHalted } from "./object-command-state.js";
 
 const clone = structuredClone;
 const id = () => globalThis.foundry?.utils?.randomID?.() ?? crypto.randomUUID();
 const terminal = progress => !progress || ["done", "stopped", "failed", "uncertain"].includes(progress.status);
 const rawRuns = scene => scene?.getFlag?.(MODULE_ID, "objectCommandRuns") ?? {};
-const parentOf = (scene, run) => scene?.getFlag?.(MODULE_ID, "groupRuntimes")?.[run.groupId];
+const parentOf = commandParent;
 const phaseAfter = phase => ({ waiting: "before", before: "core", core: "after", after: "complete" })[phase];
 
 /** One command per object, sharing the group clock and its cancellable script
@@ -27,7 +29,7 @@ const phaseAfter = phase => ({ waiting: "before", before: "core", core: "after",
 export class ObjectCommandRuntime {
   constructor({ runtime, signals, lights, core = new ObjectCommandCore({ lights }) }) {
     Object.assign(this, { runtime, signals, core });
-    this.cancelled = new Set(); this.cache = new WeakMap(); this.disposed = false;
+    this.cancelled = new Set(); this.cache = new WeakMap(); this.disposed = false; this.delegations = new Map();
   }
   runs(scene) {
     if (!scene) return [];
@@ -42,10 +44,10 @@ export class ObjectCommandRuntime {
   owns(scene, runId) {
     if (this.disposed || !isAuthority() || globalThis.canvas?.scene?.id !== scene?.id || this.cancelled.has(runId)) return false;
     const run = this.runs(scene).find(run => run.runId === runId), parent = run && parentOf(scene, run);
-    if (!run || run.interruption || !parent || parent.runId !== run.parentRunId || isExecutionHalted(scene, parent)) return false;
+    if (!run || run.interruption || !parent || parent.runId !== run.parentRunId || isCommandParentHalted(scene, parent)) return false;
     const binding = scene.getFlag(MODULE_ID, "objectBindings")?.bindings?.[objectKey(run.target)];
     return Boolean(binding && !binding.playerCharacter && binding.groupId === run.groupId && getSceneObject(scene, run.target)
-      && (!["stop", "cancel"].includes(run.config.id) ? !parent.disabledObjects?.includes(objectKey(run.target)) : true));
+      && (commandPermitsDisabledBehavior(run.config.id) || commandBehaviorEnabled(scene, run.target, parent)));
   }
   current(scene, run, target, { ignoreInteractionPause = false, scriptKey, excludeDialogueSessions = [] } = {}) {
     if (!this.owns(scene, run.runId) || objectKey(run.target) !== objectKey(target)) return false;
@@ -75,13 +77,15 @@ export class ObjectCommandRuntime {
     stopObjectAnimation(getSceneObject(scene, run.target));
     this.runtime.effects.stop?.(scene, { runIds: [run.runId], target: run.target });
     notifyExecutionChange(scene, "object-command-stopped");
+    this.delegations.delete(run.runId);
   }
   signal(scene, run, name, { validation = false } = {}) {
     return this.signals.emit(scene, { id: `${run.runId}:${name}`, emitterKey: objectKey(run.target), name,
-      parameters: { playerTokenUuid: run.request.actorTokenUuid, objectUuid: run.request.targetUuid,
-        commandId: run.config.id, parameters: JSON.stringify({ ...run.config.parameters, ...run.request.parameters }) },
+      parameters: { playerTokenUuid: run.request.delegateTokenUuid ?? run.request.actorTokenUuid ?? "", objectUuid: run.request.targetUuid,
+        commandId: run.config.id, parameters: JSON.stringify({ ...run.config.parameters, ...run.request.parameters }),
+        startedAt: run.startedAt ?? 0, patronUuid: run.request.delegateTokenUuid ? run.request.actorTokenUuid : null },
       context: { groupId: run.groupId, runId: run.parentRunId, validation,
-        current: validation ? () => !isExecutionHalted(scene, parentOf(scene, run)) : undefined } });
+        current: validation ? () => !isCommandParentHalted(scene, parentOf(scene, run)) : undefined } });
   }
   publish(scene, run, name) {
     // Do not await subscribers from the scene queue: a subscriber may request
@@ -102,10 +106,25 @@ export class ObjectCommandRuntime {
   }
   inputs(scene, packet, access) {
     const raw = packet.parameters ?? {}, { actor, object, config } = access;
-    if (config.id === "go") return { point: validateCommandPoint(scene, actor, object, raw.point) };
+    const point = input => {
+      if (access.method !== "gm") return validateCommandPoint(scene, actor, object, input);
+      const result = commandPoint(scene, input);
+      if (clipCommandMovement(scene, object, commandCenter(object, scene), result).blocked)
+        rejectCommand("obstacle", text("Прямой путь объекта к этой точке перекрыт.", "The object's straight path to that point is blocked."));
+      return result;
+    };
+    if (config.id === "delegate") {
+      const recipient = commandDocument(scene, raw.targetUuid);
+      if (!recipient || recipient === object || raw.commandId === "delegate") rejectCommand("delegation", text("Выберите другой объект и команду для поручения.", "Choose another object and a command to delegate."));
+      validateCommandAccess(scene, { ...packet, method: "delegated", delegateTokenUuid: packet.targetUuid,
+        targetUuid: raw.targetUuid, commandId: raw.commandId, parameters: raw.parameters ?? {} }, access.user,
+      { active: this.activeForObject(scene, { type: recipient.documentName, id: recipient.id }), ignoreRange: true });
+      return { targetUuid: raw.targetUuid, commandId: raw.commandId, parameters: clone(raw.parameters ?? {}) };
+    }
+    if (config.id === "go") return { point: point(raw.point) };
     if (config.id === "patrol") {
       if (!Array.isArray(raw.points) || raw.points.length !== 2) rejectCommand("points", text("Выберите две точки патруля.", "Choose two patrol points."));
-      const points = raw.points.map(point => validateCommandPoint(scene, actor, object, point));
+      const points = raw.points.map(point);
       if (Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) < 1) rejectCommand("points", text("Точки патруля должны различаться.", "Patrol points must be different."));
       return { points };
     }
@@ -114,38 +133,45 @@ export class ObjectCommandRuntime {
       if (door?.documentName !== "Wall" || !door.door) rejectCommand("door", text("Выберите дверь на карте.", "Choose a door on the map."));
       if (!commandLevelsOverlap(actor, door) || !commandLevelsOverlap(object, door)) rejectCommand("door-level", text("Дверь находится на другом уровне.", "The door is on a different level."));
       if (!access.user.isGM && door.door === 2) rejectCommand("door", text("Выберите доступную дверь на карте.", "Choose an available door on the map."));
-      if (!commandDoorVisible(scene, actor, door)) rejectCommand("visibility", text("Персонаж, отдающий команду, должен видеть выбранную дверь.", "The character issuing the command must be able to see the chosen door."));
+      if (access.method !== "gm" && !commandDoorVisible(scene, actor, door)) rejectCommand("visibility", text("Персонаж, отдающий команду, должен видеть выбранную дверь.", "The character issuing the command must be able to see the chosen door."));
       if (config.id === "open-door" && door.ds === (globalThis.CONST?.WALL_DOOR_STATES?.LOCKED ?? 2)) rejectCommand("locked", text("Дверь заперта.", "The door is locked."));
       return { doorUuid: raw.doorUuid };
     }
     return {};
   }
-  async accept(scene, packet, user) {
+  async accept(scene, packet, user, { trusted = false, isCurrent = () => true } = {}) {
     this.runtime.requireAuthority(scene);
+    const assertCurrent = () => { if (!isCurrent()) rejectCommand("expired", text("Действие уже отменено.", "This action has already been cancelled.")); };
+    assertCurrent();
     const object = commandDocument(scene, packet.targetUuid), target = object && { type: object.documentName, id: object.id };
-    const access = validateCommandAccess(scene, packet, user, { active: this.activeForObject(scene, target) });
+    const check = active => { const access = validateCommandAccess(scene, packet, user, { active, trusted });
+      if (trusted && packet.configurationParameters) access.config = normalizeObjectCommand({ ...access.config, parameters: { ...access.config.parameters, ...packet.configurationParameters } });
+      return access; };
+    const access = check(this.activeForObject(scene, target));
     const parameters = this.inputs(scene, packet, access);
     const proposal = { runId: id(), parentRunId: access.runtime.runId, groupId: access.runtime.groupId,
       target: access.target, config: access.config, request: { ...packet, parameters, userId: user.id } };
     const permission = await this.signal(scene, proposal, "commandRequested", { validation: true });
+    assertCurrent();
     if (permission?.allowed === false) rejectCommand("veto", text("Команда отклонена условиями сцены.", "The scene's conditions rejected this command."));
     // Authorized replacement releases a pending native operation before waiting
     // for the scene queue. A later result cannot advance the replaced command.
     const old = this.activeForObject(scene, target);
-    validateCommandAccess(scene, packet, user, { active: old });
+    check(old);
     const stoppedOld = old && !this.waitsForScript(old, packet.commandId);
     if (stoppedOld) this.stopPresentation(scene, old);
     try {
       return await withSceneLock(scene, async () => {
+        assertCurrent();
         const current = this.activeForObject(scene, target);
-        const fresh = validateCommandAccess(scene, packet, user, { active: current });
+        const fresh = check(current);
         if (JSON.stringify(fresh.config) !== JSON.stringify(proposal.config) || fresh.runtime.runId !== proposal.parentRunId) {
           rejectCommand("changed", text("Условия команды изменились. Выберите команду заново.", "The command's conditions changed. Select the command again."));
         }
         this.inputs(scene, packet, fresh);
         const run = { ...proposal, schemaVersion: 1, command: true, parentRunId: fresh.runtime.runId,
           groupId: fresh.runtime.groupId, stateId: fresh.runtime.stateId, state: clone(fresh.runtime.state), config: fresh.config,
-          request: { ...proposal.request, actorName: fresh.actor.name }, phase: "waiting", waitingScripts: [],
+          request: { ...proposal.request, actorName: fresh.commander?.name ?? fresh.user.name ?? fresh.actor.name }, phase: "waiting", waitingScripts: [],
           script: null, scriptSlot: null, phaseScripts: {}, scriptStates: {}, core: {}, interruption: null, errorRetries: 0, acceptedAt: Date.now(), startedAt: null };
         if (current && this.waitsForScript(current, packet.commandId)) {
           // A replacement is reserved, never executed in parallel. Finish only
@@ -161,15 +187,12 @@ export class ObjectCommandRuntime {
           for (const [key, progress] of Object.entries(parent.scriptStates ?? {})) {
             if (!key.startsWith(`${objectKey(target)}:`) || !scriptHasActivity(progress)) continue;
             const script = this.runtime.scripts.scriptForKey(parent, object, key); if (!script) continue;
-            if (script.interruptions.command === "ignore" && fresh.config.id !== "stop") {
+            if (script.interruptions.command === "ignore" && !commandStopsBehavior(fresh.config.id)) {
               if (!terminal(progress)) run.waitingScripts.push({ runId: parent.runId, key });
-            } else await this.runtime.scripts.interrupt(scene, parent, object, script, key, fresh.config.id === "stop" ? "manual" : "command");
+            } else await this.runtime.scripts.interrupt(scene, parent, object, script, key, commandStopsBehavior(fresh.config.id) ? "manual" : "command");
           }
         }
-        if (fresh.config.id === "stop") {
-          const parent = getRuntime(scene, { groupId: run.groupId });
-          if (!parent.disabledObjects.includes(objectKey(target))) { parent.disabledObjects.push(objectKey(target)); await saveRuntime(scene, parent); }
-        }
+        if (commandStopsBehavior(fresh.config.id)) await setCommandBehavior(scene, target, false, run.groupId);
         if (!run.waitingScripts.length) { this.enterPhase(run, "before"); run.startedAt = Date.now(); }
         await this.save(scene, run); notifyExecutionChange(scene, "object-command-accepted");
         commandTrace("object.accepted", { sceneId: scene.id, commandId: run.config.id, objectId: target.id, userId: user.id, waiting: run.phase === "waiting" });
@@ -188,7 +211,7 @@ export class ObjectCommandRuntime {
     }
   }
   waitsForScript(run, replacementId) {
-    if (replacementId === "stop" || !run.script || run.script.interruptions.command !== "ignore") return false;
+    if (commandStopsBehavior(replacementId) || !run.script || run.script.interruptions.command !== "ignore") return false;
     const progress = run.scriptStates?.[scriptProgressKey(run.target, run.script, run.scriptSlot)];
     return progress && !terminal(progress);
   }
@@ -196,7 +219,7 @@ export class ObjectCommandRuntime {
     const run = clone(previous.pendingReplacement);
     await this.finish(scene, previous, { cancelled: true, reason: "replacement", activatePending: true });
     const parent = parentOf(scene, previous);
-    if (!parent || parent.stateId !== previous.stateId || isExecutionHalted(scene, parent)) {
+    if (!parent || parent.stateId !== previous.stateId || isCommandParentHalted(scene, parent)) {
       this.publish(scene, run, "commandCancelled"); return;
     }
     run.parentRunId = parent.runId; run.state = clone(parent.state);
@@ -230,7 +253,7 @@ export class ObjectCommandRuntime {
   }
   source(scene, run, object) {
     const parent = parentOf(scene, run);
-    if (isExecutionHalted(scene, parent) || parent?.disabledObjects?.includes(objectKey(run.target)) && !["stop", "cancel"].includes(run.config.id)) return "manual";
+    if (isCommandParentHalted(scene, parent) || !commandBehaviorEnabled(scene, run.target, parent) && !commandPermitsDisabledBehavior(run.config.id)) return "manual";
     if (this.runtime.combat.context(scene, object)) return "combat";
     if (isInteractionPaused(scene, run.target, Date.now(), { playerOnly: true, includeCompleted: true })) return "interaction";
     return null;
@@ -279,7 +302,16 @@ export class ObjectCommandRuntime {
           this.enterPhase(run, "before"); run.startedAt ??= Date.now(); await this.save(scene, run);
           this.publish(scene, run, "commandStarted"); continue;
         }
-        if (run.phase === "complete") { await this.finish(scene, run); continue; }
+        if (run.phase === "complete") {
+          if (run.config.id === "delete") {
+            const scope = createExecutionScope(scene, { isCurrent: () => !this.disposed && !this.cancelled.has(run.runId)
+              && this.activeForObject(scene, run.target)?.runId === run.runId && parentOf(scene, run)?.runId === run.parentRunId
+              && !isCommandParentHalted(scene, parentOf(scene, run)) });
+            try { const result = await scope.run(() => object.delete()); if (result.stale) continue; }
+            finally { scope.dispose(); }
+          }
+          await this.finish(scene, run); continue;
+        }
         if (run.script) {
           const key = scriptProgressKey(run.target, run.script, run.scriptSlot);
           const current = this.state(scene, run.runId); if (!current || !this.owns(scene, run.runId)) continue;
@@ -298,7 +330,12 @@ export class ObjectCommandRuntime {
         const scope = createExecutionScope(scene, { isCurrent: () => this.current(scene, run, run.target) && !this.source(scene, run, object) });
         try {
           const beforeCore = JSON.stringify(run.core);
-          const result = await scope.run(() => this.core.tick(scene, run, object, elapsed, { isCurrent: scope.current, signal: scope.signal }));
+          const execute = () => this.core.tick(scene, run, object, elapsed, { isCurrent: scope.current, signal: scope.signal,
+            openNote: (document, command) => this.openNote?.(document, command), delegate: (command, parameters) => this.tickDelegation(scene, command, parameters) });
+          const result = await scope.run(() => this.runtime.objectEvents
+            ? this.runtime.objectEvents.withInitiator(object,{userId:run.request.userId,
+              patronUuid:run.request.delegateTokenUuid ? run.request.actorTokenUuid : null},execute)
+            : execute());
           if (result.stale) continue;
           if (result.value.done) this.enterPhase(run, "after");
           if (result.value.done || JSON.stringify(run.core) !== beforeCore) await this.save(scene, run);
@@ -312,6 +349,24 @@ export class ObjectCommandRuntime {
       const run = clone(snapshot);
       if (run.core?.follow?.targetUuid === targetUuid && appendFollowWaypoint(run.core.follow, point)) await this.save(scene, run);
     }
+  }
+  tickDelegation(scene, run, parameters) {
+    let pending = this.delegations.get(run.runId);
+    if (!pending) {
+      pending = { done: false, error: null }; this.delegations.set(run.runId, pending);
+      // Acceptance takes the scene queue and may invoke asynchronous validators.
+      // Never await it while the current core tick holds that same queue.
+      void Promise.resolve().then(async () => {
+        if (!this.current(scene, run, run.target)) return;
+        const user = game.users?.get(run.request.userId);
+        await this.accept(scene, { ...run.request, requestId: `${run.runId}:delegated`, method: "delegated",
+          delegateTokenUuid: run.request.targetUuid, targetUuid: parameters.targetUuid, commandId: parameters.commandId, parameters: parameters.parameters }, user,
+        { isCurrent: () => this.current(scene, run, run.target) });
+        pending.done = true;
+      }).catch(error => { pending.error = error; });
+    }
+    if (pending.error) throw pending.error;
+    return { done: pending.done };
   }
   async captureHalt(scene, { groupIds } = {}) {
     for (const snapshot of this.runs(scene)) if ((!groupIds || groupIds.includes(snapshot.groupId)) && snapshot.interruption?.source !== "manual") {
@@ -329,5 +384,5 @@ export class ObjectCommandRuntime {
   }
   activate(scene) { for (const run of this.runs(scene)) this.cancelled.delete(run.runId); }
   clear(scene) { for (const run of this.runs(scene)) this.stopPresentation(scene, run); this.cache.delete(scene); }
-  dispose() { this.clear(globalThis.canvas?.scene); this.disposed = true; this.cancelled.clear(); }
+  dispose() { this.clear(globalThis.canvas?.scene); this.disposed = true; this.cancelled.clear(); this.delegations.clear(); }
 }

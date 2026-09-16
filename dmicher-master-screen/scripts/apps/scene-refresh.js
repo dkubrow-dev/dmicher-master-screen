@@ -10,7 +10,7 @@ export function scenePreparationKey(scene) {
       [type, document.id, document.uuid, document.name, document.text, document.label,
         document.actor?.uuid, document.texture?.src]));
   return JSON.stringify([scene?.id, scene?.name, globalThis.game?.i18n?.lang,
-    ...["objectBindings", "groupDefinitions", "interactionCatalog", "signalCatalog", "objectTags"].map(read),
+    ...["objectBindings", "groupDefinitions", "interactionCatalog", "signalCatalog", "objectTags", "workspacePresets"].map(read),
     documents,
     Array.from(globalThis.game?.macros?.values?.() ?? [], (macro) =>
       [macro.id, macro.name, macro.command, macro.type, macro.canExecute])]);

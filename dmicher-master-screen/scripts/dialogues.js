@@ -19,6 +19,7 @@ import { dialogueParticipant } from "./dialogue-participants.js";
 import { validateListenerAccess } from "./dialogue-listeners.js";
 import { normalizeDialoguePresentation } from "./interaction-model.js";
 import { dialogueVisibility, syncDialogueRollMode } from "./dialogue-visibility.js";
+import { evaluateInteractionMacro } from "./interaction-macro.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -124,8 +125,14 @@ export function createDialogueService({ emitSignal, onChange = () => {}, context
     const release = command.kind === "start" ? beginInteractionPause(scene, command.target) : () => {};
     let staged;
     try {
+      let conditionSignature;
+      if(command.kind === "start" && !scriptStart && initial.dialogue?.conditionMacro) {
+        conditionSignature=JSON.stringify(initial.dialogue);
+        if(!await evaluateInteractionMacro(scene,{target:command.target,conditionMacro:initial.dialogue.conditionMacro,runtime:initial.runtime,actorToken:scene.tokens?.get(command.actorTokenId),user,current:authority})) fail(text("Условия диалога сейчас не выполнены.","The dialogue conditions are not currently met."));
+      }
       staged = await lock(scene, async () => {
         if (!authority()) fail(localizedMessage("Исполняющий мастер изменился."));
+        if(conditionSignature && JSON.stringify(context(command.sceneId,command.dialogueId,command.groupId ?? "main",command.target).dialogue) !== conditionSignature) fail(text("Условия диалога изменились. Откройте меню заново.","Dialogue conditions changed. Reopen the menu."));
         const state = clone(runtimeOf(scene, { groupId: command.groupId ?? "main" }));
         state.dialogueSessions ??= {}; state.dialogueCommands ??= {};
         const previous = state.dialogueCommands[commandKey];

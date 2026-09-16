@@ -36,8 +36,7 @@ for (const generation of [13, 14]) test(`Foundry ${generation}: dialogue slider 
     registerDialogueVolume(); assert.equal(settings.scope, "client"); controller.install();
     controller.render(null, root); assert.equal(list.children.length, 1);
     const initial = list.children[0]; assert.equal(initial.children[2].disabled, true);
-    assert.equal(initial.children[0].children[0].className, "dmicher-premium-badge");
-    assert.equal(initial.children[0].children[0].textContent, "Premium");
+    assert.equal(initial.children[0].children.length, 0, "native volume controls are the badge exception");
     allowed = true; registration.notifyChanged(); assert.equal(list.children.length, 1);
     const row = list.children[0], slider = row.children[2];
     assert.equal(row, initial); assert.equal(slider.disabled, false);

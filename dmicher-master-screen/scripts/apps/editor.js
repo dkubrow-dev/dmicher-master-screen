@@ -283,7 +283,7 @@ export class EditorApplication extends ScreenFormApplication {
     if (Object.hasOwn(SCENE_COMMANDS, action)) return this.controller[SCENE_COMMANDS[action]]();
     if (Object.hasOwn(GROUP_COMMANDS, action)) return this.controller[GROUP_COMMANDS[action]](button?.dataset?.groupId ?? this.selection?.groupId ?? this.controller.getContext().groupId);
     if (["resumeGroup", "resumeSelectedGroup"].includes(action)) return this.controller.resumeGroup(value(this.element, "resumeState"), button?.dataset?.groupId ?? this.selection?.groupId ?? this.controller.getContext().groupId);
-    if (action === "token") return this.controller.openObjectBehavior({ type: "Token", id: button.dataset.tokenId });
+    if (action === "token") return this.controller.openObjectAutomation({ type: "Token", id: button.dataset.tokenId });
     const context = this.controller.getContext();
     const currentKey = editorContextKey(context, context.state?.id ?? context.definition?.states?.[0]?.id);
     const shownKey = this.element?.querySelector?.("[data-editor-context]")?.dataset?.editorContext ?? this.contextKey;

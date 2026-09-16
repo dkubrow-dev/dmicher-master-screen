@@ -26,6 +26,7 @@ async function fixture({ routine, transition, initial, emitSignal, effects: supp
   const npc = make("npc", "Token"), tile = make("tile", "Tile"); scene.tokens.set(npc.id, npc); scene.tiles.set(tile.id, tile); game.scenes.set(scene.id, scene); globalThis.canvas = { scene };
   const calls = [], effects = { cleanupSpeech: async () => {}, sound: async (...args) => calls.push(["sound", ...args]), spawn: async () => [], ...suppliedEffects };
   const runtime = new GroupRuntime({ effects, emitSignal: emitSignal ?? (async (_scene, signal) => { calls.push(["signal", signal]); return { allowed: true }; }), now: () => now, combat, onChange });
+  runtime.canUsePremiumStep = () => true;
   const progress = (slot = "routine", target = { type: "Token", id: "npc" }) => Object.entries(getRuntime(scene).scriptStates).find(([key]) => key.startsWith(`${target.type}:${target.id}:${slot}:`))?.[1];
   return { scene, flags, npc, tile, runtime, calls, progress, now: () => now, async tick(ms = 500) { now += ms; await runtime.tick(); } };
 }

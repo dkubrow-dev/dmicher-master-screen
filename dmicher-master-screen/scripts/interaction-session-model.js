@@ -12,6 +12,11 @@ export const dialogueSessionIsPresent = (session, now = Date.now()) => dialogueS
 
 export const dialogueSessionMatchesReference = (session, reference) => Boolean(session && reference
   && session.sessionId === reference.sessionId && session.userId === reference.userId && session.actorTokenId === reference.actorTokenId);
+export const shopSessionMatchesReference = (session, reference) => dialogueSessionMatchesReference(session, reference) && session.shopId === reference.shopId;
+export function scriptShopsPending(runtime, references, now = Date.now()) {
+  return (references ?? []).some(reference => Object.values(runtime?.shopSessions ?? {}).some(session => session.runId === runtime.runId
+    && shopSessionIsLive(session, now) && shopSessionMatchesReference(session, reference)));
+}
 
 /** An explicit script wait also covers an interrupted conversation: interruption
  * is not completion. Finish, Leave or an expired lease releases the waiting step. */

@@ -5,12 +5,12 @@ import { isExecutionHalted } from "./execution.js";
 
 const allowed = new Set(["Actor", "Item", "JournalEntry", "JournalEntryPage", "RollTable"]);
 const writes = new WeakMap();
-const apps = () => [...new Set([...asArray(foundry.applications?.instances), ...Object.values(ui.windows ?? {})])];
+export const workspaceApplications = () => [...new Set([...asArray(globalThis.foundry?.applications?.instances), ...Object.values(globalThis.ui?.windows ?? {})])];
 const descriptor = (app) => ({ uuid: app.document?.uuid ?? app.object?.uuid,
   x: Number(app.position?.left) || 0, y: Number(app.position?.top) || 0,
   width: Number(app.position?.width) || 500, height: Number(app.position?.height) || 450 });
 
-async function renderSheet(app) {
+export async function renderWorkspaceApplication(app) {
   if (app.rendered) return;
   if (app.addEventListener) { await app.render(true); return; }
   // ApplicationV1.render returns the instance before its asynchronous HTML is ready.
@@ -37,7 +37,7 @@ export class WorkspaceManager {
     this.activePlan = [];
   }
   capture() {
-    return apps().filter((app) => app.rendered && allowed.has((app.document ?? app.object)?.documentName))
+    return workspaceApplications().filter((app) => app.rendered && allowed.has((app.document ?? app.object)?.documentName))
       .map(descriptor).filter((entry) => entry.uuid);
   }
   key(scene, state) { return `${scene.id}:${state.groupId ?? "main"}`; }
@@ -116,7 +116,7 @@ export class WorkspaceManager {
           const app = document.sheet;
           if (!app) continue;
           const owned = !app.rendered;
-          await renderSheet(app);
+          await renderWorkspaceApplication(app);
           // Presentation is serialized: a newer lifecycle cannot own this sheet yet.
           if (!current()) { if (owned) await app.close(); return; }
           app.setPosition({ left: entry.x, top: entry.y, width: entry.width, height: entry.height });

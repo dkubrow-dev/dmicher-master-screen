@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 
 class ApplicationStub {}
 globalThis.foundry = { applications: { api: { ApplicationV2: ApplicationStub, HandlebarsApplicationMixin: base => base } } };
-const { ObjectInfoApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
+const { ObjectAutomationApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
 const { ScreenController } = await import("../dmicher-master-screen/scripts/controller.js");
 
 test("Object information places Go to object after Settings and preserves unsaved fields", async () => {
   for (const language of ["ru", "en"]) {
     globalThis.game = { i18n: { lang: language } };
-    const calls = [], app = Object.create(ObjectInfoApplication.prototype);
+    const calls = [], app = Object.create(ObjectAutomationApplication.prototype);
+    app.tab="information";
     app.descriptor = { type: "Token", id: "npc" }; app.sceneId = "original-scene";
     app.draft = { groupId: null, tags: [], notes: "Unsaved note" }; app.dirty = true;
     app.context = () => ({ document: { id: "npc", name: "NPC", uuid: "Scene.original-scene.Token.npc" }, definitions: [] });

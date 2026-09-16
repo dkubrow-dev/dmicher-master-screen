@@ -5,6 +5,8 @@ import { normalizeScriptInterruptions } from "../script-interruption-model.js";
 import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
 import { scriptActionOptions } from "../script-action-labels.js";
 import { generics } from "../generics.js";
+import { scriptTransitionMacroTemplate } from "../script-transitions.js";
+import { canExecuteScriptKind } from "../premium-provider.js";
 
 const kinds = scriptActionOptions;
 
@@ -40,14 +42,29 @@ export function readScriptInterruptionFields(root, prefix, previous) {
 /** Error retry fields retain their values while Stop makes them inactive. */
 export function bindScriptInterruptions(root, options) {
   root.addEventListener("change", event => {
+    if (event.target.matches?.("[data-script-transition-mode]")) {
+      const cell = event.target.closest("[data-script-transition]"), mode = event.target.value;
+      for (const field of cell.querySelectorAll("[data-transition-field]")) field.hidden = field.dataset.transitionField !== mode;
+      const macro = cell.querySelector("[data-transition-source]");
+      if (mode === "macro" && !macro.value.trim()) macro.value = scriptTransitionMacroTemplate({ steps: [...cell.closest(".ms-script-table").querySelectorAll("[data-step-id]")].map(row => ({ id: Number(row.dataset.stepId) })) });
+      return;
+    }
     if (!event.target.matches?.("[data-script-error-mode]")) return;
     const disabled = event.target.value === "stop";
     for (const field of event.target.closest(".ms-script-interruptions").querySelectorAll("[data-script-error-setting]")) field.disabled = disabled;
   }, options);
 }
 
-/** Row order is presentation only. IDs and outgoing edges define execution. */
-export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false } = {}) {
+function transitionFields(step, prefix) {
+  const transition = step.transition ?? { mode: "any", macro: "" };
+  const options = [{ id: "next", name: t("Следующий", "Next row") }, { id: "any", name: t("Любой из", "Any of") }, { id: "macro", name: t("Макрос", "Macro") }];
+  return `<select data-script-transition-mode name="${prefix}-transition-mode" aria-label="${t("Режим перехода", "Transition mode")}">${selectOptions(options, transition.mode)}</select>
+    <input data-transition-field="any" name="${prefix}-next" aria-label="${t("Следующие шаги", "Next steps")}" value="${e(step.next.join(", "))}" placeholder="—"${transition.mode === "any" ? "" : " hidden"}>
+    <div data-transition-field="macro"${transition.mode === "macro" ? "" : " hidden"}><textarea data-transition-source name="${prefix}-transition-macro" aria-label="${t("Макрос перехода", "Transition macro")}" spellcheck="false">${e(transition.macro)}</textarea></div>`;
+}
+
+/** Next-row transitions follow display order; explicit edges retain step IDs. */
+export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false, ...parameterContext } = {}) {
   const blocks = scripts.map((script, index) => {
     const prefix = `script-${index}`;
     const check = (name, label, active) => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}"${active ? " checked" : ""}>${e(label)}</label>`;
@@ -56,12 +73,12 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
       <label>${t("Название скрипта", "Script name")}<input name="${prefix}-name" value="${e(script.name)}"></label>${check("enabled", t("Включить", "Enable"), script.enabled !== false)}</div>
       <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция", "Function")}</th><th>${t("Параметры", "Parameters")}</th><th>${t("Переход", "Next")}</th><th></th></tr></thead><tbody>
       ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td><select aria-label="${t("Функция", "Function")}" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}">${kinds().map(([kind, name]) => `<option value="${kind}"${step.kind === kind ? " selected" : ""}>${e(name)}</option>`).join("")}</select>
-        <button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}">JSON</button></td>
-        <td><div data-script-parameter-fields>${renderScriptParameters(step, { index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false">${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
-        <td><input name="${prefix}-step-${stepIndex}-next" aria-label="${t("Следующие шаги", "Next steps")}" value="${e(step.next.join(", "))}" placeholder="—"></td>
+        <button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>JSON</button></td>
+        <td><div data-script-parameter-fields>${renderScriptParameters(step, { ...parameterContext, index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
+        <td data-script-transition>${transitionFields(step, `${prefix}-step-${stepIndex}`)}</td>
         <td><button type="button" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></td></tr>`).join("")}
       </tbody></table></div>
-      <p class="ms-note">${t("Перетаскивание меняет только порядок строк. Запуск начинается с шага 1; номера и переходы сохраняются.", "Dragging changes row order only. Execution starts at step 1; IDs and transitions stay unchanged.")}</p>
+      <p class="ms-note">${t("Запуск начинается с шага 1. «Следующий» выполняет строку ниже; «Любой из» и макрос выбирают по номерам шагов.", "Execution starts at step 1. Next row follows display order; Any of and Macro select step IDs.")}</p>
       <button type="button" data-screen-action="add-script-step" data-index="${index}">+ ${t("Шаг", "Step")}</button>
       ${check("repeat", t("Повторять", "Repeat"), script.repeat)}
       ${buildScriptInterruptionFields(script.interruptions, prefix)}
@@ -73,7 +90,7 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
 
 export function readScriptFields(root, scripts) {
   for (const control of root.querySelectorAll?.("[data-script-param]") ?? []) {
-    if (!control.disabled && control.checkValidity?.() === false) throw new Error(`${control.getAttribute("aria-label") ?? ""}: ${control.validationMessage}`);
+    if (!control.disabled && !control.matches?.(":disabled") && control.checkValidity?.() === false) throw new Error(`${control.getAttribute("aria-label") ?? ""}: ${control.validationMessage}`);
   }
   const value = (name) => formValue(root, name);
   return scripts.map((script, index) => {
@@ -84,14 +101,15 @@ export function readScriptFields(root, scripts) {
     return { ...script, name: value(`${prefix}-name`), enabled: on("enabled"), repeat: on("repeat"), ...(combat ? { combat } : {}), interruptions,
       steps: script.steps.map((step, stepIndex) => {
         const key = `${prefix}-step-${stepIndex}`;
+        const kind = value(`${key}-kind`);
         let parameters;
-        try { parameters = JSON.parse(value(`${key}-parameters`)); }
+        try { parameters = canExecuteScriptKind(kind) ? JSON.parse(value(`${key}-parameters`)) : kind === step.kind ? structuredClone(step.parameters) : completeScriptParameters(kind); }
         catch { throw new Error(t(`Шаг ${step.id}: исправьте JSON параметров.`, `Step ${step.id}: correct the parameter JSON.`)); }
         const raw = value(`${key}-next`).trim(), next = raw ? raw.split(",").map((part) => {
           if (!/^\s*[1-9]\d*\s*$/.test(part) || !Number.isSafeInteger(Number(part))) throw new Error(t("Переходы — положительные номера шагов через запятую.", "Next steps must be positive step numbers separated by commas."));
           return Number(part);
         }) : [];
-        return { ...step, kind: value(`${key}-kind`), parameters, next };
+        return { ...step, kind, parameters, next, transition: { mode: value(`${key}-transition-mode`) || step.transition?.mode || "any", macro: value(`${key}-transition-macro`) ?? step.transition?.macro ?? "" } };
       }) };
   });
 }

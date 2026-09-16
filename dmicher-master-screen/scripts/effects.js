@@ -78,11 +78,12 @@ export function createFoundryEffects(chat) {
       }
       return created;
     },
-    async macro(uuid, { isCurrent = () => true } = {}) {
+    async macro(uuid, context = {}) {
+      const isCurrent = context.isCurrent ?? (() => true);
       const macro = await fromUuid(uuid);
       if (!isCurrent()) return;
       if (!macro || macro.documentName !== "Macro" || macro.type !== "script" || !macro.canExecute) throw new Error(localizedMessage("Проверка требует доступный скриптовый макрос Foundry."));
-      await macro.execute();
+      await macro.execute({ context, scriptContext: context });
     }
   };
 }

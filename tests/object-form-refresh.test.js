@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 class ApplicationStub { async _onRender() {} }
 globalThis.foundry = { applications: { api: { ApplicationV2: ApplicationStub, HandlebarsApplicationMixin: (base) => base } },
   utils: { randomID: () => "generated" } };
-const { ObjectBehaviorApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
+const { ObjectAutomationApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
 const { createGroupDefinition } = await import("../dmicher-master-screen/scripts/model.js");
 const { SceneObjects } = await import("../dmicher-master-screen/scripts/scene-objects.js");
 const { defaultObjectCommand } = await import("../dmicher-master-screen/scripts/object-command-model.js");
-const ObjectForm = Object.getPrototypeOf(ObjectBehaviorApplication.prototype);
+const ObjectForm = Object.getPrototypeOf(ObjectAutomationApplication.prototype);
 
 function root(fields = []) {
   const element = new EventTarget();
@@ -29,7 +29,8 @@ function fixture() {
   document.parent = scene;
   globalThis.game = { scenes: new Map([[scene.id, scene]]), i18n: { lang: "en" } };
   globalThis.canvas = { scene };
-  const app = new ObjectBehaviorApplication({ changed() {}, openAsset() { throw new Error("Unexpected catalog open"); } }, target);
+  const app = new ObjectAutomationApplication({ changed() {}, openAsset() { throw new Error("Unexpected catalog open"); } }, target);
+  app.tab="properties";
   app.rendered = true; app.element = root(); app.context();
   app.renderedDraft = app.draft;
   return { app, flags, scene };

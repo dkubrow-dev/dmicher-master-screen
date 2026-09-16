@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 class ApplicationStub { async _onRender() {} }
 globalThis.foundry = { applications: { api: { ApplicationV2: ApplicationStub, HandlebarsApplicationMixin: (base) => base } },
   utils: { randomID: () => "generated" } };
-const { ObjectBehaviorApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
+const { ObjectAutomationApplication } = await import("../dmicher-master-screen/scripts/apps/object-tools.js");
 const { createGroupDefinition } = await import("../dmicher-master-screen/scripts/model.js");
 const { registeredToolIds, toolRegistration } = await import("../dmicher-master-screen/scripts/object-binding-model.js");
 
@@ -18,7 +18,8 @@ function fixture({ grouped = true, dialogues = [], shops = [] } = {}) {
   document.parent = scene;
   globalThis.game = { scenes: new Map([[scene.id, scene]]), i18n: { lang: "en" } };
   globalThis.canvas = { scene };
-  const opened = [], app = new ObjectBehaviorApplication({ changed() {}, openAsset(...args) { opened.push(args); } }, descriptor);
+  const opened = [], app = new ObjectAutomationApplication({ changed() {}, openAsset(...args) { opened.push(args); } }, descriptor);
+  app.tab="dialogues";
   const fields = new Map();
   app.element = { querySelector: (selector) => fields.get(selector) ?? null, querySelectorAll: () => [] };
   app.render = async () => app;
@@ -29,15 +30,15 @@ function fixture({ grouped = true, dialogues = [], shops = [] } = {}) {
 const action = (app, command, dataset) => app.handleAction(command, { dataset });
 const assignment = (id, state = "calm") => ({ dialogueId: id, stateIds: [state], range: 5, conditions: { repeat: "always" } });
 
-test("Properties opens first without a group and keeps signals after the four resource sections", async () => {
+test("Automation opens information without a group and has one tab per responsibility", async () => {
   const { app } = fixture({ grouped: false });
+  app.tab="information";
   const { body } = await app._prepareContext();
-  assert.equal(app.tab, "properties");
+  assert.equal(app.tab, "information");
   const tabs = [...body.matchAll(/data-tab="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["properties", "transitions", "player-actions", "commands", "routine"]);
-  const sections = [...body.matchAll(/<h3>([^<]+)<\/h3>/g)].map((match) => match[1]);
-  assert.deepEqual(sections, ["Shops", "Dialogues", "Object macros", "Subscriptions", "Object signals"]);
-  assert.match(body, /name="register-dialogue"/);
+  assert.deepEqual(tabs, ["information", "states", "properties", "behavior", "shops", "dialogues"]);
+  assert.match(body, /name="object-group"/);
+  assert.doesNotMatch(body,/name="register-dialogue"/);
 });
 
 test("registering a tool makes it available to scripts without enabling player actions", async () => {
@@ -55,7 +56,7 @@ test("registering a tool makes it available to scripts without enabling player a
 
 test("player actions select only registered tools even when another dialogue is first in the scene", async () => {
   const { app } = fixture({ dialogues: [toolRegistration("dialogue", "one")] });
-  app.tab = "player-actions";
+  app.tab = "dialogues";
   await action(app, "add-feature", { kind: "dialogue", stateId: "calm" });
   assert.equal(app.draft.dialogues.length, 1);
   assert.equal(app.activeFeature().dialogueId, "one");
@@ -92,7 +93,7 @@ test("unregistering removes all assignments of that tool and leaves unrelated to
 
 test("changing a player action retains the previous registration and does not shift old DOM row indexes", () => {
   const { app, fields } = fixture({ dialogues: [toolRegistration("dialogue", "two"), assignment("one"), assignment("two", "alarm")] });
-  app.tab = "player-actions"; app.selectedFeature = { kind: "dialogue", index: 1 };
+  app.tab = "dialogues"; app.selectedFeature = { kind: "dialogue", index: 1 };
   fields.set('[name="feature-asset"]', { value: "two" });
   fields.set('[name="feature-range"]', { value: "8" });
   app.capture();

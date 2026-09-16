@@ -8,7 +8,7 @@ const waitScript = () => ({ stateId: "foreign", steps: [{ id: 1, kind: "wait", p
 
 test("unconfigured objects allocate no commands, and each explicit built-in starts disabled", () => {
   assert.deepEqual(normalizeObjectBinding({ type: "Token", id: "npc" }).commands, []);
-  assert.equal(OBJECT_COMMAND_IDS.length, 12);
+  assert.equal(OBJECT_COMMAND_IDS.length, 25);
   for (const id of OBJECT_COMMAND_IDS) {
     const command = defaultObjectCommand(id);
     assert.equal(command.enabled, false);

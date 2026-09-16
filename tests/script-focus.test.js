@@ -54,7 +54,7 @@ test("focus defaults to everyone, rejects unknown parameters and is an instantan
   assert.deepEqual(normalizeScriptStep(step).parameters, { audience: "all" });
   for (const audience of ["all", "players", "gm"]) assert.equal(normalizeScriptStep({ ...step, parameters: { audience } }).parameters.audience, audience);
   for (const parameters of [{ audience: "assistant" }, { audience: false }, { audience: "all", x: 20 }]) assert.throws(() => normalizeScriptStep({ ...step, parameters }));
-  assert.deepEqual(analyzeScriptWarnings({ steps: [{ ...step, next: [1] }] }), { durationUnset: true, cycle: [1, 1], zeroDelayCycle: [1, 1] });
+  assert.deepEqual(analyzeScriptWarnings({ steps: [{ ...step, next: [1], transition: { mode: "any" } }] }), { durationUnset: true, cycle: [1, 1], zeroDelayCycle: [1, 1] });
   for (const [language, labels] of [["ru", ["Привлечь внимание", "Всех", "Только игроков", "Только мастера"]], ["en", ["Draw attention", "Everyone", "Players only", "GM only"]]]) {
     globalThis.game = { i18n: { lang: language } };
     const html = renderScriptParameters(step, {});

@@ -1,11 +1,12 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { MODULE_ID, randomId, normalizeDescription } from "./model.js";
 import { requireGM, withSceneLock, getDefinitions } from "./store.js";
 import { bindingScriptSteps } from "./object-binding-model.js";
 import { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 import { normalizeSignalFields, signalName } from "./signal-types.js";
-import { validateSignalMacro, validateStandaloneMacro } from "./signal-macros.js";
+import { validateSignalMacro, validateStandaloneMacro, validateBindingScriptMacroInterfaces } from "./signal-macros.js";
 import { notifyExecutionChange } from "./execution.js";
+import { isObjectSignalEnabled, isNativeObjectEmitter } from "./object-signal-settings.js";
 
 export { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 const clone = (value) => structuredClone(value);
@@ -32,7 +33,9 @@ function protectBuiltin(signal, builtin) {
   return { ...signal, builtin: true, label: builtin.label };
 }
 export function normalizeCatalog(raw = {}, { scene } = {}) {
-  const builtin = scene ? builtinCatalog(scene).signals : [], baseById = new Map(builtin.map((entry) => [entry.id, entry]));
+  // A door can become an ordinary wall without deleting its saved subscriptions.
+  // Validate that retained contract, but never advertise it as currently enabled.
+  const builtin = scene ? builtinCatalog(scene, { includeUnavailable: true }).signals : [], baseById = new Map(builtin.map((entry) => [entry.id, entry]));
   const signals = list(raw, "signals").map((entry) => {
     const signal = normalizeSignal(entry), base = baseById.get(signal.id);
     if (base) {
@@ -47,23 +50,29 @@ export function normalizeCatalog(raw = {}, { scene } = {}) {
   });
   const macros = list(raw, "macros").map((entry) => ({ ownerKey: signalName(entry.ownerKey, localizedMessage("Владелец макроса")), uuid: signalName(entry.uuid, localizedMessage("UUID макроса")) }));
   const subscriptions = list(raw, "subscriptions", 2000).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, localizedMessage("Подписчик")),
-    emitterKey: signalName(entry.emitterKey, localizedMessage("Эмитент")), signalId: signalName(entry.signalId, localizedMessage("ID сигнала")), macroUuid: signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false }));
+    emitterKey: signalName(entry.emitterKey, localizedMessage("Эмитент")), signalId: signalName(entry.signalId, localizedMessage("ID сигнала")), handler: entry.handler === "script" ? "script" : "macro",
+    macroUuid: entry.handler === "script" ? "" : signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false }));
   unique(signals, (entry) => entry.id, localizedMessage("ID сигнала")); unique(signals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя сигнала у эмитента"));
   unique(macros, (entry) => `${entry.ownerKey}\0${entry.uuid}`, localizedMessage("Макрос объекта")); unique(subscriptions, (entry) => entry.id, localizedMessage("ID подписки"));
   unique(subscriptions, (entry) => `${entry.ownerKey}\0${entry.signalId}\0${entry.macroUuid}`, localizedMessage("Подписка макроса"));
   const allSignals = [...builtin.filter((entry) => !signals.some((signal) => signal.id === entry.id)), ...signals];
   unique(allSignals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя системного сигнала"));
   for (const subscription of subscriptions) {
+    if (subscription.handler === "script" && !isNativeObjectEmitter(subscription.ownerKey))
+      throw new Error(text("Скрипт события может принадлежать только объекту сцены.", "An event script can belong only to a scene object."));
     const signal = allSignals.find((entry) => entry.id === subscription.signalId && entry.emitterKey === subscription.emitterKey);
     if (scene && !signal && listSignalEmitters(scene).some((entry) => entry.key === subscription.emitterKey)) throw new Error(localizedMessage("Подписка ссылается на отсутствующий сигнал эмитента."));
-    if (!macros.some((entry) => entry.ownerKey === subscription.ownerKey && entry.uuid === subscription.macroUuid)) throw new Error(localizedMessage("Объект не владеет макросом подписки."));
+    if (subscription.handler !== "script" && !macros.some((entry) => entry.ownerKey === subscription.ownerKey && entry.uuid === subscription.macroUuid)) throw new Error(localizedMessage("Объект не владеет макросом подписки."));
   }
   return { schemaVersion: 1, revision: Number.isSafeInteger(raw.revision) ? raw.revision : 0, signals, macros, subscriptions };
 }
 export function getSignalCatalog(scene) {
   const current = normalizeCatalog(scene?.getFlag?.(MODULE_ID, "signalCatalog") ?? {}, { scene });
-  const builtin = builtinCatalog(scene).signals;
-  return { ...current, signals: [...builtin.filter((entry) => !current.signals.some((signal) => signal.id === entry.id)), ...current.signals], emitters: listSignalEmitters(scene) };
+  const declarations = builtinCatalog(scene, { includeUnavailable: true }).signals;
+  const unavailable = new Set(declarations.filter(signal => signal.available === false).map(signal => signal.id));
+  const builtin = declarations.filter(signal => signal.available !== false || current.subscriptions.some(entry => entry.signalId === signal.id));
+  return { ...current, signals: [...builtin.filter((entry) => !current.signals.some((signal) => signal.id === entry.id)), ...current.signals]
+    .map(signal => ({ ...signal, ...(unavailable.has(signal.id) ? { available: false } : {}), enabled: !unavailable.has(signal.id) && isObjectSignalEnabled(scene, signal.emitterKey, signal) })), emitters: listSignalEmitters(scene) };
 }
 export function findSignal(scene, { emitterKey, signalId, name }) {
   return getSignalCatalog(scene).signals.find((entry) => entry.emitterKey === emitterKey && (signalId ? entry.id === signalId : entry.name === name)) ?? null;
@@ -98,9 +107,10 @@ export class SignalCatalog {
     return this.change(async (catalog) => {
       this.requireOwner(source.emitterKey);
       const signal = normalizeSignal(source), previous = this.list().signals.find((entry) => entry.id === signal.id);
-      if (previous?.builtin) protectBuiltin(signal, builtinCatalog(this.scene).signals.find((entry) => entry.id === previous.id));
-      for (const subscriber of catalog.subscriptions.filter((entry) => entry.signalId === signal.id)) await this.requireInterface(subscriber.macroUuid, signal);
+      if (previous?.builtin) protectBuiltin(signal, builtinCatalog(this.scene, { includeUnavailable: true }).signals.find((entry) => entry.id === previous.id));
+      for (const subscriber of catalog.subscriptions.filter((entry) => entry.signalId === signal.id && entry.handler !== "script")) await this.requireInterface(subscriber.macroUuid, signal);
       catalog.signals = [...catalog.signals.filter((entry) => entry.id !== signal.id), signal];
+      await this.requireEventInterfaces(catalog, catalog.subscriptions.filter(entry => entry.signalId === signal.id).map(entry => entry.ownerKey));
       return clone(signal);
     }, options);
   }
@@ -132,19 +142,40 @@ export class SignalCatalog {
     const validation = await validateSignalMacro(uuid, signal, { resolveMacro: this.resolveMacro });
     if (!validation.valid) { const error = new Error(validation.error); error.snippet = validation.snippet; throw error; }
   }
+  async requireEventInterfaces(catalog, ownerKeys) {
+    const bindings = this.scene.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {};
+    const signals = [...builtinCatalog(this.scene, { includeUnavailable: true }).signals.filter(signal => !catalog.signals.some(entry => entry.id === signal.id)), ...catalog.signals];
+    for (const key of new Set(ownerKeys)) {
+      const binding = bindings[key];
+      if (binding?.eventScripts?.length) await validateBindingScriptMacroInterfaces(binding, { ...catalog, signals }, { resolveMacro: this.resolveMacro });
+    }
+  }
   saveSubscription(source, options) {
     return this.change(async (catalog) => {
       this.requireOwner(source.ownerKey); this.requireOwner(source.emitterKey);
+      if (source.handler === "script" && !isNativeObjectEmitter(source.ownerKey))
+        throw new Error(text("Скрипт события может принадлежать только объекту сцены.", "An event script can belong only to a scene object."));
       const signal = this.list().signals.find((entry) => entry.id === source.signalId && entry.emitterKey === source.emitterKey);
       if (!signal) throw new Error(localizedMessage("Сигнал этого эмитента не зарегистрирован."));
-      if (!catalog.macros.some((entry) => entry.ownerKey === source.ownerKey && entry.uuid === source.macroUuid)) throw new Error(localizedMessage("Подписчик не владеет выбранным макросом."));
-      await this.requireInterface(source.macroUuid, signal);
+      if (source.handler !== "script") {
+        if (!catalog.macros.some((entry) => entry.ownerKey === source.ownerKey && entry.uuid === source.macroUuid)) throw new Error(localizedMessage("Подписчик не владеет выбранным макросом."));
+        await this.requireInterface(source.macroUuid, signal);
+      }
       const entry = { ...source, id: source.id || randomId() };
+      const previousOwner = catalog.subscriptions.find(item => item.id === entry.id)?.ownerKey;
       catalog.subscriptions = [...catalog.subscriptions.filter((item) => item.id !== entry.id), entry];
+      await this.requireEventInterfaces(catalog, [previousOwner, entry.ownerKey]);
       return clone(entry);
     }, options);
   }
-  removeSubscription(id, options) { return this.change((catalog) => { catalog.subscriptions = catalog.subscriptions.filter((entry) => entry.id !== id); }, options); }
+  removeSubscription(id, options) {
+    return this.change(catalog => {
+      const bindings = this.scene.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {};
+      if (Object.values(bindings).some(binding => binding.eventScripts?.some(entry => entry.subscriptionId === id)))
+        throw new Error(text("Сначала удалите скрипт события, использующий эту подписку.", "Remove the event script using this subscription first."));
+      catalog.subscriptions = catalog.subscriptions.filter(entry => entry.id !== id);
+    }, options);
+  }
 }
 
 /** Current-format transfer. Names and ownership remain explicit; no legacy inference. */

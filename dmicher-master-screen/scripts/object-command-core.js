@@ -3,6 +3,7 @@ import { commandDocument, rejectCommand } from "./object-command-access.js";
 import { advanceCommandMovement, approachCommandPoint, commandCenter, commandScale, commandTouches, clipCommandMovement } from "./object-command-movement.js";
 import { planScriptFollow, advanceScriptFollow, boundsGap } from "./script-target-movement.js";
 import { scriptObjectBounds } from "./script-movement.js";
+import { setCommandSignals, setCommandBehavior } from "./object-command-state.js";
 
 const active = options => !options.signal?.aborted && (options.isCurrent?.() ?? true);
 const finished = done => ({ done });
@@ -39,7 +40,46 @@ export class ObjectCommandCore {
     switch (id) {
       case "wait": return wait(p.seconds);
       case "cancel": return wait(p.waitSeconds);
-      case "stop": return finished(true);
+      case "stop": case "behavior-off": return finished(true);
+      case "behavior-on":
+        await setCommandBehavior(scene, run.target, true, run.groupId); return finished(active(options));
+      case "signals-on": case "signals-off":
+        await setCommandSignals(scene, run.target, id === "signals-on"); return finished(active(options));
+      case "visible": case "invisible":
+        if (object.documentName === "Note") {
+          await object.update({ [`flags.dmicher-master-screen.commandHidden`]: id === "invisible" });
+          if (object.object) object.object.visible = id === "visible";
+        } else await object.update({ hidden: id === "invisible" });
+        return finished(active(options));
+      case "source-on": case "source-off":
+        await object.update({ hidden: id === "source-off" }); return finished(active(options));
+      case "note-open": {
+        const journal = object.page ?? object.entry;
+        if (!journal) rejectCommand("note", text("В заметке не выбран доступный журнал.", "This note has no available journal."));
+        // Presentation for the issuing player is delivered by the service;
+        // document permissions are checked again on that receiving client.
+        await options.openNote?.(object, run); return finished(active(options));
+      }
+      case "open": case "close": {
+        const states = globalThis.CONST?.WALL_DOOR_STATES ?? { CLOSED: 0, OPEN: 1, LOCKED: 2 };
+        if (!object.door || object.ds === states.LOCKED) rejectCommand("locked", text("Дверь заперта или больше недоступна.", "The door is locked or no longer available."));
+        await object.update({ ds: id === "open" ? states.OPEN : states.CLOSED }, { dmicherCommand: { userId: run.request.userId, actorTokenUuid: run.request.actorTokenUuid, delegateTokenUuid: run.request.delegateTokenUuid } });
+        return finished(active(options));
+      }
+      // A deleted document cannot run a trailing script. This one command delays
+      // its irreversible native delete until the phase executor completes after.
+      case "delete": return finished(true);
+      case "delegate": {
+        const recipient = target(scene, run.request.parameters.targetUuid), config = run.request.parameters;
+        if (!core.arrived) {
+          const result = await move(approachCommandPoint(scene, object, recipient));
+          if (!active(options)) return finished(false);
+          if (!result.done) return finished(false);
+          if (result.blocked && !commandTouches(scene, object, recipient)) rejectCommand("delegation-path", text("Не удалось подойти к объекту поручения: путь перекрыт.", "The delegated character cannot reach the target because the path is blocked."));
+          core.arrived = true;
+        }
+        return options.delegate ? options.delegate(run, config) : finished(false);
+      }
       case "light-on":
         await this.lights.on(scene, object, p, options);
         return finished(active(options));

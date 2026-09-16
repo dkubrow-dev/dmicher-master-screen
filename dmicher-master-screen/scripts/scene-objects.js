@@ -10,6 +10,7 @@ import { replacementFlagData } from "./scene-flags.js";
 export { normalizeObjectBinding, normalizeObjectBindings, objectKey } from "./object-binding-model.js";
 import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js";
 import { sceneObjectCenter } from "./scene-object-geometry.js";
+import { assertBindingScriptContracts, validateBindingScriptMacroInterfaces } from "./signal-macros.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -31,8 +32,9 @@ export function getGroupObjects(scene, groupId) {
 }
 export const assetReferences = (scene, kind, id) => Object.values(getObjectBindings(scene).bindings).filter((binding) => binding[interactionType(kind).collection].some((ref) => ref[interactionType(kind).referenceId] === id));
 export function validateObjectBinding(scene, binding, definitions = getDefinitions(scene)) {
-  const { signals, macros } = getSignalCatalog(scene);
+  const catalog = getSignalCatalog(scene), { signals, macros } = catalog;
   validateBindingReferences(binding, { definitions, signals, macros, assets: getInteractionCatalog(scene) });
+  assertBindingScriptContracts(binding, catalog);
 }
 export const objectBindingsWriteData = replacementFlagData;
 export function reconcileDefinitionBindings(scene, previous, definitions) {
@@ -60,6 +62,8 @@ export class SceneObjects {
       }
       if (!next.groupId) clearGroupContent(next);
       validateObjectBinding(this.scene, next);
+      const catalog=getSignalCatalog(this.scene);
+      await validateBindingScriptMacroInterfaces(next, catalog);
       await this.scene.setFlag(MODULE_ID, "objectBindings", objectBindingsWriteData(raw, { ...raw, revision: raw.revision + 1, bindings: { ...raw.bindings, [key]: next } }));
       return clone(next);
     });

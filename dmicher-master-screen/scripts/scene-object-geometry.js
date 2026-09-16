@@ -39,7 +39,8 @@ export function sceneObjectCenter(document, scene = document?.parent) {
   const bounds = sceneObjectBounds(document, scene);
   return bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } : null;
 }
-export const isSceneObjectHidden = (document) => document?.hidden === true;
+export const isSceneObjectHidden = (document) => document?.hidden === true
+  || document?.documentName === "Note" && (document.getFlag?.("dmicher-master-screen", "commandHidden") ?? document.flags?.["dmicher-master-screen"]?.commandHidden) === true;
 
 /** Return translated native Region shapes, retaining holes and all other fields. */
 export function translateRegionShapes(document, dx, dy) {

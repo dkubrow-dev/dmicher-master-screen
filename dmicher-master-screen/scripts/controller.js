@@ -8,6 +8,8 @@ import { generics } from "./generics.js";
 import { notifyError } from "./ui.js";
 import { GroupRuntime } from "./runtime.js";
 import { WorkspaceManager } from "./workspace.js";
+import { WorkspacePresetsRuntime } from "./workspace-presets-runtime.js";
+import { registerKnownWorkspaceWindows } from "./workspace-window-targets.js";
 import { exportBundle, importBundle } from "./transfer.js";
 import { createShopService } from "./shop.js";
 import { SceneSignals } from "./signals.js";
@@ -21,7 +23,7 @@ import { HelpApplication } from "./apps/help.js";
 import { updateSceneNavigationBadges } from "./apps/group-badges.js";
 import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
-import { ObjectInfoApplication, ObjectBehaviorApplication } from "./apps/object-tools.js";
+import { ObjectAutomationApplication } from "./apps/object-tools.js";
 import { listAvailableInteractions, objectDescriptor } from "./interaction-access.js";
 import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
 import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
@@ -34,6 +36,11 @@ import { text as t } from "./localization.js";
 import { availableObjectCommands } from "./object-command-access.js";
 import { OBJECT_COMMAND_DEFINITIONS, objectCommandName } from "./object-command-model.js";
 import { pickCommandParameters } from "./object-command-picker.js";
+import { ObjectInteractionService } from "./object-interaction-service.js";
+import { ObjectEventSignals } from "./object-event-signals.js";
+import { createInteractiveHighlights } from "./interaction-highlights.js";
+import { potentialInteractiveDocuments } from "./interactive-object-projection.js";
+import { chooseCommandDelegate, chooseDelegatedTask } from "./apps/command-delegation-picker.js";
 
 export class ScreenController {
   constructor() {
@@ -43,17 +50,26 @@ export class ScreenController {
     this.shopWindows = new Map();
     this.dialogueWindows = new Map();
     this.dialogueMarkers = createDialogueMarkers();
-    this.objectInfoWindows = new Map();
-    this.objectBehaviorWindows = new Map();
+    this.objectWindows = new Map();
     this.objectMenu = new ObjectContextMenu();
     this.constructorIndicator = new ConstructorIndicator();
     this.workspace = new WorkspaceManager();
+    this.workspacePresets = new WorkspacePresetsRuntime({ onChange: () => { if (this.editor?.rendered && ["windows", "notes"].includes(this.editor.layout?.preferences.mainTab)) void this.editor.refresh(); } });
+    this.removeWorkspaceTargets = registerKnownWorkspaceWindows(this, this.workspacePresets.windows);
     this.runtime = new GroupRuntime({ visuals: createObjectDecorations(), chat: generics.chat, onChange: (scene) => this.changed(scene),
       isConstructor: () => this.mode === "constructor",
       startScriptDialogues: (command, options) => this.dialogues.startScriptDialogues(command, options),
       emitSignal: (scene, signal) => this.signals.emit(scene, signal),
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
-    this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor" });
+    this.runtime.workspacePresets = this.workspacePresets;
+    this.runtime.startScriptShop = (command, options) => this.shop.startScriptShop(command, options);
+    this.runtime.commandService = { invokeFromScript: command => this.commandService.invokeFromScript(command) };
+    this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor",
+      runObjectEvent:(scene,context)=>this.runtime.invocations.event(scene,context) });
+    this.objectEvents = new ObjectEventSignals(this.signals,{onError:notifyError,onNoteOpened:note=>this.interactions.request({kind:"note-opened",sceneId:note.parent.id,target:{type:"Note",id:note.id}})});
+    this.runtime.objectEvents = this.objectEvents;
+    this.interactions = new ObjectInteractionService(this.runtime,{noteOpened:(note,userId)=>this.objectEvents.noteOpened(note,userId)});
+    this.interactiveHighlights = createInteractiveHighlights({getInteractiveDocuments:scene=>this.interactiveDocuments(scene)});
     this.dialogues = createDialogueService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene),
       onDialogueStart: ({ command, view }) => this.dialogueChat.notifyStarted({ ...command, sessionId: view.sessionId }),
       openScriptWindow: (command, initialView) => this.openScriptDialogue(command, initialView),
@@ -65,7 +81,8 @@ export class ScreenController {
         }
       } });
     this.dialogueChat = new DialogueChat(this.dialogues, { openModerator: (command) => this.openModeratorDialogue(command) });
-    this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene) });
+    this.shop = createShopService({ emitSignal: (scene, signal) => this.signals.emit(scene, signal), onChange: (scene) => this.changed(scene),
+      openScriptWindow: command => this.openShop(command.target, { actorTokenId: command.actorTokenId, sessionId: command.sessionId, shopId: command.shopId, groupId: command.groupId, join: true }) });
     this.hooks = [];
   }
   getContext({ groupId } = {}) {
@@ -118,8 +135,7 @@ export class ScreenController {
     }
     return focusCanvasObject(globalThis.canvas, descriptor);
   }
-  openObjectInfo(descriptor) { return this.openObjectForm(descriptor, this.objectInfoWindows, ObjectInfoApplication); }
-  openObjectBehavior(descriptor) { return this.openObjectForm(descriptor, this.objectBehaviorWindows, ObjectBehaviorApplication); }
+  openObjectAutomation(descriptor) { return this.openObjectForm(descriptor, this.objectWindows, ObjectAutomationApplication); }
   openObjectForm(descriptor, windows, Application) {
     requireGM();
     const scene = currentScene();
@@ -128,48 +144,70 @@ export class ScreenController {
     const app = generics.windows.openSingletonApplication(windows.get(key), () => new Application(this, descriptor), { moduleId: MODULE_ID });
     windows.set(key, app); return app;
   }
-  openObjectMenu(descriptor, position = {}) {
+  async openObjectMenu(descriptor, position = {}) {
     const scene = currentScene(), ru = game.i18n?.lang?.startsWith("ru");
     if (!getSceneObject(scene, descriptor)) return false;
+    const generation = this.menuGeneration=(this.menuGeneration ?? 0)+1;
     let items;
     if (game.user.isGM && this.mode === "constructor") {
-      items = [
-        { label: ru ? "Информация" : "Information", action: () => this.openObjectInfo(descriptor) },
-        { label: ru ? "Поведение" : "Behavior", action: () => this.openObjectBehavior(descriptor) }
-      ];
+      items = [{label:t("Автоматизация","Automation"),icon:"⚙",action:()=>this.openObjectAutomation(descriptor)}];
     } else {
       const actorTokenId = this.getActingTokenId(undefined, descriptor.type === "Token" ? descriptor.id : undefined);
       const actorToken = scene.tokens?.get(actorTokenId);
-      items = this.getAvailableInteractions(scene, descriptor, actorToken).map((entry) => ({
+      let choices=this.getAvailableInteractions(scene,descriptor,actorToken);
+      if (choices.some(entry => entry.conditionMacro)) {
+        const listeners = choices.filter(entry => entry.kind === "listen");
+        choices = (await this.interactions.request({kind:"inspect",sceneId:scene.id,target:descriptor,actorTokenId})).choices.concat(listeners);
+      }
+      if(generation !== this.menuGeneration || currentScene()?.id !== scene.id) return false;
+      const entries = choices.map((entry) => ({ kind:entry.kind,disabled:entry.disabled,reason:entry.reason,gmOnly:entry.gmOnly,
         label: entry.kind === "shop" ? `${ru ? "Торг" : "Trade"}: ${entry.name}` : entry.kind === "listen" ? `${ru ? "Слушать диалог" : "Listen to dialogue"}: ${entry.name}` : entry.kind === "dialogue" ? `${entry.paused ? (ru ? "Продолжить диалог" : "Resume dialogue") : (ru ? "Диалог" : "Dialogue")}: ${entry.name}` : entry.name,
         action: () => entry.kind === "shop" ? this.openShop(descriptor, { actorTokenId, groupId: entry.groupId, shopId: entry.id })
           : entry.kind === "dialogue" ? this.openDialogue(entry.id, actorTokenId, { groupId: entry.groupId, target: descriptor })
             : entry.kind === "listen" ? this.openListeningDialogue(entry, actorTokenId)
+            : entry.kind === "action" ? this.interactions.request({kind:"action",sceneId:scene.id,target:descriptor,actorTokenId,actionId:entry.id})
             : this.requestNamedInteraction(entry.id, actorTokenId, { groupId: entry.groupId })
       }));
+      items=[];
+      for(const [kinds,label,icon] of [[["shop"],t("Магазины","Shops"),"▣"],[["dialogue","listen"],t("Диалоги","Dialogues"),"☏"],[["action","interaction"],t("Действия","Actions"),"✋"]]) {
+        const children=entries.filter(entry=>kinds.includes(entry.kind)); if(children.length) items.push({label,icon,children});
+      }
       const activeCommand = this.runtime.commandExecutor?.activeForObject(scene, descriptor);
       const commands = availableObjectCommands(scene, descriptor, actorToken, game.user, activeCommand);
-      for (const [category, label] of [["movement", t("Команды движения", "Movement commands")], ["interaction", t("Команды взаимодействия", "Interaction commands")]]) {
-        const ids = new Set(OBJECT_COMMAND_DEFINITIONS.filter(entry => entry.category === category).map(entry => entry.id));
-        const group = commands.filter(command => ids.has(command.id));
-        if (!group.length) continue;
-        items.push({ heading: label }, ...group.map(command => ({ label: objectCommandName(command.id), action: () => this.issueObjectCommand(descriptor, actorTokenId, command.id) })));
-      }
+      const delegated=actorToken ? availableObjectCommands(scene,descriptor,actorToken,game.user,activeCommand,{method:"delegated"}) : [];
+      const playerCommands=game.user.isGM && actorToken ? availableObjectCommands(scene,descriptor,actorToken,game.user,activeCommand,{method:"player"}) : [];
+      const commandItems=commands.concat(playerCommands,delegated).map(command=>({
+        label:`${objectCommandName(command.id,descriptor.type)}${command.method === "delegated" ? ` · ${t("Поручить","Delegate")}` : command.method === "player" && game.user.isGM ? ` · ${t("От персонажа","As character")}` : ""}`,
+        gmOnly:command.gmOnly,action:()=>this.issueObjectCommand(descriptor,actorTokenId,command.id,{method:command.method})}));
+      if(commandItems.length) items.push({label:t("Команды","Commands"),icon:"⚙",children:commandItems});
+      if(game.user.isGM) items.push({label:t("Автоматизация","Automation"),icon:"⚙",gmOnly:true,action:()=>this.openObjectAutomation(descriptor)});
     }
     if (!items.length) { this.objectMenu.close(); return false; }
     this.objectMenu.open(items, position); return true;
   }
-  async issueObjectCommand(target, actorTokenId, commandId) {
+  async issueObjectCommand(target, actorTokenId, commandId, {method,delegateTokenId} = {}) {
     const scene = currentScene(), actor = scene?.tokens?.get(actorTokenId), object = getSceneObject(scene, target);
-    if (!scene || !actor || !object || !this.commandService) return;
+    if (!scene || !object || !this.commandService || !actor && !game.user?.isGM) return;
     this.objectMenu.close(); this.cancelPick?.();
-    const picking = pickCommandParameters(commandId, { scene, actor, object });
+    if(commandId === "delegate") {
+      const task=await chooseDelegatedTask(scene,target,actorTokenId);
+      if(task && currentScene()?.id === scene.id) return this.issueObjectCommand(task.target,actorTokenId,task.commandId,{method:"delegated",delegateTokenId:task.delegateTokenId});
+      return;
+    }
+    if(method === "delegated" && !delegateTokenId) {
+      delegateTokenId=await chooseCommandDelegate(scene,target,actorTokenId,commandId);
+      if(!delegateTokenId || currentScene()?.id !== scene.id) return;
+    }
+    const picking = pickCommandParameters(commandId, { scene, actor:actor ?? object, object });
     const cancel = () => picking.cancel(); this.cancelPick = cancel;
     let parameters;
     try { parameters = await picking; }
     finally { if (this.cancelPick === cancel) this.cancelPick = null; }
     if (!parameters || currentScene()?.id !== scene.id) return;
-    return this.commandService.request({ scene, target, actorTokenId, commandId, parameters });
+    return this.commandService.request({ scene, target, actorTokenId, commandId, parameters,method,delegateTokenId });
+  }
+  interactiveDocuments(scene) {
+    return potentialInteractiveDocuments(scene);
   }
   getAvailableInteractions(scene, descriptor, actorToken) {
     const choices = listAvailableInteractions(scene, descriptor, actorToken, game.user);
@@ -415,11 +453,15 @@ export class ScreenController {
     updateSceneNavigationBadges(this);
     this.refreshConstructorFrame();
     if (scene?.id !== currentScene()?.id) return;
+    const preparation=scene?.getFlag(MODULE_ID,"objectBindings"), assets=scene?.getFlag(MODULE_ID,"interactionCatalog");
+    const interactionKey=JSON.stringify([scene?.id,preparation?.revision,assets?.revision,scene?.getFlag(MODULE_ID,"automationHalted"),scene?.getFlag(MODULE_ID,"objectBehaviorState"),
+      Object.values(scene?.getFlag(MODULE_ID,"groupRuntimes") ?? {}).map(run=>[run.groupId,run.runId,run.stateId,run.halted,run.disabledObjects])]);
+    if(interactionKey !== this.interactionPresentationKey) { this.interactionPresentationKey=interactionKey; this.interactiveHighlights.sync(scene); }
     this.dialogueMarkers.sync(scene);
     this.dialogueChat.changed(scene);
     const controlState = `${scene?.id ?? ""}:${this.isAutomationHalted()}:${this.isRestoringInitial()}`;
     if (this.controlState !== controlState) { this.controlState = controlState; globalThis.ui?.controls?.render(); }
-    for (const app of [this.editor, this.shops, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.shops, this.dialogueCatalog, ...this.objectWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered || app?.refreshTask) void Promise.resolve().then(() => {
         if (app.rendered || app.refreshTask) return app.refreshFromScene ? app.refreshFromScene(scene) : app.refresh?.();
       }).catch(notifyError);
@@ -429,17 +471,17 @@ export class ScreenController {
   async closeScreen() {
     this.cancelPick?.();
     if (this.editor?.rendered && !(await this.editor.mayClose())) return;
-    const dirty = [...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values()]
+    const dirty = [...this.objectWindows.values()]
       .find((app) => app?.rendered && app.dirty);
     if (dirty && !(await dirty.mayDiscard())) return;
     this.mode = null;
     this.objectMenu.close(); this.constructorIndicator.dispose(); clearCanvasObjectFocus(globalThis.canvas);
-    for (const app of [this.editor, this.shops, this.preview, this.dialogueCatalog, ...this.objectInfoWindows.values(), ...this.objectBehaviorWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
+    for (const app of [this.editor, this.shops, this.preview, this.dialogueCatalog, ...this.objectWindows.values(), ...this.shopWindows.values(), ...this.dialogueWindows.values()]) {
       if (app?.rendered) await app.close();
     }
     await this.workspace.close();
     updateSceneNavigationBadges(this);
     globalThis.ui?.controls?.render();
   }
-  async dispose() { this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.dialogueChat.dispose(); this.dialogueMarkers.clear(); this.cancelPick?.(); await this.closeScreen(); }
+  async dispose() { this.workspacePresets.dispose(); this.removeWorkspaceTargets?.(); this.runtime.dispose(); this.signals.dispose(); this.dialogues.dispose?.(); this.dialogueChat.dispose(); this.dialogueMarkers.clear(); this.cancelPick?.(); await this.closeScreen(); }
 }

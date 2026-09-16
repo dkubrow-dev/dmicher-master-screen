@@ -1,5 +1,5 @@
 import { text as t } from "../localization.js";
-import { OBJECT_COMMAND_DEFINITIONS, defaultObjectCommand, objectCommandName } from "../object-command-model.js";
+import { commandDefinitionsFor, defaultObjectCommand, objectCommandName } from "../object-command-model.js";
 import { escapeHTML as e, actionButton as button, parameterRow, selectOptions, formValue } from "./form-fields.js";
 import { splitTags } from "./condition-fields.js";
 import { buildScriptInterruptionFields, readScriptInterruptionFields } from "./script-fields.js";
@@ -13,10 +13,10 @@ const parameterNames = () => ({ speed: t("Скорость, ед./с", "Speed, u
   mode: t("Режим следования", "Following mode"), issuer: t("Кто может выдать команду", "Who may issue the command") });
 
 /** The catalogue is fixed; opening this view does not create disabled bindings. */
-export function renderObjectCommandList(commands = [], selectedId) {
-  return categories().map(([category, name]) => `<section class="ms-object-feature"><h3>${e(name)}</h3><table class="ms-object-commands"><tbody>${OBJECT_COMMAND_DEFINITIONS.filter(entry => entry.category === category).map(entry => {
+export function renderObjectCommandList(commands = [], selectedId, type = "Token") {
+  return categories().filter(([category]) => commandDefinitionsFor(type).some(entry => entry.category === category)).map(([category, name]) => `<section class="ms-object-feature"><h3>${e(name)}</h3><table class="ms-object-commands"><tbody>${commandDefinitionsFor(type).filter(entry => entry.category === category).map(entry => {
     const configured = commands.find(command => command.id === entry.id);
-    return `<tr${selectedId === entry.id ? ' class="is-selected"' : ""}><td>${check(`command-enabled-${entry.id}`, objectCommandName(entry.id), configured?.enabled === true, `data-command-enabled="${entry.id}"`)}</td><td>${button("edit-command", t("Настроить", "Configure"), `data-command-id="${entry.id}" aria-pressed="${selectedId === entry.id}"`)}</td></tr>`;
+    return `<tr${selectedId === entry.id ? ' class="is-selected"' : ""}><td>${check(`command-enabled-${entry.id}`, objectCommandName(entry.id, type), configured?.enabled === true, `data-command-enabled="${entry.id}"`)}</td><td>${button("edit-command", t("Настроить", "Configure"), `data-command-id="${entry.id}" aria-pressed="${selectedId === entry.id}"`)}</td></tr>`;
   }).join("")}</tbody></table></section>`).join("");
 }
 
@@ -36,14 +36,15 @@ function parameterFields(command) {
   return rows.length ? `<table class="ms-parameter-table"><tbody>${rows.join("")}</tbody></table>` : "";
 }
 
-export function renderObjectCommandFields(command, definitions = []) {
+export function renderObjectCommandFields(command, definitions = [], type) {
   const conditions = command.conditions, choices = new Map(conditions.groups.map(entry => [entry.groupId, entry]));
   const groups = definitions.map(group => {
     const selected = choices.get(group.groupId), groupId = e(group.groupId);
     return `<details class="ms-details"${selected ? " open" : ""}><summary>${e(group.groupName)}</summary>${check("command-group", t("Принимать в этой группе", "Accept in this group"), Boolean(selected), `value="${groupId}"`)}<div class="ms-command-state-options">${group.states.map(state => check("command-state", state.name, selected?.stateIds.includes(state.id), `data-group-id="${groupId}" value="${e(state.id)}"${selected ? "" : " disabled"}`)).join("")}</div></details>`;
   }).join("");
-  return `<section class="ms-object-feature" data-command-fields="${e(command.id)}"><h3>${e(objectCommandName(command.id))}</h3>
+  return `<section class="ms-object-feature" data-command-fields="${e(command.id)}"><h3>${e(objectCommandName(command.id, type))}</h3>
     <fieldset><legend>${t("Кто и когда может командовать", "Who may command and when")}</legend>
+      <div class="ms-form-row">${check("command-permission-gm", t("Мастер", "GM"), command.permissions?.gm !== false)}${check("command-permission-player", t("Персонаж игрока", "Player character"), command.permissions?.player !== false)}${check("command-permission-delegated", t("По поручению игрока", "Delegated by a player"), command.permissions?.delegated !== false)}</div>
       <label>${t("Разрешающие теги, через запятую", "Allowed tags, comma-separated")}<input name="command-allow" value="${e(conditions.allowTags.join(", "))}"></label>
       <label>${t("Запрещающие теги, через запятую", "Denied tags, comma-separated")}<input name="command-deny" value="${e(conditions.denyTags.join(", "))}"></label>
       <label>${t("Расстояние, ед.", "Range, scene units")}<input type="number" name="command-range" min="0" step="any" value="${e(conditions.range)}" required></label>
@@ -78,6 +79,7 @@ export function readObjectCommandFields(root, commands = [], selectedId, definit
   const fields = root.querySelectorAll('[data-command-fields] input[type="number"]');
   for (const field of fields) if (!field.disabled && field.checkValidity?.() === false) throw new Error(`${field.getAttribute("aria-label") ?? field.name}: ${field.validationMessage}`);
   const value = name => formValue(root, name);
+  command.permissions = Object.fromEntries(["gm", "player", "delegated"].map(role => [role, root.querySelector(`[name="command-permission-${role}"]`)?.checked ?? command.permissions?.[role] ?? true]));
   const knownIds = new Set(definitions.map(group => group.groupId));
   const groups = command.conditions.groups.filter(group => !knownIds.has(group.groupId));
   for (const selected of root.querySelectorAll('[name="command-group"]:checked')) {
