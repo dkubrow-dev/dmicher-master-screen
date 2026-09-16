@@ -134,7 +134,7 @@ export class ObjectCommandService {
     if (!this.authority() || this.disposed || !this.executor.owns(document.parent, run.runId)) return;
     const data = { sceneId: document.parent.id, targetUuid: commandObjectUuid(document), runId: run.runId, userId: run.request.userId, deliveryId: randomId() };
     const messages = await this.chat.create({ author: game.user.id, content: "", flags: { [MODULE_ID]: { [NOTE]: data } } }, {
-      audience: { type: "users", userIds: [data.userId] }, key: data.deliveryId, kind: CHANNEL, technical: true,
+      audience: { type: "users", userIds: [data.userId] }, key: data.deliveryId, kind: CHANNEL, technical: true, display: "hidden",
       enabled: () => this.executor.owns(document.parent, run.runId)
     });
     for (const message of messages ?? []) { this.receiveNote(message); this.queueCleanup(message); }

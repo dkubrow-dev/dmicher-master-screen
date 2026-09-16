@@ -1,5 +1,8 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Исправлена ошибка `Illegal invocation` при обработке команд и действий игроков: удаление квитанций сохраняет контекст браузерных таймеров. Новые служебные запросы и ответы не показывают пустые карточки. Реплики, диалоги и согласование торговли остаются видимыми.
+- Fixed `Illegal invocation` while processing player commands and actions: receipt cleanup preserves browser timer receivers. New technical requests and replies do not show empty chat cards. Speech, dialogues and trade approval cards remain visible.
+
 - Магазины показывают и сохраняют отдельно «На старте» и «Текущие». Оба списка редактируются, копируются в обе стороны и сохраняются с проверкой актуальности. Сброс отменяет незавершённую сделку; завершённые обмены не откатываются. Premium добавляет возврат при новом входе в состояние либо штатной активации сцены с отдельным условием. Макрос допуска игрока перенесён внутрь «Условий запуска».
 - Shops now edit and persist At start and Current inventories separately, with copying in either direction and revision checks on save. Restoration cancels unfinished trades without rolling back completed exchanges. Premium adds restoration on new state entry or native scene activation, with its own condition. The player admission macro is now inside Launch conditions.
 

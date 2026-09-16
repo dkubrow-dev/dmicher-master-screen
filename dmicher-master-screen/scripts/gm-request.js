@@ -22,7 +22,7 @@ export async function requestGMReply(chat, { command, commandFlag, responseFlag,
     hookId = Hooks.on("updateChatMessage", check);
     timer = setTimeout(() => finish(new Error(timeoutMessage)), timeoutMs);
     Promise.resolve().then(() => chat.create({ author: game.user.id, content, flags: { [MODULE_ID]: { [commandFlag]: command } } },
-      { audience: { type: "users", userIds: [...gms, game.user.id] }, kind, technical: true }))
+      { audience: { type: "users", userIds: [...gms, game.user.id] }, kind, technical: true, display: "hidden" }))
       .then((messages) => {
         if (!messages[0]?.id) throw new Error(localizedMessage("Запрос не отправлен."));
         messageId = messages[0].id;

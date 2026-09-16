@@ -1,6 +1,7 @@
 /** One short-lived timer per message channel; no poller or chat-history scan. */
 export class TechnicalMessageCleanup {
-  constructor({ current, onError = () => {}, delay = 2000, now = Date.now, schedule = setTimeout, cancel = clearTimeout }) {
+  constructor({ current, onError = () => {}, delay = 2000, now = Date.now,
+    schedule = (callback, ms) => globalThis.setTimeout(callback, ms), cancel = handle => globalThis.clearTimeout(handle) }) {
     Object.assign(this, { current, onError, delay, now, schedule, cancel });
     this.entries = new Map(); this.timer = null; this.disposed = false;
   }

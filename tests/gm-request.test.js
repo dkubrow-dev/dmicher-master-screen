@@ -24,6 +24,8 @@ test("parallel interactions correlate their own reply and release their subscrip
   await new Promise(setImmediate);
   assert.equal(f.hooks.size, 2);
   assert.deepEqual(f.sent[0].options.audience.userIds, ["gm", "player"]);
+  assert.equal(f.sent[0].options.display, "hidden");
+  assert.equal(f.sent[0].options.technical, true);
   f.update("unrelated", { ok: false }); assert.equal(f.hooks.size, 2);
   f.update("message-2", { ok: true, session: "second" });
   assert.deepEqual(await second, { ok: true, session: "second" }); assert.equal(f.hooks.size, 1);

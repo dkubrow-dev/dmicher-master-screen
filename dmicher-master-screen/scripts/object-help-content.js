@@ -15,8 +15,8 @@ export const OBJECT_HELP_PAGES = [
         "id": "give",
         "ru": "Выдать команду от персонажа",
         "en": "Issue a command as a character",
-        "bodyRu": "Выберите своего персонажа и откройте меню объекта → «Команды». Для «Встань там» кликните видимую точку; для «Патрулируй» — две точки. Escape отменяет выбор, затем карта возвращается к обычному управлению. Для поручения выберите исполнителя, целевой объект и доступную команду. Плашка показывает командующего и текущую работу. Отказ сопровождается понятным предупреждением игроку и мастеру.",
-        "bodyEn": "Select your character and open the object's menu → Commands. For Stand there, click a visible point; for Patrol, click two points. Escape cancels selection and restores normal map controls. To delegate, choose the performer, target object and available command. A badge shows the commanding character and current work. Rejection gives the player and GM a readable warning."
+        "bodyRu": "Выберите своего персонажа и откройте меню объекта → «Команды». Для «Встань там» кликните видимую точку; для «Патрулируй» — две точки. Escape отменяет выбор, затем карта возвращается к обычному управлению. Для поручения выберите исполнителя, целевой объект и доступную команду. Следите за выполнением по плашке командующего и текущей работы; отдельное подтверждение в чате не требуется. Отказ сопровождается понятным предупреждением игроку и мастеру.",
+        "bodyEn": "Select your character and open the object's menu → Commands. For Stand there, click a visible point; for Patrol, click two points. Escape cancels selection and restores normal map controls. To delegate, choose the performer, target object and available command. Follow progress on the badge showing the commanding character and current work; no separate chat confirmation is needed. Rejection gives the player and GM a readable warning."
       },
       {
         "id": "replacement",
