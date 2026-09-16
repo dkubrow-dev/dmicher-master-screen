@@ -1,5 +1,24 @@
 import { themedClasses, notifyError } from "../ui.js";
 
+const EDGE = 4;
+const OVERLAP = 3;
+const BRANCH_DELAY = 250;
+const clamp = (position, size, limit) => Math.max(EDGE, Math.min(position, limit - size - EDGE));
+
+/** Each level has its own viewport position and scroll area. A fixed descendant
+ * stays outside the parent's overflow clip, while DOM ancestry preserves pointer
+ * containment, keyboard events and outside-click handling for the whole menu. */
+function positionSubmenu(submenu, group, view, preferred = "right") {
+  const anchor = group.getBoundingClientRect();
+  const rect = submenu.getBoundingClientRect();
+  const positions = { right: anchor.right - OVERLAP, left: anchor.left - rect.width + OVERLAP };
+  let direction = preferred;
+  if (positions[direction] < EDGE || positions[direction] + rect.width > view.innerWidth - EDGE) direction = direction === "right" ? "left" : "right";
+  submenu.dataset.menuDirection = direction;
+  submenu.style.left = `${clamp(positions[direction], rect.width, view.innerWidth)}px`;
+  submenu.style.top = `${clamp(anchor.top, rect.height, view.innerHeight)}px`;
+}
+
 /** The same transient menu serves constructor tools and permitted player actions. */
 export class ObjectContextMenu {
   open(items, { x = 0, y = 0 } = {}) {
@@ -12,6 +31,26 @@ export class ObjectContextMenu {
     menu.setAttribute("role", "menu");
     const events = new view.AbortController(); this.events = events; this.element = menu;
     const options = { signal: events.signal };
+    const branches = [];
+    const cancelBranchTimer = branch => {
+      if (branch.timer !== undefined) view.clearTimeout(branch.timer);
+      branch.timer = undefined;
+    };
+    const deferBranch = (branch, callback) => {
+      cancelBranchTimer(branch);
+      branch.timer = view.setTimeout(() => { branch.timer = undefined; callback(); }, BRANCH_DELAY);
+    };
+    events.signal.addEventListener("abort", () => branches.forEach(cancelBranchTimer), { once: true });
+    const hideBranch = branch => {
+      for (const entry of branches) if (entry === branch || branch.submenu.contains(entry.group)) {
+        cancelBranchTimer(entry);
+        entry.submenu.hidden = true;
+        entry.button.setAttribute("aria-expanded", "false");
+      }
+    };
+    const closeChildren = panel => {
+      for (const branch of branches) if (branch.parent === panel) hideBranch(branch);
+    };
     const appendItems = (items, parent) => { for (const item of items) {
       if (item.heading) {
         const heading = document.createElement("div");
@@ -27,19 +66,30 @@ export class ObjectContextMenu {
         const group = document.createElement("div"), submenu = document.createElement("div");
         group.className = "ms-object-menu-group"; submenu.className = "ms-object-submenu"; submenu.setAttribute("role","menu"); submenu.hidden = true;
         button.setAttribute("aria-haspopup","menu"); button.setAttribute("aria-expanded","false");
+        const branch = { parent, group, submenu, button };
+        branches.push(branch);
         const show = () => {
+          cancelBranchTimer(branch);
+          if (button.disabled) return;
+          for (const sibling of branches) if (sibling.parent === parent && sibling !== branch) hideBranch(sibling);
           submenu.hidden = false; button.setAttribute("aria-expanded", "true");
-          submenu.style.left = ""; submenu.style.right = ""; submenu.style.top = "0px";
-          let rect = submenu.getBoundingClientRect();
-          if (rect.right > view.innerWidth - 4) {
-            submenu.style.left = "auto"; submenu.style.right = "calc(100% - 3px)";
-            rect = submenu.getBoundingClientRect();
-          }
-          if (rect.bottom > view.innerHeight - 4) submenu.style.top = `${Math.max(4 - rect.top, view.innerHeight - 4 - rect.bottom)}px`;
+          positionSubmenu(submenu, group, view, parent.dataset.menuDirection);
         };
-        const hide = () => { submenu.hidden=true; button.setAttribute("aria-expanded","false"); };
-        group.addEventListener("pointerenter",show,options); group.addEventListener("pointerleave",hide,options);
-        button.addEventListener("click",() => { if (submenu.hidden) show(); else hide(); },options);
+        const hide = () => hideBranch(branch);
+        group.addEventListener("pointerenter", () => {
+          cancelBranchTimer(branch);
+          const switching = submenu.hidden && branches.some(sibling => sibling.parent === parent && sibling !== branch && !sibling.submenu.hidden);
+          if (switching) deferBranch(branch, show); else show();
+        }, options);
+        group.addEventListener("pointerleave", () => {
+          cancelBranchTimer(branch);
+          // A diagonal path may briefly cross a neighbouring root row before
+          // entering the flyout. Let pointerenter cancel this pending closure.
+          if (!submenu.hidden) deferBranch(branch, hide);
+        }, options);
+        // Hover may already have opened the branch before the click arrives.
+        button.addEventListener("click",show,options);
+        submenu.addEventListener("scroll", () => closeChildren(submenu), options);
         button.addEventListener("keydown",event => { if(event.key === "ArrowRight") { event.preventDefault(); show(); submenu.querySelector("button:not(:disabled)")?.focus(); } },options);
         submenu.addEventListener("keydown", event => {
           if (event.key === "ArrowLeft") { event.preventDefault(); event.stopPropagation(); hide(); button.focus(); }
@@ -53,6 +103,7 @@ export class ObjectContextMenu {
       parent.append(button);
     } };
     appendItems(items,menu);
+    menu.addEventListener("scroll", () => closeChildren(menu), options);
     menu.addEventListener("pointerdown", (event) => event.stopPropagation(), options);
     menu.addEventListener("keydown", (event) => {
       const buttons = [...menu.querySelectorAll("button:not(:disabled)")].filter(button => !button.closest("[hidden]")), index = buttons.indexOf(document.activeElement);
@@ -67,8 +118,8 @@ export class ObjectContextMenu {
     view.addEventListener("resize", () => this.close(), options);
     document.body.append(menu);
     const rect = menu.getBoundingClientRect();
-    menu.style.left = `${Math.max(4, Math.min(x, view.innerWidth - rect.width - 4))}px`;
-    menu.style.top = `${Math.max(4, Math.min(y, view.innerHeight - rect.height - 4))}px`;
+    menu.style.left = `${clamp(x, rect.width, view.innerWidth)}px`;
+    menu.style.top = `${clamp(y, rect.height, view.innerHeight)}px`;
     menu.querySelector("button")?.focus();
     return true;
   }

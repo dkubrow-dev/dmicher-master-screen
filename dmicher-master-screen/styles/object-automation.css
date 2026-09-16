@@ -10,7 +10,7 @@
 .ms-object-menu .ms-object-menu-group { position:relative; }
 .ms-object-menu .ms-object-menu-group>button { width:100%; text-align:left; }
 .ms-object-menu .ms-object-menu-group>button::after { content:"▸"; float:right; margin-left:12px; }
-.ms-object-submenu { position:absolute; left:calc(100% - 3px); top:0; width:max-content; min-width:140px; max-width:340px; max-height:65vh; overflow:auto; border:1px solid var(--color-border-light-primary,#777); background:var(--ms-window-background,var(--color-bg-option,#222)); padding:4px; box-shadow:0 3px 12px #0008; border-radius:4px; }
+.ms-object-submenu { position:fixed; width:max-content; min-width:140px; max-width:min(340px,calc(100vw - 8px)); max-height:calc(100vh - 8px); overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; border:1px solid var(--dmicher-border,#777); background:var(--dmicher-content-bg,#20252d); padding:4px; box-shadow:0 3px 12px #0008; border-radius:4px; }
 .ms-object-menu .ms-menu-gm { color:#e76b67; }
 .ms-object-menu button:disabled { opacity:.5; cursor:not-allowed; }
 .ms-object-submenu[hidden] { display:none; }

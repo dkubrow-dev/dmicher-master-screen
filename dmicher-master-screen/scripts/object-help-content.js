@@ -351,8 +351,8 @@ export const OBJECT_HELP_PAGES = [
         "id": "play",
         "ru": "Проверить от лица игрока",
         "en": "Try it as a player",
-        "bodyRu": "Запустите группу в Режиссёре и проверьте меню от лица своего персонажа. Магазины, диалоги, действия и команды разделены на подменю. Недоступный пункт можно показать отключённым, если мастер это разрешил. Мастерские действия видны только мастеру и выделены красным. Один магазин обслуживает одного игрока с одним персонажем; сделки и разговоры видны мастеру в «Активности».",
-        "bodyEn": "Start the group in Director and inspect the menu as your character. Shops, dialogues, actions and commands have separate submenus. An unavailable entry may remain visible but disabled when the GM allows it. GM-only actions are visible only to the GM and marked red. One shop serves one player and character at a time; the GM monitors trades and conversations in Activity."
+        "bodyRu": "Запустите группу в Режиссёре и проверьте меню от лица своего персонажа. Наведите курсор или нажмите категорию, затем выберите пункт открывшегося рядом подменю. Длинный список прокручивается внутри своего уровня. Escape или клик вне меню закрывает его. Недоступный пункт можно показать отключённым, если мастер это разрешил. Мастерские действия видны только мастеру и выделены красным. Один магазин обслуживает одного игрока с одним персонажем; сделки и разговоры видны мастеру в «Активности».",
+        "bodyEn": "Start the group in Director and inspect the menu as your character. Hover over or click a category, then choose an entry in the submenu beside it. A long list scrolls within its own level. Escape or a click outside closes the menu. An unavailable entry may remain visible but disabled when the GM allows it. GM-only actions are visible only to the GM and marked red. One shop serves one player and character at a time; the GM monitors trades and conversations in Activity."
       }
     ]
   }
