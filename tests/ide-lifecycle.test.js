@@ -13,6 +13,8 @@ globalThis.foundry = { applications: { api: {
 } }, utils: { deepClone: structuredClone } };
 const { MasterScreenApplication } = await import("../dmicher-master-screen/scripts/apps/ide.js");
 const { WorkspacePresetStore } = await import("../dmicher-master-screen/scripts/workspace-presets-store.js");
+const { SceneAssets } = await import("../dmicher-master-screen/scripts/scene-assets.js");
+const { getShopInventory } = await import("../dmicher-master-screen/scripts/shop-inventory.js");
 
 function appFor(scene = null) {
   return new MasterScreenApplication({
@@ -25,6 +27,27 @@ function deferred() {
   const promise = new Promise((finish) => { resolve = finish; });
   return { promise, resolve };
 }
+
+test("shop form refresh preserves unrelated input and stale edited stock rejects the entire save", async () => {
+  const f = signalFixture(), app = appFor(f.scene), assets = new SceneAssets(f.scene);
+  f.data.interactionCatalog = { shops: [], dialogues: [] };
+  await assets.saveShop({ id: "stock", name: "Stock", items: [{ id: "rope", stock: 5, data: { name: "Rope", type: "equipment" } }] });
+  app.selectionSceneId = f.scene.id; app.layout.preferences.mainTab = "shops"; app.selection = { kind: "shop", id: "stock" };
+  const writes = f.writes(); await app._prepareContext({});
+  assert.equal(f.writes(), writes, "Viewing never initializes inventory");
+  app.parameterDraft.name = "Unsaved name"; app.dirty = true;
+  f.data.shopInventories = { stock: { items: [], revision: 1 } };
+  await app._prepareContext({});
+  assert.equal(app.parameterDraft.name, "Unsaved name"); assert.deepEqual(app.parameterDraft._inventory.items, []);
+  app.parameterDraft._inventory.items = [{ id: "rope", stock: 8, data: { name: "Rope", type: "equipment" } }];
+  f.data.shopInventories.stock.revision = 2;
+  await app._prepareContext({});
+  assert.equal(app.parameterDraft._inventory.conflicted, true);
+  assert.equal(app.parameterDraft._inventory.items[0].stock, 8);
+  await assert.rejects(app.saveParameters(), /current stock changed|изменились/);
+  assert.equal(assets.getShop("stock").name, "Stock"); assert.equal(app.dirty, true);
+  assert.deepEqual(getShopInventory(f.scene, "stock").items, []);
+});
 
 async function presetDraft() {
   const f = signalFixture(), app = appFor(f.scene);

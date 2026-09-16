@@ -21,6 +21,7 @@ import { ObjectInvocations } from "./object-invocations.js";
 import { ObjectVariableService } from "./object-variables.js";
 import { canExecuteScriptKind } from "./premium-provider.js";
 import { clearBehaviorOverrides } from "./object-command-state.js";
+import { beginStateEntryPreparation, isStateEntryPreparing, clearStateEntryPreparations } from "./state-entry-preparation.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -72,7 +73,7 @@ export class GroupRuntime {
     this.disposed = false;
     const on = (name, fn) => this.hooks.push([name, Hooks.on(name, fn)]);
     on("canvasReady", () => { this.tickTimes.clear(); this.refresh(canvas.scene); });
-    on("canvasTearDown", () => { this.commandExecutor?.clear(globalThis.canvas?.scene); this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
+    on("canvasTearDown", () => { clearStateEntryPreparations(globalThis.canvas?.scene);this.commandExecutor?.clear(globalThis.canvas?.scene); this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
     on("updateUser", () => notifyExecutionChange(globalThis.canvas?.scene));
     for (const hook of ["createCombat", "updateCombat", "deleteCombat", "pauseGame"]) {
       on(hook, () => notifyExecutionChange(globalThis.canvas?.scene, "combat-or-pause"));
@@ -97,6 +98,7 @@ export class GroupRuntime {
     return this;
   }
   dispose() {
+    clearStateEntryPreparations(globalThis.canvas?.scene);
     this.disposed = true; notifyExecutionChange(globalThis.canvas?.scene, "runtime-disposed"); clearInterval(this.interval); this.interval = null;
     this.commandExecutor?.dispose();
     this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); this.effects.dispose?.(); this.visuals?.clear(); this.presentedRuns.clear();
@@ -118,7 +120,7 @@ export class GroupRuntime {
   currentObject(scene, runId, target, { ignoreInteractionPause = false, scriptKey, excludeDialogueSessions = [], excludeShopSessions = [] } = {}) {
     if (!this.owns(scene, runId)) return false;
     const run = this.scriptState(scene, runId), binding = getObjectBindings(scene).bindings[objectKey(target)];
-    if (!run) return false;
+    if (!run || isStateEntryPreparing(scene,run)) return false;
     if (!run.command && !run.manual && scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(target)] === false) return false;
     if (!getSceneObject(scene, target) || binding?.playerCharacter) return false;
     if (run.command) return this.commandExecutor.current(scene, run, target, { ignoreInteractionPause, scriptKey, excludeDialogueSessions, excludeShopSessions });
@@ -286,6 +288,7 @@ export class GroupRuntime {
         conditionCounts: clone(previous.conditionCounts), conditionEnabledOverrides: clone(previous.conditionEnabledOverrides),
         ...(resuming ? { effects: clone(previous.effects), scriptStates: this.resumeScriptStates(previous) } : {}) };
       if (active && !resuming) resetStateConditions(next);
+      if (active && !resuming && this.shopRestoration) plan.releaseStatePreparation=beginStateEntryPreparation(scene,next);
       await saveRuntime(scene, next);
       debugTrace("runtime", "state.enter", () => ({ sceneId: scene.id, sceneName: scene.name, groupId, groupName: group.groupName,
         stateId, stateName: prepared.name, previousStateId: previous.stateId, runId: next.runId, active, resuming }));
@@ -300,10 +303,18 @@ export class GroupRuntime {
       finishHalt(scene, generation, groupId); notifyExecutionChange(scene);
       if (plan.resumeInitials) this.resumeInitialContinuations(scene, previous.initialContinuations ?? []);
       this.tickTimes.set(`${scene.id}:${groupId}`, this.now()); return next;
-    });
+    }).catch(error=>{plan.releaseStatePreparation?.();throw error;});
   }
   async completeStateChange(scene, plan, run, admitted = () => {}) {
     const { active, groupId, starting, signalContext, parameters, resuming } = plan;
+    try {
+      admitted();
+      if (active && !resuming && this.shopRestoration) {
+        await this.shopRestoration.stateEntered(scene,run,{current:()=>{
+          try {admitted();return this.owns(scene,run.runId);} catch {return false;}
+        }});
+      }
+    } finally {plan.releaseStatePreparation?.();}
     admitted();
     if (active && !resuming) {
       await this.once(scene, run.runId, "workspace", () => this.onWorkspace(scene, clone(run.state.workspace), { runId: run.runId, groupId }));

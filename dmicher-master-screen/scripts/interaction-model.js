@@ -13,13 +13,17 @@ const array = (value, max, label) => Array.isArray(value) && value.length <= max
 const stock = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 10000 ? value : fail(localizedMessage("Остаток — целое число от 0 до 10000."));
 
 /** System-owned Item data is opaque; one stock unit remains one complete document. */
-export function normalizeShopAsset(raw) {
-  if (!object(raw)) fail(localizedMessage("Ожидается магазин."));
-  const items = array(raw.items ?? [], 200, localizedMessage("Товары")).map((item) => {
+export function normalizeShopItems(source = []) {
+  const items = array(source, 200, localizedMessage("Товары")).map((item) => {
     if (!object(item?.data) || typeof item.data.name !== "string" || typeof item.data.type !== "string") fail(localizedMessage("Товар должен содержать документ Item с именем и типом."));
     return { id: id(item.id || randomId(), localizedMessage("Товар")), data: clone(item.data), stock: stock(item.stock ?? 1) };
   });
   if (new Set(items.map((entry) => entry.id)).size !== items.length) fail(localizedMessage("ID товаров магазина не должны повторяться."));
+  return items;
+}
+export function normalizeShopAsset(raw) {
+  if (!object(raw)) fail(localizedMessage("Ожидается магазин."));
+  const items = normalizeShopItems(raw.items ?? []);
   if (raw.display !== undefined && !["list", "tiles"].includes(raw.display)) fail(localizedMessage("Отображение магазина: list или tiles."));
   return { id: id(raw.id || randomId(), localizedMessage("Магазин")), name: name(raw.name, localizedMessage("Магазин")), description: normalizeDescription(raw.description),
     img: prose(raw.img ?? "", 1024, localizedMessage("Арт магазина")), display: raw.display ?? "list", requireGMApproval: raw.requireGMApproval !== false, items };

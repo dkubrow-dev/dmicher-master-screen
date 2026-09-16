@@ -9,6 +9,7 @@ import { normalizeObjectVariables } from "./object-variables.js";
 import { normalizeObjectSignalSettings } from "./object-signal-settings.js";
 import { normalizeObjectActions, normalizeInvokedScripts, normalizeActionConditionMacro } from "./object-action-model.js";
 import { objectCapabilities } from "./object-capabilities.js";
+import { normalizeShopRestoration } from "./shop-restoration-policy.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -29,7 +30,8 @@ function references(raw, kind) {
     const displayName = entry.displayName ?? "", order = entry.order ?? 0;
     if (typeof displayName !== "string" || displayName.length > 200 || !Number.isSafeInteger(order) || order < 0 || entry.showWhenUnavailable !== undefined && typeof entry.showWhenUnavailable !== "boolean") fail(text("Проверьте название и порядок действия.", "Check the action's display name and order."));
     return { [`${kind}Id`]: entry[`${kind}Id`], ...(entry.playerAction === false ? { playerAction: false } : {}), stateIds: ids(entry.stateIds), range,
-      displayName, order, showWhenUnavailable: entry.showWhenUnavailable ?? false, conditionMacro: normalizeActionConditionMacro(entry.conditionMacro), conditions: normalizeConditions(entry.conditions) };
+      displayName, order, showWhenUnavailable: entry.showWhenUnavailable ?? false, conditionMacro: normalizeActionConditionMacro(entry.conditionMacro), conditions: normalizeConditions(entry.conditions),
+      ...(kind === "shop" ? { restoration: normalizeShopRestoration(entry.restoration) } : {}) };
   });
 }
 /** A player assignment also registers its tool. A registration-only entry never

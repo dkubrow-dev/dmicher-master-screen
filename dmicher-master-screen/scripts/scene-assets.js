@@ -1,4 +1,4 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { MODULE_ID, randomId } from "./model.js";
 import { requireGM, withSceneLock } from "./store.js";
 import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies, removeSignalOwner, normalizeCatalog } from "./signal-catalog.js";
@@ -6,6 +6,7 @@ import { stageScene, remapDialogueSignals } from "./configuration-transfer.js";
 
 import { normalizeShopAsset, normalizeDialogueAsset, normalizeInteractionCatalog, mergeInteractionCatalogs, interactionType, validateDialogueSignals } from "./interaction-model.js";
 import { writeSceneFlags } from "./scene-flags.js";
+import { getShopInventory, hasShopInventory, prepareShopInventoryChange, requireShopInventoryAuthority } from "./shop-inventory.js";
 export { normalizeShopAsset, normalizeDialogueAsset, normalizeInteractionCatalog } from "./interaction-model.js";
 
 const clone = (value) => structuredClone(value);
@@ -40,7 +41,30 @@ export class SceneAssets {
       return clone(result);
     });
   }
-  saveShop(value, options = {}) { return this.change((catalog) => this.save(catalog.shops, normalizeShopAsset(value)), options); }
+  saveShop(value, options = {}) {
+    return this.change((catalog, relatedFlags) => {
+      const shop = normalizeShopAsset(value), previous = catalog.shops.find(entry => entry.id === shop.id);
+      const current = getShopInventory(this.scene, shop.id, { initialItems: previous?.items ?? shop.items });
+      if (options.expectedInventoryRevision !== undefined && options.expectedInventoryRevision !== current.revision)
+        fail(text("Текущие товары магазина изменились. Обновите их перед сохранением.", "The shop's current stock changed. Reload it before saving."));
+      const hasCurrentDraft = Object.hasOwn(options, "currentItems");
+      const currentItems = hasCurrentDraft ? options.currentItems : options.resetInventory ? shop.items : current.items;
+      const changesCurrent = hasCurrentDraft && JSON.stringify(currentItems) !== JSON.stringify(current.items);
+      const initialChanged = previous && JSON.stringify(previous.items) !== JSON.stringify(shop.items);
+      // Editing initial stock is explicit preparation, not a replenishment. Capture
+      // the previous stock first when this shop has no canonical snapshot yet.
+      if (changesCurrent || options.resetInventory || initialChanged && !hasShopInventory(this.scene, shop.id)) {
+        requireShopInventoryAuthority();
+        const { fields } = prepareShopInventoryChange(this.scene, shop.id, currentItems, {
+          expectedRevision: options.expectedInventoryRevision, initialItems: current.items,
+          cancelTrades: changesCurrent || options.resetInventory === true,
+          incrementRevision: changesCurrent || options.resetInventory === true
+        });
+        Object.assign(relatedFlags, fields);
+      }
+      return this.save(catalog.shops, shop);
+    }, options);
+  }
   saveDialogue(value, options = {}) { return this.change((catalog) => this.save(catalog.dialogues, normalizeDialogueAsset(value)), options); }
   save(rows, value) { const index = rows.findIndex((entry) => entry.id === value.id); if (index < 0) rows.push(value); else rows[index] = value; return value; }
   deleteShop(id, options) { return this.remove("shop", id, options); }

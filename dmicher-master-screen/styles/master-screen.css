@@ -254,13 +254,13 @@
 .dmicher-master-screen .ms-stock-entry { display: flex; align-items: center; gap: 5px; padding: 4px 0; border-bottom: 1px solid var(--dmicher-border-muted); }
 .dmicher-master-screen .ms-stock-entry > img { width: 30px; height: 30px; object-fit: contain; border: 0; }
 .dmicher-master-screen .ms-stock-entry > span { flex: 1; overflow-wrap: anywhere; }
-.dmicher-master-screen .ms-stock-entry .ms-field { flex: 0 0 60px; }
+.dmicher-master-screen .ms-stock-entry .ms-field { flex: 0 0 110px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-items { display: grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 5px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry { flex-wrap: wrap; border: 1px solid var(--dmicher-border-muted); padding: 5px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry > img { width: 100%; height: 65px; }
 .dmicher-master-screen .ms-asset-stock.is-tiles .ms-stock-entry > span { flex: 1 0 100%; }
 .dmicher-master-screen .ms-response-row { border-bottom: 1px solid var(--dmicher-border-muted); padding: 5px 0; }
-.dmicher-master-screen .ms-asset-actions { display: flex; gap: 5px; margin: 5px 0; }
+.dmicher-master-screen .ms-asset-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: 5px 0; }
 .dmicher-master-screen .ms-dialogue-graph ul { padding-left: 18px; }
 .dmicher-master-screen .ms-preview-body { overflow: auto; }
 .dmicher-master-screen .ms-preview-banner { border: 1px solid var(--dmicher-accent); padding: 6px 8px; border-radius: 4px; }

@@ -1,4 +1,6 @@
 import { message as localizedMessage, text } from "./localization.js";
+import { getShopInventory, hasShopInventory, prepareShopInventoryChange } from "./shop-inventory.js";
+import { writeSceneFlags } from "./scene-flags.js";
 import { MODULE_ID } from "./model.js";
 import { getRuntimes } from "./store.js";
 import { consumeCondition, getConditionGate, getConditionKey } from "./interaction-conditions.js";
@@ -28,7 +30,8 @@ export function requireShopSession(current, intent, user) {
 export function createShopSessions({ context, save, lock, authority, validate, validateOffer, chat, onChange, emitSignal,
   scriptValidate = validate, evaluateOpenCondition = async () => true }) {
   const pending = new Map();
-  const signature = current => JSON.stringify([current.runtime?.runId, current.runtime?.stateId, current.target, current.behavior?.shop]);
+  const signature = current => JSON.stringify([current.runtime?.runId, current.runtime?.stateId, current.target, current.behavior?.shop,
+    getShopInventory(current.scene, shopKey(current)).revision]);
   const processOnce = async (command, user, { script = false, isCurrent = () => true } = {}) => {
     if (!["open", "offer", "renew", "release"].includes(command.kind)) fail(localizedMessage("Неизвестная команда магазина."));
     if (!command.shopId) fail(localizedMessage("Нужно выбрать конкретный магазин."));
@@ -81,7 +84,12 @@ export function createShopSessions({ context, save, lock, authority, validate, v
         };
         if (!reusing) { if (!script) consumeCondition(runtime, conditionKey, policy); signal = interactionSignal(current.scene, "Shop", shopId, session, "opened"); }
         runtime.shops ??= {};
-        runtime.shops[shopId] ??= { items: clone(current.behavior.shop.items ?? []) };
+        const inventory = current.inventory ?? getShopInventory(current.scene, shopId, { initialItems: current.behavior.shop.items ?? [] });
+        runtime.shops[shopId] = clone(inventory);
+        if (!hasShopInventory(current.scene, shopId) && (current.scene.setFlag || current.scene.update)) {
+          const { fields } = prepareShopInventoryChange(current.scene, shopId, inventory.items, { cancelTrades: false, incrementRevision: false });
+          await writeSceneFlags(current.scene, fields);
+        }
         freezeInteractionClock(runtime, target, Date.now(), { external: session.origin !== "script" });
       } else if (command.kind === "release") {
         if (!existing || existing.sessionId !== command.sessionId) return null;

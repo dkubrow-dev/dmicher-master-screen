@@ -12,6 +12,7 @@ import { WorkspacePresetsRuntime } from "./workspace-presets-runtime.js";
 import { registerKnownWorkspaceWindows } from "./workspace-window-targets.js";
 import { exportBundle, importBundle } from "./transfer.js";
 import { createShopService } from "./shop.js";
+import { ShopRestoration } from "./shop-restoration.js";
 import { SceneSignals } from "./signals.js";
 import { createDialogueService } from "./dialogues.js";
 import { MasterScreenApplication } from "./apps/ide.js";
@@ -62,6 +63,8 @@ export class ScreenController {
       emitSignal: (scene, signal) => this.signals.emit(scene, signal),
       onWorkspace: async (scene, _workspace, { groupId = "main" } = {}) => { void this.workspace.apply(scene, getRuntime(scene, { groupId })).catch(notifyError); } });
     this.runtime.workspacePresets = this.workspacePresets;
+    this.shopRestoration = new ShopRestoration();
+    this.runtime.shopRestoration = this.shopRestoration;
     this.runtime.startScriptShop = (command, options) => this.shop.startScriptShop(command, options);
     this.runtime.commandService = { invokeFromScript: command => this.commandService.invokeFromScript(command) };
     this.signals = new SceneSignals({ runtime: this.runtime, onChange: (scene) => this.changed(scene), isConstructor: () => this.mode === "constructor",

@@ -81,6 +81,7 @@ Hooks.once("ready", () => {
   on("clientSettingChanged", key => { if (key === "core.rollMode") void syncDialogueRollMode().catch(notifyError); });
   removeDialogueVolume = new DialogueVolumeController().install();
   controller.runtime.start();
+  controller.shopRestoration.install();
   controller.interactiveHighlights.install();
   removeObjectEvents = controller.objectEvents.install();
   removeNoteVisibility = installCommandNoteVisibility();
@@ -131,6 +132,7 @@ globalThis.addEventListener?.("pagehide", () => {
   removeNoteVisibility?.();
   clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();
+  controller?.shopRestoration.dispose();
   controller?.dialogueChat.dispose();
   detachCanvas?.();
   for (const [name, id] of hooks) Hooks.off(name, id);

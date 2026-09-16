@@ -27,6 +27,7 @@ import { readObjectGeometry } from "../script-movement.js";
 import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
 import { defaultObjectCommand, objectCommandName } from "../object-command-model.js";
 import { renderObjectCommandList, renderObjectCommandFields, readObjectCommandFields, bindObjectCommandFields } from "./object-command-fields.js";
+import { renderShopRestorationFields, readShopRestorationFields, bindShopRestorationFields } from "./shop-restoration-fields.js";
 
 const clone = (value) => structuredClone(value);
 const options = (items, current, empty = t("Не выбрано", "Not selected")) => selectOptions(items, current, empty);
@@ -336,7 +337,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     if (binding && binding.playerAction !== false) html += section(t("Настройка действия игрока", "Player action settings"), `<label>${t("Инструмент", "Tool")}<select name="feature-asset">${options(this.registeredTools(ref.kind, catalog), binding[`${ref.kind}Id`])}</select></label>
       ${input("feature-name",t("Отображаемое имя","Display name"),binding.displayName ?? "")}${input("feature-order",t("Порядок","Order"),binding.order ?? 0,'type="number" min="0" step="1"')}
       <label class="ms-check"><input type="checkbox" name="feature-unavailable"${binding.showWhenUnavailable ? " checked" : ""}>${t("Показывать в меню, если недоступно","Show in menu when unavailable")}</label>
-      ${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName })}${renderConditionMacro("feature-macro",binding.conditionMacro)}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
+      ${input("feature-range", t("Дальность", "Range"), binding.range ?? 5, 'type="number" min="0" step="any"')}${buildConditionFields({ ...binding.conditions, stateIds: binding.stateIds }, definition.states, { prefix: "feature-conditions", groupId: definition.groupId, groupName: definition.groupName, extraFields: renderConditionMacro("feature-macro",binding.conditionMacro) })}${ref.kind === "shop" ? renderShopRestorationFields(binding.restoration) : ""}${button("open-asset", t("Открыть каталог", "Open catalog"))}`);
     return html;
   }
   propertyFields({ scene, catalog: assets }) {
@@ -363,6 +364,7 @@ export class ObjectAutomationApplication extends ObjectForm {
       const ref = this.selectedFeature, previous = this.activeFeature(), key = `${ref.kind}Id`, id = value(this.element, "feature-asset") || previous[key];
       if (!registeredToolIds(this.draft, ref.kind).includes(id)) throw new Error(t("Сначала добавьте инструмент в «Свойствах» объекта.", "First add a tool in the object's Properties."));
       const conditions = readConditionFields(this.element, "feature-conditions"), next = { ...previous, [key]: id, playerAction: true, stateIds: conditions.stateIds, range: Number(value(this.element, "feature-range")), displayName: value(this.element,"feature-name"), order: Number(value(this.element,"feature-order")), showWhenUnavailable: this.element.querySelector('[name="feature-unavailable"]')?.checked === true, conditionMacro: value(this.element,"feature-macro"), conditions };
+      if (ref.kind === "shop") next.restoration = readShopRestorationFields(this.element, previous.restoration);
       this.draft[`${ref.kind}s`][ref.index] = next;
       // Keep row indexes stable until this DOM is replaced: another action may
       // already refer to a row in the same form. Registrations are deduplicated by ID.
@@ -420,6 +422,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
     bindScriptInterruptions(this.element, listeners);
     bindObjectCommandFields(this.element, listeners);
+    bindShopRestorationFields(this.element, listeners);
     if (this.activeScript() && this.element.querySelector('[data-dmicher-json-id="script-block-0"]')) {
       const dispose = this.createScriptTransfer().bind(this.element, "script-block-0");
       this.events.signal.addEventListener("abort", dispose, { once: true });

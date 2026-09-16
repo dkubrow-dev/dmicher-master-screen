@@ -12,6 +12,8 @@ import { createShopSessions, requireShopSession, shopKey } from "./shop-sessions
 import { interactionSignal, notifyInteractionSignal, deniedMessage } from "./interaction-signals.js";
 import { isSceneObjectType } from "./scene-object-types.js";
 import { debugTrace, debugError } from "./debug.js";
+import { getShopInventory, prepareShopInventoryChange } from "./shop-inventory.js";
+import { writeSceneFlags } from "./scene-flags.js";
 export { shopKey } from "./shop-sessions.js";
 
 const copy = (value) => structuredClone(value);
@@ -47,26 +49,24 @@ export function getShopContext(sceneId, source, groupId = "main", selectedShopId
   const scriptSession = session?.origin === "script" && objectKey(session.target) === objectKey(target) && session.runId === runtime.runId;
   const resolved = scriptSession ? registered : player ?? registered;
   const shopId = resolved?.asset.id, object = sceneObject(scene, target);
-  const inventories = scene?.getFlag?.(MODULE_ID, "shopInventories");
-  const inventory = shopId && (inventories?.[shopId]
-    ?? getRuntimes(scene).filter((state) => state.shops?.[shopId])
-      .sort((a, b) => b.enteredAt - a.enteredAt).map((state) => state.shops[shopId])[0]);
+  const inventory = shopId ? getShopInventory(scene, shopId) : null;
   if (runtime && inventory) { runtime.shops ??= {}; runtime.shops[shopId] = copy(inventory); }
-  return { scene, runtime, object, target, shopId, asset: resolved?.asset, registered, registeredOnly: !player,
+  return { scene, runtime, object, target, shopId, inventory, asset: resolved?.asset, registered, registeredOnly: !player,
     behavior: resolved ? { enabled: !runtime.disabledObjects?.includes(objectKey(target)), shop: resolved.config } : null };
 }
 async function saveInventory(current, inventory) {
-  if (!current.scene.setFlag) return;
-  const values = current.scene.getFlag?.(MODULE_ID, "shopInventories") ?? {};
-  values[shopKey(current)] = copy(inventory);
-  await current.scene.setFlag(MODULE_ID, "shopInventories", values);
+  if (!current.scene.setFlag && !current.scene.update) return inventory;
+  const prepared = prepareShopInventoryChange(current.scene, shopKey(current), inventory.items, {
+    expectedRevision: current.inventory?.revision, cancelTrades: false
+  });
+  await writeSceneFlags(current.scene, prepared.fields);
+  current.inventory = copy(prepared.inventory);
+  return prepared.inventory;
 }
-/** Catalog stock seeds new lot IDs. Existing lots, including deposits from players,
- * are world facts; preparation edits never replenish or delete them implicitly. */
+/** Initial stock seeds a missing snapshot once, never individual missing lot IDs.
+ * An explicitly empty current inventory remains empty. */
 export function shopEntries(context) {
-  const entries = copy(context.runtime?.shops?.[shopKey(context)]?.items ?? []);
-  for (const entry of context.behavior?.shop?.items ?? []) if (!entries.some((current) => current.id === entry.id)) entries.push(copy(entry));
-  return entries;
+  return copy(context.inventory?.items ?? context.runtime?.shops?.[shopKey(context)]?.items ?? context.behavior?.shop?.items ?? []);
 }
 export function validateTradeContext(context, intent, user) {
   const { scene, runtime, object, behavior } = context;
@@ -210,7 +210,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
         if (sources.some((source) => actor.items.has(source.id))) fail(localizedMessage("Система не удалила часть исходных предметов."));
       }
       validate(context(intent.sceneId, intent.target ?? intent.tokenId, intent.groupId ?? "main", intent.shopId), intent, user);
-      await saveInventory(current, runtime.shops[shopKey(current)]);
+      runtime.shops[shopKey(current)] = await saveInventory(current, runtime.shops[shopKey(current)]);
       receipt.status = "done";
       delete runtime.shopSessions[shopKey(current)];
       await save(current.scene, runtime);
@@ -240,7 +240,7 @@ export function createShopService({ emitSignal, onChange = () => {}, context = g
         if (oldShop) runtime.shops[shopKey(current)] = oldShop;
         else if (runtime.shops) delete runtime.shops[shopKey(current)];
         if (oldShop && current.scene.setFlag) {
-          try { await saveInventory(current, oldShop); }
+          try { runtime.shops[shopKey(current)] = await saveInventory(current, oldShop); }
           catch (rollbackError) { rollbackErrors.push(rollbackError.message); }
         }
       }

@@ -8,13 +8,16 @@ const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
 const compiled = new Map();
 /** Conditions are author code evaluated only by the elected GM, outside locks.
  * Discovery is read-only: a condition cannot mutate object variables. */
-export async function evaluateInteractionMacro(scene,{target,conditionMacro = "",runtime,actorToken,user,current = () => true}) {
+export async function evaluateInteractionMacro(scene,{target,conditionMacro = "",runtime,actorToken,user,current = () => true,signal}) {
   if (!conditionMacro.trim()) return true;
   const snapshot = scene.getFlag?.("dmicher-master-screen","objectBindings")?.revision;
   const isCurrent = () => current() && scene.getFlag?.("dmicher-master-screen","objectBindings")?.revision === snapshot
     && (!runtime?.runId || getRuntime(scene,{groupId:runtime.groupId}).runId === runtime.runId && !isExecutionHalted(scene,getRuntime(scene,{groupId:runtime.groupId})))
     && Boolean(getSceneObject(scene,target));
   const lease = createExecutionScope(scene,{isCurrent});
+  const cancel=()=>lease.cancel();
+  signal?.addEventListener?.("abort",cancel,{once:true});
+  if (signal?.aborted) cancel();
   try {
     const scope = new ObjectVariableService().scope(scene,{object:target,current:lease.current});
     let fn = compiled.get(conditionMacro);
@@ -28,5 +31,5 @@ export async function evaluateInteractionMacro(scene,{target,conditionMacro = ""
     if (result.stale) return false;
     if (typeof result.value !== "boolean") throw new Error(text("Макрос условия должен возвращать true или false.","A condition macro must return true or false."));
     return result.value;
-  } finally { lease.dispose(); }
+  } finally { signal?.removeEventListener?.("abort",cancel);lease.dispose(); }
 }

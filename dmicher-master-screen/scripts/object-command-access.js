@@ -6,6 +6,7 @@ import { isExecutionHalted } from "./execution.js";
 import { generics } from "./generics.js";
 import { normalizeObjectCommand, objectCommandConditionsMatch, objectSupportsCommand, commandPermitsDisabledBehavior, commandStopsBehavior } from "./object-command-model.js";
 import { commandParent, commandBehaviorEnabled, isCommandParentHalted } from "./object-command-state.js";
+import { isStateEntryPreparing } from "./state-entry-preparation.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { scriptObjectCapabilities } from "./script-movement.js";
 
@@ -47,7 +48,7 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
   if (!raw || binding.playerCharacter || !objectSupportsCommand(object.documentName, packet.commandId)) rejectCommand("disabled", text("Этот объект не принимает такую команду.", "This object does not accept that command."));
   const config = normalizeObjectCommand(raw), runtime = binding.groupId ? getRuntime(scene, { groupId: binding.groupId }) : commandParent(scene, binding);
   if (!config.permissions[method] || !config.enabled) rejectCommand("issuer", text("У вас нет разрешения на эту команду.", "You do not have permission to give this command."));
-  if (!runtime?.runId || isCommandParentHalted(scene, runtime) || !commandBehaviorEnabled(scene, target, runtime) && !commandPermitsDisabledBehavior(config.id)) {
+  if (!runtime?.runId || isStateEntryPreparing(scene,runtime) || isCommandParentHalted(scene, runtime) || !commandBehaviorEnabled(scene, target, runtime) && !commandPermitsDisabledBehavior(config.id)) {
     rejectCommand("stopped", text("Сначала мастер должен запустить автоматизацию объекта.", "The GM must start this object's automation first."));
   }
   if (method !== "gm" && !commandLevelsOverlap(actor, object)) rejectCommand("level", text("Персонаж и объект находятся на разных уровнях.", "The character and object are on different levels."));

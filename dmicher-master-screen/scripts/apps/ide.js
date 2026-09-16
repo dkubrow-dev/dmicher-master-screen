@@ -1,6 +1,6 @@
 import { text as t } from "../localization.js";
 import { EditorApplication, SCENE_COMMANDS, GROUP_COMMANDS } from "./editor.js";
-import { scenePreparationKey } from "./scene-refresh.js";
+import { scenePreparationKey, shopInventoryRefreshKey } from "./scene-refresh.js";
 import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
 import { renderSceneTree, renderSceneControls, syncSceneControls, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
@@ -8,10 +8,12 @@ import { NavigationFilter } from "./navigation-filter.js";
 import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
 import { GroupEditor } from "../group-editor.js";
 import { SignalCatalog } from "../signal-catalog.js";
-import { getDefinitions, getRuntimes } from "../store.js";
+import { getDefinitions, getRuntimes, isAuthority } from "../store.js";
 import { MODULE_ID, randomId, localizedDescription } from "../model.js";
 import { generics } from "../generics.js";
 import { SceneAssets } from "../scene-assets.js";
+import { getShopInventory } from "../shop-inventory.js";
+import { copyShopInventory, refreshShopInventoryDraft, shopDraftItems, shopInventorySaveOptions } from "./shop-inventory-draft.js";
 import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects, bindAssetPremiumControls } from "./asset-forms.js";
 import { renderDialogueTree } from "./dialogue-asset-view.js";
@@ -125,7 +127,9 @@ export class MasterScreenApplication extends EditorApplication {
     if (other === "automation") visibleRuntime.push(runtime?.disabledObjects);
     if (other === "counts") visibleRuntime.push(runtime?.conditionCounts, runtime?.conditionEnabledOverrides);
     if (other === "journal") visibleRuntime.push(context.signalLog);
-    return JSON.stringify([scenePreparationKey(scene), visibleRuntime]);
+    const inventory = this.layout.preferences.mainTab === "shops" && this.selection.kind === "shop"
+      ? shopInventoryRefreshKey(scene, this.selection.id) : null;
+    return JSON.stringify([scenePreparationKey(scene), visibleRuntime, inventory]);
   }
 
   refreshFromScene(scene) {
@@ -176,7 +180,7 @@ export class MasterScreenApplication extends EditorApplication {
     } catch (error) { if (!this.dirty) throw error; }
   }
 
-  snapshotInputs() { return [...(this.element?.querySelectorAll("[data-detail-content] input[name],[data-detail-content] select[name],[data-detail-content] textarea[name]") ?? [])].map((input) => ({ name: input.name, type: input.type, value: input.value, checked: input.checked })); }
+  snapshotInputs() { return [...(this.element?.querySelectorAll("[data-detail-content] input[name],[data-detail-content] select[name],[data-detail-content] textarea[name]") ?? [])].map((input) => ({ name: input.name, type: input.type, value: input.value, checked: input.checked, entryId: input.dataset.entryId })); }
   stateKey(tab = this.layout.preferences.mainTab, sceneId = this.selectionSceneId) { return `${sceneId}:${this.mode}:${tab}`; }
   storeTabState() {
     if (!this.selectionSceneId) return;
@@ -262,6 +266,16 @@ export class MasterScreenApplication extends EditorApplication {
     if (!this.dirty || !this.parameterDraft) {
       this.parameterDraft = selected ? clone(selected) : null;
       this.parameterRevision = presetKind(this.selection) ? presets.revision : ["group", "state"].includes(this.selection.kind) ? selectedDefinition?.revision : ["shop", "dialogue"].includes(this.selection.kind) ? assets.revision : catalog.revision;
+    }
+    if (this.selection.kind === "shop" && this.parameterDraft) {
+      const inventory = getShopInventory(current.scene, this.selection.id, { initialItems: selected?.items ?? [] });
+      // Invalid/incomplete number input is kept verbatim by the form snapshot.
+      // A live sale may refresh untouched stock, but cannot overwrite this input.
+      const preserveInputs = this.dirty && (this.pendingTabInputs ?? []).some(input => input.name === "shopCurrentStock"
+        && (input.value === "" || Number(input.value) !== this.parameterDraft._inventory?.items.find(item => item.id === input.entryId)?.stock));
+      if (refreshShopInventoryDraft(this.parameterDraft, inventory, { preserveInputs })) {
+        this.pendingTabInputs = this.pendingTabInputs?.filter(input => input.name !== "shopCurrentStock") ?? null;
+      }
     }
     if (this.selection.kind === "dialogue" && this.selection.pageId && !this.parameterDraft?.pages?.some(page => page.id === this.selection.pageId)) {
       this.selection.pageId = null;
@@ -405,8 +419,10 @@ export class MasterScreenApplication extends EditorApplication {
       if (segments.length > 1) symbol.value = segments[0].segment;
     };
     if (symbol) { symbol.addEventListener("input", constrainSymbol, listeners); symbol.addEventListener("compositionend", constrainSymbol, listeners); }
-    this.element.querySelector("[data-shop-stock-drop]")?.addEventListener("dragover", (event) => event.preventDefault(), listeners);
-    this.element.querySelector("[data-shop-stock-drop]")?.addEventListener("drop", (event) => { event.preventDefault(); void this.dropShopItem(event).catch(notify); }, listeners);
+    for (const zone of this.element.querySelectorAll("[data-shop-stock-drop]")) {
+      zone.addEventListener("dragover", (event) => event.preventDefault(), listeners);
+      zone.addEventListener("drop", (event) => { event.preventDefault(); void this.dropShopItem(event).catch(notify); }, listeners);
+    }
     this.element.addEventListener("click", (event) => {
       const row = event.target.closest("[data-select-kind]");
       if (!row || event.target.closest("button,a,input,select,textarea,label,[role=button],[contenteditable]")) return;
@@ -514,13 +530,16 @@ export class MasterScreenApplication extends EditorApplication {
 
   async dropShopItem(event) {
     if (this.mode !== "constructor" || this.selection.kind !== "shop") return;
+    const zone = event.currentTarget?.dataset.shopStockDrop ?? "initial";
+    if (zone === "current" && !isAuthority()) return;
     let data; try { data = JSON.parse(event.dataTransfer.getData("text/plain")); } catch { throw new Error(t("Перетащите предмет Foundry.", "Drop a Foundry item.")); }
     const original = { scene: this.selectionSceneId, id: this.selection.id };
     const item = data.type === "Item" && typeof data.uuid === "string" ? await fromUuid(data.uuid) : null;
     if (item?.documentName !== "Item" || typeof item.toObject !== "function") throw new Error(t("Перетащите доступный предмет Foundry.", "Drop an accessible Foundry item."));
-    if (original.scene !== this.selectionSceneId || original.id !== this.selection.id) throw new Error(t("Выбор изменился. Повторите перенос предмета.", "The selection changed. Drop the item again."));
+    if (original.scene !== this.selectionSceneId || original.id !== this.selection.id || this.mode !== "constructor") throw new Error(t("Выбор изменился. Повторите перенос предмета.", "The selection changed. Drop the item again."));
     const source = item.toObject(); delete source._id;
-    return this.mutateParameters((draft) => draft.items.push({ id: randomId(), data: source, stock: 1 }));
+    this.pendingTabInputs = null;
+    return this.mutateParameters((draft) => shopDraftItems(draft, zone).push({ id: randomId(), data: source, stock: 1 }));
   }
 
   async assignObject(descriptor, remove = false) {
@@ -594,7 +613,12 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.selection.kind === "group") await groups.updateGroup(this.selection.id, { groupName: draft.groupName, symbol: draft.symbol, entryStateId: draft.entryStateId, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
     if (this.selection.kind === "state") await groups.updateState(this.selection.groupId, this.selection.id, { name: draft.name, description: draft.description, background: draft.background, textColor: draft.textColor }, options);
     if (this.selection.kind === "signal") await catalog.saveSignal(draft, options);
-    if (this.selection.kind === "shop") await new SceneAssets(scene).saveShop(draft, options);
+    if (this.selection.kind === "shop") {
+      // The initial assortment and current stock are committed together. A stale
+      // inventory revision rejects the whole save, preserving the form draft.
+      this.parameterDraft = draft;
+      await new SceneAssets(scene).saveShop(draft, { ...options, ...shopInventorySaveOptions(draft) });
+    }
     if (this.selection.kind === "dialogue") await new SceneAssets(scene).saveDialogue(draft, options);
     if (presetKind(this.selection)) await new WorkspacePresetStore(scene).save(presetKind(this.selection), draft, options);
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene);
@@ -652,7 +676,29 @@ export class MasterScreenApplication extends EditorApplication {
       return this.assignObject({ type, id });
     }
     if (action === "unassignObject") return this.assignObject({ type: button.dataset.objectType, id: button.dataset.objectId }, true);
-    if (action === "removeShopItem") return this.mutateParameters((draft) => { draft.items = draft.items.filter((item) => item.id !== button.dataset.id); });
+    if (action === "removeShopItem") {
+      if (button.dataset.stockZone === "current" && !isAuthority()) return;
+      this.pendingTabInputs = null;
+      return this.mutateParameters(draft => {
+        const items = shopDraftItems(draft, button.dataset.stockZone), index = items.findIndex(item => item.id === button.dataset.id);
+        if (index >= 0) items.splice(index, 1);
+      });
+    }
+    if (action === "copyShopInventory") {
+      if (button.dataset.stockZone === "current" && !isAuthority()) return;
+      this.pendingTabInputs = null;
+      return this.mutateParameters(draft => copyShopInventory(draft, button.dataset.stockZone));
+    }
+    if (action === "reloadShopInventory") {
+      if (this.mode !== "constructor" || this.selection.kind !== "shop") return;
+      const form = this.element.querySelector('[data-asset-form="shop"]');
+      this.parameterDraft = readAssetForm(form, this.parameterDraft, "shop", { ignoreCurrentStock: true });
+      this.pendingTabInputs = null;
+      delete this.parameterDraft._inventory;
+      refreshShopInventoryDraft(this.parameterDraft, getShopInventory(this.assertScene(), this.parameterDraft.id));
+      this.dirty = true;
+      return this.render({ force: true });
+    }
     if (action === "deleteSelected" && this.selection.kind === "dialogue" && this.selection.pageId) action = "deleteAssetPage";
     if (["addAssetPage", "deleteAssetPage", "addAssetResponse", "removeAssetResponse"].includes(action)) {
       if (this.mode !== "constructor") return;

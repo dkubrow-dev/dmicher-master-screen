@@ -12,8 +12,8 @@ const prefixOf = (prefix) => {
 };
 export const splitTags = (value) => [...new Set(String(value ?? "").split(",").map((tag) => tag.trim()).filter(Boolean))];
 
-/** The only raw HTML used by these forms: every variable is escaped here, never supplied as markup. */
-export function buildConditionFields(policy, states = [], { prefix = "conditions", groupId = "main", groupName = localizedMessage("Основная группа") } = {}) {
+/** User values are escaped here; extraFields accepts only trusted form renderers. */
+export function buildConditionFields(policy, states = [], { prefix = "conditions", groupId = "main", groupName = localizedMessage("Основная группа"), extraFields = "" } = {}) {
   prefixOf(prefix);
   const conditions = { ...defaults(), ...policy };
   const check = (name, label, active, val = "") => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}" value="${escape(val)}"${active ? " checked" : ""}> ${escape(label)}</label>`;
@@ -29,6 +29,7 @@ export function buildConditionFields(policy, states = [], { prefix = "conditions
     <label class="ms-field">${t("Лимит запусков", "Launch limit")}<input type="number" name="${prefix}-limit" min="1" step="1" value="${escape(conditions.limit)}" required></label></div>
     ${check("reset", t("Сбрасывать счётчик при новом входе в состояние", "Reset the counter on state entry"), conditions.resetOnEntry !== false)}
     <p class="ms-note">${t("Переподключение не сбрасывает счётчик. Ручной сброс доступен в режиссёре.", "Reconnecting does not reset the counter. The Director can reset it manually.")}</p>
+    ${extraFields}
   </details>`;
 }
 

@@ -1,5 +1,8 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Магазины показывают и сохраняют отдельно «На старте» и «Текущие». Оба списка редактируются, копируются в обе стороны и сохраняются с проверкой актуальности. Сброс отменяет незавершённую сделку; завершённые обмены не откатываются. Premium добавляет возврат при новом входе в состояние либо штатной активации сцены с отдельным условием. Макрос допуска игрока перенесён внутрь «Условий запуска».
+- Shops now edit and persist At start and Current inventories separately, with copying in either direction and revision checks on save. Restoration cancels unfinished trades without rolling back completed exchanges. Premium adds restoration on new state entry or native scene activation, with its own condition. The player admission macro is now inside Launch conditions.
+
 - Исправлено обрезание многоуровневого меню объекта: каждый уровень открывается рядом с родительским пунктом в пределах экрана, длинные списки прокручиваются отдельно. Клик после наведения не закрывает категорию, диагональный переход курсора сохраняет подменю.
 - Fixed clipping of nested object menus: each level opens beside its parent within the viewport, with independent scrolling for long lists. Clicking a hovered category keeps it open, and diagonal pointer movement preserves the submenu.
 

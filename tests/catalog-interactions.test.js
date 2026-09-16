@@ -16,6 +16,7 @@ import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macr
 import { SCENE_OBJECT_COLLECTIONS } from "../dmicher-master-screen/scripts/scene-object-types.js";
 import { freezeInteractionClock } from "../dmicher-master-screen/scripts/interaction-pause.js";
 import { objectCapabilities } from "../dmicher-master-screen/scripts/object-capabilities.js";
+import { getShopInventory, resetShopInventory } from "../dmicher-master-screen/scripts/shop-inventory.js";
 
 const copy = (value) => structuredClone(value);
 
@@ -58,7 +59,7 @@ for (const [type, geometry] of Object.entries({
   assert.deepEqual(listAvailableInteractions(f.scene, target, f.pc, f.player), []);
 });
 
-async function fixture() {
+async function fixture({ beforePurchase } = {}) {
   let serial = 0, writes = 0;
   const gm = { id: "gm", isGM: true, role: 4, active: true }, player = { id: "player", isGM: false, role: 1, active: true };
   const stranger = { id: "other", isGM: false, role: 1, active: true }, secondGM = { id: "gm-z", isGM: true, role: 4, active: true };
@@ -97,7 +98,7 @@ async function fixture() {
   const runtime = new GroupRuntime({ effects: { speak: async () => {}, sound: async () => {}, spawn: async () => {} } });
   await runtime.enter(scene, undefined, { groupId: "main" }); await runtime.enter(scene, undefined, { groupId: "east" });
   const emitted = [], bus = new SceneSignals({ runtime });
-  const emitSignal = async (scene, signal) => { emitted.push(copy(signal)); return bus.emit(scene, signal); };
+  const emitSignal = async (scene, signal) => { emitted.push(copy(signal)); return signal.name === "beforePurchase" && beforePurchase ? beforePurchase(scene, signal) : bus.emit(scene, signal); };
   const shop = createShopService({ emitSignal }), dialogues = createDialogueService({ emitSignal });
   const intent = (target = { type: "Token", id: "waiter" }, groupId = "main", extra = {}) => ({ sceneId: scene.id, target, tokenId: target.id,
     shopId: "stock", actorTokenId: "pc", groupId, runId: getRuntime(scene, { groupId }).runId, ...extra });
@@ -226,15 +227,64 @@ test("catalog edits preserve existing live lots and cannot forge unavailable sto
   prepared.items = [];
   assert.equal(actual()[0].stock, 2, "removing preparation does not silently destroy existing stock");
   prepared.items.push({ id: "rope", stock: 3, data: { name: "Rope", type: "gear" } });
-  assert.deepEqual(actual().map(({ id, stock }) => ({ id, stock })), [{ id: "sword", stock: 2 }, { id: "rope", stock: 3 }]);
+  assert.deepEqual(actual().map(({ id, stock }) => ({ id, stock })), [{ id: "sword", stock: 2 }], "initial additions do not silently appear in current stock");
   const lease = await f.shop.requestSession(f.intent());
   const base = { ...f.intent(), kind: "exchange", sessionId: lease.sessionId, giveItemIds: [] };
   const before = copy(f.flags);
   await assert.rejects(f.shop.requestTrade({ ...base, requestId: "forged", take: [{ entryId: "invented", count: 1, data: { name: "Forged", type: "gear" }, stock: 999 }] }));
   await assert.rejects(f.shop.requestTrade({ ...base, requestId: "overstock", take: [{ entryId: "sword", count: 3 }] }));
+  await assert.rejects(f.shop.requestTrade({ ...base, requestId: "initial-only", take: [{ entryId: "rope", count: 1 }] }));
   assert.deepEqual(f.flags, before); assert.equal(f.actor.items.size, 0);
   assert.equal((await f.shop.requestTrade({ ...base, requestId: "existing", take: [{ entryId: "sword", count: 1 }] })).status, "done");
   assert.equal(f.flags.shopInventories.stock.items.find((entry) => entry.id === "sword").stock, 1);
+  assert.equal(f.flags.shopInventories.stock.revision, 1);
+});
+
+test("reset during purchase validation cancels the durable offer and its late success cannot trade", async () => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const f = await fixture({ beforePurchase: async () => { entered(); return gate; } });
+  const lease = await f.shop.requestSession(f.intent());
+  const trade = f.shop.requestTrade({ ...f.intent(), kind: "exchange", sessionId: lease.sessionId, requestId: "reset-validation", giveItemIds: [], take: [{ entryId: "sword", count: 1 }] });
+  await started;
+  await resetShopInventory(f.scene, "stock");
+  release({ allowed: true, status: "done" });
+  assert.equal((await trade).status, "rejected");
+  assert.equal(f.actor.items.size, 0);
+  assert.equal(getShopInventory(f.scene, "stock").items[0].stock, 2);
+  assert.equal(getRuntime(f.scene).shopSessions.stock, undefined);
+});
+
+test("reset waits for an actual in-flight Item transfer and preserves its completed receipt", async () => {
+  const f = await fixture(), lease = await f.shop.requestSession(f.intent());
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; }), started = new Promise(resolve => { entered = resolve; });
+  const create = f.actor.createEmbeddedDocuments.bind(f.actor);
+  f.actor.createEmbeddedDocuments = async (...args) => { entered(); await gate; return create(...args); };
+  const trade = f.shop.requestTrade({ ...f.intent(), kind: "exchange", sessionId: lease.sessionId, requestId: "reset-processing", giveItemIds: [], take: [{ entryId: "sword", count: 1 }] });
+  await started;
+  const reset = resetShopInventory(f.scene, "stock");
+  release();
+  assert.equal((await trade).status, "done"); await reset;
+  assert.equal(f.actor.items.size, 1);
+  assert.equal(getShopInventory(f.scene, "stock").items[0].stock, 2);
+  assert.equal(getShopInventory(f.scene, "stock").revision, 2);
+  assert.equal(getRuntime(f.scene).tradeRequests["gm:reset-processing"].status, "done");
+});
+
+test("a failed final receipt compensates canonical stock with a fresh revision", async () => {
+  const f = await fixture(), lease = await f.shop.requestSession(f.intent());
+  const original = f.scene.setFlag.bind(f.scene); let failed = false;
+  f.scene.setFlag = async (scope, key, value) => {
+    if (!failed && key === "groupRuntimes.main" && value.tradeRequests?.["gm:final-failure"]?.status === "done") {
+      failed = true; throw new Error("final receipt failed");
+    }
+    return original(scope, key, value);
+  };
+  const result = await f.shop.requestTrade({ ...f.intent(), kind: "exchange", sessionId: lease.sessionId, requestId: "final-failure", giveItemIds: [], take: [{ entryId: "sword", count: 1 }] });
+  assert.equal(result.status, "failed"); assert.equal(f.actor.items.size, 0);
+  assert.equal(getShopInventory(f.scene, "stock").items[0].stock, 2);
+  assert.equal(getShopInventory(f.scene, "stock").revision, 2, "compensation never rewinds the revision seen by editors");
 });
 test("one object offers multiple shops with separate identities, sessions and inventories", async () => {
   const f = await fixture(), owner = f.flags.objectBindings.bindings["Token:waiter"];

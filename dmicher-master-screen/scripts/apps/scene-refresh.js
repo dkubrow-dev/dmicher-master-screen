@@ -1,5 +1,14 @@
 import { MODULE_ID } from "../model.js";
 import { SCENE_OBJECT_COLLECTIONS } from "../scene-object-types.js";
+import { getShopInventory } from "../shop-inventory.js";
+
+/** Only a visible shop needs current stock updates. Trading elsewhere must not
+ * invalidate object editors or other preparation forms. Includes the items for
+ * read-only worlds which do not have a canonical inventory revision yet. */
+export function shopInventoryRefreshKey(scene, shopId) {
+  const stored = scene?.getFlag(MODULE_ID, "shopInventories")?.[shopId];
+  return stored ? [shopId, stored.revision] : getShopInventory(scene, shopId);
+}
 
 /** Inputs used by preparation views. Execution clocks, native positions and
  * interaction transcripts deliberately do not invalidate authoring forms. */

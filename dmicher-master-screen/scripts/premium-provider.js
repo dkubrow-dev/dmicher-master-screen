@@ -7,7 +7,7 @@ const dialogueAudio = generics.premium.forModule(MODULE_ID, {
 });
 const audioPath = (value) => typeof value === "string" ? value.trim().slice(0, 2048) : "";
 const interactionPresentation = generics.premium.forModule(MODULE_ID, {
-  apiVersion: 1, methods: ["resolveInteractivePresentation", "canExecuteScriptKind"]
+  apiVersion: 1, methods: ["resolveInteractivePresentation", "canExecuteScriptKind", "resolveShopRestoration"]
 });
 export const isPremiumScriptKind = isPremiumScriptStep;
 export const canExecuteScriptKind = kind => !isPremiumScriptKind(kind) || interactionPresentation.invoke(
@@ -15,6 +15,9 @@ export const canExecuteScriptKind = kind => !isPremiumScriptKind(kind) || intera
 export const isInteractivePresentationAvailable = () => interactionPresentation.invoke(
   "resolveInteractivePresentation", [], () => false, value => typeof value === "boolean");
 export const subscribeInteractivePresentationAccess = listener => interactionPresentation.subscribe(listener);
+export const isShopRestorationAvailable = () => interactionPresentation.invoke(
+  "resolveShopRestoration", [], () => false, value => typeof value === "boolean");
+export const subscribeShopRestorationAccess = listener => interactionPresentation.subscribe(listener);
 export const isDialogueAudioAvailable = () => dialogueAudio.getStatus().active;
 export const subscribeDialogueAudioAccess = (listener) => dialogueAudio.subscribe(listener);
 
