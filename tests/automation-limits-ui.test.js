@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildScriptFields, readScriptFields } from "../dmicher-master-screen/scripts/apps/script-fields.js";
 import { renderObjectActionList } from "../dmicher-master-screen/scripts/apps/object-property-fields.js";
-import { renderSubscriptions } from "../dmicher-master-screen/scripts/apps/signal-fields.js";
+import { renderSubscriptions, renderSubscriptionFields } from "../dmicher-master-screen/scripts/apps/signal-fields.js";
 import { normalizeScript } from "../dmicher-master-screen/scripts/script-model.js";
 import { fixture as signalFixture } from "./signal-fixture.js";
 
@@ -63,6 +63,10 @@ test("a filtered subscription list uses the owner's complete saved order, includ
   setup();
   const subscriptions = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, ownerKey: "Token:npc", emitterKey: "Token:npc", signalId: "own", enabled: i === 8, handler: "script" }));
   const catalog = { subscriptions, signals: [], emitters: [], macros: [] };
+  const macroForm = renderSubscriptionFields({ ...subscriptions[0], handler: "macro", macroUuid: "Macro.saved" }, catalog, { fixedOwner: "Token:npc" });
+  assert.match(macroForm, /data-premium-subscription-macro disabled/);
+  assert.match(macroForm, /value="macro"[^>]*disabled[^>]*>Registered macro · Premium/);
+  assert.match(macroForm, /dmicher-premium-badge/);
   const html = renderSubscriptions([subscriptions[8]], catalog, { ownerKey: "Token:npc" });
   assert.match(html, /data-screen-action="newSignalSubscription"[^>]* disabled/);
   assert.match(html, /data-automation-limit-locked="subscriptions"/);

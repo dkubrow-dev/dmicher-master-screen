@@ -14,7 +14,7 @@ export function textInput(name, label, value = "", attributes = "", labelClass =
 
 export function selectOptions(items, selected, blank) {
   const empty = blank === undefined ? "" : `<option value="">${escapeHTML(blank)}</option>`;
-  return empty + items.map(({ id, name }) => `<option value="${escapeHTML(id)}"${String(id) === String(selected) ? " selected" : ""}>${escapeHTML(name)}</option>`).join("");
+  return empty + items.map(({ id, name, disabled = false }) => `<option value="${escapeHTML(id)}"${String(id) === String(selected) ? " selected" : ""}${disabled ? " disabled" : ""}>${escapeHTML(name)}</option>`).join("");
 }
 
 /** A parameter row shares its compact layout; each editor owns its field semantics. */
