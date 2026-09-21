@@ -15,6 +15,9 @@ test("potential highlight membership survives distance and selected-character ch
   scene.tokens.get("pc").x=100000;
   assert.deepEqual(potentialInteractiveDocuments(scene,player),[scene.tokens.get("npc")]);
   scene.tokens.delete("pc");assert.equal(potentialInteractiveDocuments(scene,player).length,1);
+  flags.objectBindings.bindings["Token:npc"].playerCharacter=true;
+  assert.deepEqual(potentialInteractiveDocuments(scene,player),[],"a player's saved dialogue does not advertise a hosted tool");
+  flags.objectBindings.bindings["Token:npc"].playerCharacter=false;
   flags.groupRuntimes.main.stateId="alert";assert.deepEqual(potentialInteractiveDocuments(scene,player),[]);
 });
 

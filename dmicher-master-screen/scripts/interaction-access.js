@@ -8,6 +8,7 @@ import { shopSessionIsLive } from "./interaction-session-model.js";
 import { getConditionGate, getConditionKey, evaluateConditionPolicy } from "./interaction-conditions.js";
 import { isExecutionHalted } from "./execution.js";
 import { isStateEntryPreparing } from "./state-entry-preparation.js";
+import { objectCapabilities } from "./object-capabilities.js";
 import { collectionEntryAllowed, getCollectionLimitIssue } from "./automation-limits.js";
 
 export const objectDescriptor = objectReference;
@@ -26,6 +27,7 @@ export function validateInteractionIdentity({ scene, runtime, descriptor, target
   if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail(localizedMessage("Сцена или состояние изменились. Откройте взаимодействие заново."));
   if (isExecutionHalted(scene, runtime) || isStateEntryPreparing(scene,runtime) || !descriptor || !target
     || binding && binding.groupId !== runtime.groupId
+    || binding && (descriptor.shopId || descriptor.dialogueId) && !objectCapabilities(binding.type,binding).tools
     || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(descriptor?.target)] === false
     || runtime.disabledObjects?.includes(objectKey(descriptor.target))) fail(localizedMessage("Взаимодействие сейчас недоступно."));
   const actorToken = scene.tokens?.get(actorTokenId);

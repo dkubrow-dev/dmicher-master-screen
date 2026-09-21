@@ -172,7 +172,7 @@ export function reconcileBindingGroups(raw, previous, definitions) {
 }
 
 export function resolveBindingTools(binding, catalog, context, kind) {
-  if (!binding?.groupId || binding.groupId !== context.groupId || !objectCapabilities(binding.type).tools) return [];
+  if (!binding?.groupId || binding.groupId !== context.groupId || !objectCapabilities(binding.type, binding).tools) return [];
   const { collection, referenceId } = interactionType(kind), assets = catalog[collection];
   const seen = new Set();
   return binding[collection].filter((ref) => ref.playerAction !== false && (!ref.stateIds.length || ref.stateIds.includes(context.stateId))).flatMap((reference) => {

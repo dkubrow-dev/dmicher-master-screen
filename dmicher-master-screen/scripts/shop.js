@@ -6,6 +6,7 @@ import { getObjectBindings, resolveObjectShop } from "./scene-objects.js";
 import { getInteractionCatalog } from "./scene-assets.js";
 import { objectDescriptor, objectKey, sceneObject, validateObjectAccess, validateInteractionIdentity } from "./interaction-access.js";
 import { registeredToolIds } from "./object-binding-model.js";
+import { objectCapabilities } from "./object-capabilities.js";
 import { createScriptShopService } from "./script-shops.js";
 import { generics } from "./generics.js";
 import { createShopSessions, requireShopSession, shopKey } from "./shop-sessions.js";
@@ -41,7 +42,7 @@ export async function importShopEntry(uuid, { stock = 1 } = {}) {
 export function getShopContext(sceneId, source, groupId = "main", selectedShopId) {
   const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
   const target = objectDescriptor(source), binding = scene && getObjectBindings(scene).bindings[objectKey(target)];
-  const asset = selectedShopId && binding?.groupId === groupId && registeredToolIds(binding, "shop").includes(selectedShopId)
+  const asset = selectedShopId && binding?.groupId === groupId && objectCapabilities(binding.type, binding).tools && registeredToolIds(binding, "shop").includes(selectedShopId)
     ? getInteractionCatalog(scene).shops.find(item => item.id === selectedShopId) : null;
   const registered = asset ? { asset, config: { ...copy(asset), enabled: true, shopId: asset.id, target } } : null;
   const player = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;

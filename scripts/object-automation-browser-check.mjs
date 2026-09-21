@@ -63,6 +63,8 @@ try {
     await app.locator('[name="object-player-character"]').check();
     await app.locator('footer [data-screen-action="save"]').click();
     await page.waitForFunction(()=>scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:guard"].playerCharacter===true);
+    assert.equal(await app.locator('[data-screen-action="tab"][data-tab="shops"]').count(),0);
+    assert.equal(await app.locator('[data-screen-action="tab"][data-tab="dialogues"]').count(),0);
     assert.equal(await app.locator('[name="object-automation-enabled"]').isChecked(),true);
     await app.locator('[data-screen-action="tab"][data-tab="behavior"]').click();
     assert.equal(await app.locator('[data-screen-action="behavior-tab"][data-tab="routine"]').count(),0);

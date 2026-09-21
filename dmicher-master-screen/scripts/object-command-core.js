@@ -1,9 +1,10 @@
 import { text } from "./localization.js";
 import { commandDocument, rejectCommand } from "./object-command-access.js";
 import { advanceCommandMovement, approachCommandPoint, commandCenter, commandScale, commandTouches, clipCommandMovement } from "./object-command-movement.js";
-import { planScriptFollow, advanceScriptFollow, boundsGap } from "./script-target-movement.js";
-import { scriptObjectBounds } from "./script-movement.js";
+import { planScriptFollow, advanceScriptFollow } from "./script-target-movement.js";
 import { setCommandSignals, setCommandBehavior } from "./object-command-state.js";
+import { commandInteractionPoint, commandInteractionDistance } from "./object-command-geometry.js";
+import { MODULE_ID } from "./model.js";
 
 const active = options => !options.signal?.aborted && (options.isCurrent?.() ?? true);
 const finished = done => ({ done });
@@ -11,14 +12,6 @@ function target(scene, uuid) {
   const document = commandDocument(scene, uuid);
   if (!document) rejectCommand("target-missing", text("Объект команды больше не находится на сцене.", "The command target is no longer in the scene."));
   return document;
-}
-function nearestDoorPoint(door, origin) {
-  const [x, y, endX, endY] = door.c, dx = endX - x, dy = endY - y, squared = dx * dx + dy * dy;
-  const ratio = squared ? Math.max(0, Math.min(1, ((origin.x - x) * dx + (origin.y - y) * dy) / squared)) : 0;
-  return { x: x + dx * ratio, y: y + dy * ratio };
-}
-function pointGap(scene, object, point) {
-  return boundsGap(scriptObjectBounds(object, scene), { ...point, width: 0, height: 0 });
 }
 
 /** One coarse engine tick, using only this command's prepared state. The caller
@@ -72,15 +65,23 @@ export class ObjectCommandCore {
       case "delegate": {
         const recipient = target(scene, run.request.parameters.targetUuid), config = run.request.parameters;
         if (!core.arrived) {
-          // Door travel is an internal part of delegation. Approach the nearest
-          // point of its segment, preserving footprint contact and collisions.
-          const doorPoint = recipient.documentName === "Wall" && recipient.door ? nearestDoorPoint(recipient, commandCenter(object, scene)) : null;
-          const destination = doorPoint ? { documentName: "Wall", c: [doorPoint.x, doorPoint.y, doorPoint.x, doorPoint.y] } : recipient;
+          // Read only the addressed command, without normalizing every object on
+          // every tick. Admission still rechecks all current conditions afterwards.
+          const prepared = scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[`${recipient.documentName}:${recipient.id}`]
+            ?.commands?.find(command => command.id === config.commandId);
+          if (!prepared?.enabled) rejectCommand("disabled", text("Эта команда сейчас недоступна для выбранного объекта.", "This command is currently unavailable for the selected object."));
+          const range = prepared.conditions?.range ?? 5;
+          const withinRange = () => Number.isFinite(range) && range >= 0 && commandInteractionDistance(scene, object, recipient) <= range;
+          if (withinRange()) { core.arrived = true; return options.delegate ? options.delegate(run, config) : finished(false); }
+          // Segments need their closest point; other native objects retain their
+          // own footprint. Movement continues to respect Foundry collisions.
+          const wallPoint = recipient.documentName === "Wall" ? commandInteractionPoint(scene, recipient, commandCenter(object, scene)) : null;
+          const destination = wallPoint ? { documentName: "Wall", c: [wallPoint.x, wallPoint.y, wallPoint.x, wallPoint.y] } : recipient;
           const result = await move(approachCommandPoint(scene, object, destination));
           if (!active(options)) return finished(false);
-          const touches = doorPoint ? pointGap(scene, object, doorPoint) <= 2 : commandTouches(scene, object, recipient);
-          if (result.blocked && !touches) rejectCommand("delegation-path", text("Не удалось подойти к объекту поручения: путь перекрыт.", "The delegated character cannot reach the target because the path is blocked."));
-          if (!result.done && !touches) return finished(false);
+          const reached = withinRange();
+          if (result.blocked && !reached) rejectCommand("delegation-path", text("Не удалось подойти к объекту поручения: путь перекрыт.", "The delegated character cannot reach the target because the path is blocked."));
+          if (!result.done && !reached) return finished(false);
           core.arrived = true;
         }
         return options.delegate ? options.delegate(run, config) : finished(false);

@@ -12,6 +12,7 @@ import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js
 import { sceneObjectCenter } from "./scene-object-geometry.js";
 import { assertBindingScriptContracts, validateBindingScriptMacroInterfaces } from "./signal-macros.js";
 import { assertCollectionGrowth } from "./automation-limits.js";
+import { objectCapabilities } from "./object-capabilities.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -88,7 +89,7 @@ export const resolveObjectDialogue = (scene, target, context, id) => resolveObje
 /** Script ownership is independent of a player's state, tag or range policy. */
 export function resolveRegisteredObjectDialogue(scene, target, { groupId }, id) {
   const binding = getObjectBindings(scene).bindings[objectKey(target)];
-  if (!binding?.groupId || binding.groupId !== groupId || !registeredToolIds(binding, "dialogue").includes(id)) return null;
+  if (!binding?.groupId || binding.groupId !== groupId || !objectCapabilities(binding.type, binding).tools || !registeredToolIds(binding, "dialogue").includes(id)) return null;
   const asset = getInteractionCatalog(scene).dialogues.find((entry) => entry.id === id);
   return asset ? { binding, asset, config: { ...clone(asset), enabled: true, dialogueId: asset.id, target: { type: binding.type, id: binding.id } } } : null;
 }

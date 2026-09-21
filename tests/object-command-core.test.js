@@ -85,6 +85,7 @@ test("door operations approach a segment, respect locks, and do not open unreach
   const f = fixture(), door = { id: "door", uuid: "Scene.scene.Wall.door", documentName: "Wall", parent: f.scene,
     c: [300, -1000, 300, 200], door: 1, ds: 0, async update(changes) { Object.assign(this, changes); } };
   f.scene.walls.set(door.id, door);
+  f.scene.getFlag = () => ({ bindings: { "Wall:door": { commands: [{ id: "open", enabled: true, conditions: { range: 5 } }] } } });
   const run = f.run("delegate", { speed: 5 }, { targetUuid: door.uuid, commandId: "open" });
   let delivered = 0;
   const delivery = { delegate: async (_run, input) => { delivered++; return f.core.tick(f.scene, f.run(input.commandId), door, 0); } };
@@ -96,7 +97,7 @@ test("door operations approach a segment, respect locks, and do not open unreach
   assert.equal(f.npc.y, 0, "approach uses the nearest segment point instead of the door midpoint");
   door.ds = 2;
   await assert.rejects(f.core.tick(f.scene, f.run("close"), door, 1), error => error.code === "locked");
-  door.ds = 0; f.npc._source.x = 0;
+  door.ds = 0; f.npc._source.x = 0; f.npc.x = 0;
   f.npc.object.checkCollision = point => point.x >= 150;
   await assert.rejects(f.core.tick(f.scene, f.run("delegate", {}, { targetUuid: door.uuid, commandId: "open" }), f.npc, 5, delivery), error => error.code === "delegation-path");
   assert.equal(door.ds, 0);

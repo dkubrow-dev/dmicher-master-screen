@@ -354,3 +354,28 @@
   padding: 0;
   line-height: 1;
 }
+
+.dmicher-master-screen button.ms-navigation-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  min-width: 16px;
+  height: 20px;
+  min-height: 20px;
+  margin: 0 3px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .65;
+  cursor: grab;
+  vertical-align: middle;
+  line-height: 1;
+}
+.dmicher-master-screen button.ms-navigation-handle:hover,
+.dmicher-master-screen button.ms-navigation-handle:focus-visible { opacity: 1; }
+.dmicher-master-screen button.ms-navigation-handle:active { cursor: grabbing; }
+.dmicher-master-screen .ms-sort-before { box-shadow: inset 0 2px var(--dmicher-accent, #cf9f58); }
+.dmicher-master-screen .ms-sort-after { box-shadow: inset 0 -2px var(--dmicher-accent, #cf9f58); }

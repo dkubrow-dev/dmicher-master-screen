@@ -12,6 +12,13 @@ export const OBJECT_HELP_PAGES = [
         "bodyEn": "Open Automation → Properties → Commands. Commands start disabled and depend on the object type. Enable a command and separately allow GM use, player-character use or delegation. Set the commanding character's tags, range and group–state pairs. An empty list allows any state. Denied tags take precedence. GM-only entries are not shown to players."
       },
       {
+        "id": "source-groups",
+        "ru": "Разрешить взаимодействие между группами",
+        "en": "Allow interaction across groups",
+        "bodyRu": "В «Группы и состояния» команды укажите, из каких групп и состояний допускается действующий персонаж. При поручении проверяется группа исполнителя поручения. Пустой список не ограничивает группы; цель может быть из другой группы или вообще без группы. После подхода, в том числе остановки перед препятствием, команда выполняется, если до цели хватает настроенной дальности. Для стены расстояние считается до ближайшей точки её отрезка. Права источника и теги проверяются заново у цели.",
+        "bodyEn": "In the command's Groups and states, choose the acting character's allowed groups and states. Delegation checks the intermediary's group. An empty list imposes no group restriction; the target may belong to another group or have no group. After approaching, including a stop at an obstacle, the command runs if the target is within its configured range. Wall distance uses the nearest point on its segment. Source permissions and tags are checked again at the target."
+      },
+      {
         "id": "give",
         "ru": "Выдать команду от персонажа",
         "en": "Issue a command as a character",
@@ -113,8 +120,8 @@ export const OBJECT_HELP_PAGES = [
         "id": "player",
         "ru": "Подготовить персонажа игрока",
         "en": "Prepare a player character",
-        "bodyRu": "Включите «Персонаж игрока»: токен попадёт в постоянную группу «Игроки». Она может быть пустой. У её объектов нет рутины, но работают состояния, события, реакции и разрешённые команды. Персонаж может взаимодействовать с объектами других групп; владение, дальность, видимость и теги продолжают проверяться.",
-        "bodyEn": "Enable Player character to place the token in the permanent Players group. This group may be empty. Its objects have no routine, but support states, events, reactions and allowed commands. The character can interact across groups; ownership, range, visibility and tags still apply."
+        "bodyRu": "Включите «Персонаж игрока»: токен попадёт в постоянную группу «Игроки». Она может быть пустой. У её объектов нет рутины и собственных магазинов или диалогов: соответствующие вкладки убраны, прежние назначения не запускаются. Состояния, события, реакции и разрешённые команды работают. Персонаж может посещать магазины и диалоги других объектов; владение, дальность, видимость и теги продолжают проверяться.",
+        "bodyEn": "Enable Player character to place the token in the permanent Players group. This group may be empty. Its objects have no routine or hosted shops and dialogues: those tabs are absent and previous assignments do not run. States, events, reactions and allowed commands remain available. The character can visit other objects' shops and dialogues; ownership, range, visibility and tags still apply."
       },
       {
         "id": "transitions",
@@ -458,7 +465,7 @@ export const OBJECT_HELP_SETTINGS = [
   { id: "settings-objects", ru: "Автоматизация объектов", en: "Object automation", fields: [
     ["register-shop", "register-shop", "Магазины", "Shops", "На вкладке «Магазины» добавьте магазин из каталога. Для самостоятельного обращения игрока настройте условия назначения.", "On Shops, add a catalog shop. Configure its assignment conditions to allow player-initiated access."],
     ["register-dialogue", "register-dialogue", "Диалоги", "Dialogues", "Выберите диалог из каталога и нажмите «Добавить». Он станет доступен скриптам объекта; условия самостоятельного запуска игроком настраиваются отдельно.", "Choose a catalog dialogue and press Add. It becomes available to the object's scripts; player-initiated access is configured separately."],
-    ["object-player-character", "player", "Персонаж игрока", "Player character", "Помещает токен в группу «Игроки»: без рутины, но с состояниями, событиями, реакциями и командами. Взаимодействие с другими группами учитывает владение и условия.", "Places the token in Players: no routine, but states, events, reactions and commands remain available. Interaction across groups still checks ownership and conditions."],
+    ["object-player-character", "player", "Персонаж игрока", "Player character", "Помещает токен в группу «Игроки»: без рутины и собственных магазинов и диалогов, но с состояниями, событиями, реакциями и командами. Посещение чужих магазинов и диалогов доступно по их условиям.", "Places the token in Players: no routine or hosted shops and dialogues, but states, events, reactions and commands remain available. Visiting other objects' shops and dialogues follows their conditions."],
     ["object-group", "owner", "Группа", "Group", "Единственная группа, управляющая автоматизацией объекта. Перед переназначением остановите затронутые группы.", "The single group controlling this object's automation. Stop affected groups before reassigning."],
     ["object-tags", "tags", "Теги", "Tags", "Теги объекта через запятую. Условия инструментов проверяют теги действующего персонажа.", "Comma-separated object tags. Tool conditions check the acting character's tags."],
     ["object-notes", "notes", "Заметки мастера", "GM notes", "Личные заметки подготовки. Enter сохраняет окно; Shift+Enter добавляет строку.", "Private preparation notes. Enter saves the window; Shift+Enter adds a line."],

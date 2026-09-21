@@ -86,8 +86,11 @@ export class ObjectCommandRuntime {
       parameters: { playerTokenUuid: run.request.delegateTokenUuid ?? run.request.actorTokenUuid ?? "", objectUuid: run.request.targetUuid,
         commandId: run.config.id, parameters: JSON.stringify({ ...run.config.parameters, ...run.request.parameters }),
         startedAt: run.startedAt ?? 0, patronUuid: run.request.delegateTokenUuid ? run.request.actorTokenUuid : null },
-      context: { groupId: run.groupId, runId: run.parentRunId, validation,
-        current: validation ? () => !isCommandParentHalted(scene, parentOf(scene, run)) : undefined } });
+      // Standalone objects use the scene cancellation stamp, not a group run.
+      // Passing their synthetic parent ID as a group run makes every validator stale.
+      context: { ...(run.groupId ? { groupId: run.groupId, runId: run.parentRunId } : {}), validation,
+        current: () => { const parent = parentOf(scene, run);
+          return parent?.runId === run.parentRunId && !isCommandParentHalted(scene, parent); } } });
   }
   publish(scene, run, name) {
     // Do not await subscribers from the scene queue: a subscriber may request

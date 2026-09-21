@@ -34,7 +34,7 @@ export function potentialInteractiveDocuments(scene, user = globalThis.game?.use
     const action = running && enabled && list(binding.actions).some(entry=>entry.enabled
       && collectionEntryAllowed("actions",binding.actions,entry)
       && (user.isGM || entry.audience !== "gm") && stateAllowed(entry.conditions,run));
-    const tool = running && enabled && objectCapabilities(binding.type).tools && ["shops","dialogues"].some(kind=>list(binding[kind]).some(entry=>
+    const tool = running && enabled && objectCapabilities(binding.type,binding).tools && ["shops","dialogues"].some(kind=>list(binding[kind]).some(entry=>
       entry.playerAction !== false && assets[kind].has(entry[kind === "shops" ? "shopId" : "dialogueId"])
       && includes(entry.stateIds,run.stateId) && stateAllowed(entry.conditions,run)));
     const interaction = running && enabled && list(run.state.interactions).some(entry=>entry.enabled

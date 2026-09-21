@@ -1,7 +1,9 @@
 import { text } from "./localization.js";
 import { getObjectBindings, getSceneObject, objectKey } from "./scene-objects.js";
 import { getRuntime, getRuntimes, getObjectTags } from "./store.js";
-import { objectCenter, sceneDistance, isSceneObjectHidden } from "./scene-object-geometry.js";
+import { isSceneObjectHidden } from "./scene-object-geometry.js";
+import { commandInteractionDistance } from "./object-command-geometry.js";
+import { PLAYERS_GROUP_ID } from "./players-group.js";
 import { isExecutionHalted } from "./execution.js";
 import { generics } from "./generics.js";
 import { normalizeObjectCommand, objectCommandConditionsMatch, objectSupportsCommand, commandPermitsDisabledBehavior, commandStopsBehavior } from "./object-command-model.js";
@@ -43,7 +45,7 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
     || method === "delegated" && (!delegate || delegate.documentName !== "Token" || delegate === object)) {
     rejectCommand("identity", text("Выберите своего персонажа и доступный объект команды.", "Select your own character and an available command target."));
   }
-  const target = { type: object.documentName, id: object.id }, binding = getObjectBindings(scene).bindings[objectKey(target)];
+  const target = { type: object.documentName, id: object.id }, bindings = getObjectBindings(scene).bindings, binding = bindings[objectKey(target)];
   const raw = binding?.commands?.find(entry => entry.id === packet.commandId);
   if (!raw || !objectSupportsCommand(object.documentName, packet.commandId)) rejectCommand("disabled", text("Этот объект не принимает такую команду.", "This object does not accept that command."));
   const config = normalizeObjectCommand(raw), runtime = binding.groupId ? getRuntime(scene, { groupId: binding.groupId }) : commandParent(scene, binding);
@@ -52,9 +54,13 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
     rejectCommand("stopped", text("Сначала мастер должен запустить автоматизацию объекта.", "The GM must start this object's automation first."));
   }
   if (method !== "gm" && !commandLevelsOverlap(actor, object)) rejectCommand("level", text("Персонаж и объект находятся на разных уровнях.", "The character and object are on different levels."));
-  const distance = method === "gm" || ignoreRange ? 0 : sceneDistance(scene, objectCenter(actor, scene), objectCenter(object, scene));
+  const distance = method === "gm" || ignoreRange ? 0 : commandInteractionDistance(scene, actor, object);
+  const actorBinding = bindings[objectKey({ type: actor.documentName, id: actor.id })];
+  const actorGroup = actorBinding?.playerCharacter ? PLAYERS_GROUP_ID : actorBinding?.groupId;
+  const groupStates = method === "gm" ? getRuntimes(scene).filter(run => run.runId && !isExecutionHalted(scene, run))
+    : actorGroup ? [{ groupId: actorGroup, stateId: getRuntime(scene, { groupId: actorGroup }).stateId }] : [];
   if (!trusted && !objectCommandConditionsMatch(config, { distance, tags: method === "gm" ? config.conditions.allowTags : getObjectTags(scene, { type: actor.documentName, id: actor.id }),
-    groupStates: getRuntimes(scene).filter(run => run.runId && !isExecutionHalted(scene, run)).map(run => ({ groupId: run.groupId, stateId: run.stateId })) })) {
+    groupStates })) {
     if (distance > config.conditions.range) rejectCommand("range", text("Персонаж слишком далеко, чтобы отдать команду.", "Your character is too far away to give this command."));
     rejectCommand("conditions", text("Условия этой команды сейчас не выполнены.", "This command's conditions are not currently met."));
   }
@@ -64,7 +70,7 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
   if (["open", "close"].includes(config.id) && (object.documentName !== "Wall" || !object.door)) rejectCommand("door", text("Команда доступна только для двери.", "This command is available only for doors."));
   if (["open", "close"].includes(config.id) && object.ds === (globalThis.CONST?.WALL_DOOR_STATES?.LOCKED ?? 2)) rejectCommand("locked", text("Дверь заперта.", "The door is locked."));
   if (method === "delegated") {
-    const delegation = getObjectBindings(scene).bindings[`Token:${delegate.id}`]?.commands?.find(entry => entry.id === "delegate");
+    const delegation = bindings[`Token:${delegate.id}`]?.commands?.find(entry => entry.id === "delegate");
     if (!delegation?.enabled) rejectCommand("delegation", text("Выбранный персонаж не принимает поручения.", "The selected character does not accept delegated tasks."));
   }
   const issuer = config.parameters.issuer;

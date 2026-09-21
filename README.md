@@ -1,5 +1,9 @@
 # dmicher 🎬 Master screen | Ширма мастера
 
+21.09.2026: [личная сортировка таблиц и исправления команд](docs/2026-09-21-navigation-and-commands.md). Перетаскивание строк запоминает личный порядок мастера в обоих режимах. Поручения работают между группами и с объектами без группы; после остановки движения проверяется допустимая дальность. Персонажи игроков не содержат собственных магазинов и диалогов, но могут посещать чужие.
+
+21 Sep 2026: personal row ordering is shared by Constructor and Director. Delegated commands work across groups and with ungrouped targets, checking interaction range after movement stops. Player characters cannot host shops or dialogues but can visit those of other objects.
+
 Ограничения бесплатной автоматизации и поведение при истечении Premium описаны в [обновлении 21 сентября](docs/2026-09-21-premium-limits.md). Квоты: 16 шагов, 8 подписок владельца, 4 действия объекта; сохранённый длинный скрипт без Premium блокируется целиком. Общие справочники получили непрозрачную подложку; сигнал подписки выбирается через справочник.
 
 Free automation quotas and Premium expiry behavior are described in the [September 21 update](docs/2026-09-21-premium-limits.md): 16 steps, 8 subscriptions per owner, 4 actions per object; saved oversized scripts are blocked in full without Premium. Shared references use an opaque surface; subscription signals use the reference picker.

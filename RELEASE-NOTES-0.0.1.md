@@ -1,5 +1,12 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Ручная сортировка строк основной зоны сохраняется лично для мастера в этом браузере, общая для Конструктора и Режиссёра. Перетаскивание за ⠿ или Alt+↑/↓ не меняет подготовку и порядок исполнения.
+- Main-area rows support personal ordering, saved in this browser and shared by Constructor and Director. Dragging the ⠿ grip or using Alt+Up/Down does not alter preparation or execution order.
+- Исправлено отклонение команд объектам без группы: проверка сигнала учитывает действующий контекст сцены. Команды между разными группами разрешены, а ограничения групп проверяют действующего персонажа. После остановки подхода у препятствия поручение выполняется при достаточной дальности; расстояние до стены считается до ближайшей точки её отрезка.
+- Fixed command rejection for ungrouped targets by checking the live scene context. Commands across groups are allowed, with group conditions checking the acting character. A delegated approach stopped by an obstacle can complete within the command's range; wall distance uses the nearest segment point.
+- У персонажей игроков убраны вкладки собственных магазинов и диалогов и отключено исполнение этих назначений. Посещение чужих магазинов и диалогов сохранено.
+- Player characters no longer have hosted Shops and Dialogues tabs or execute those assignments. Visiting other objects' shops and dialogues remains available.
+
 - Бесплатная автоматизация: 16 шагов на блок, 8 подписок на владельца, 4 действия на объект; общий каскад — 8 обработчиков. Premium снимает квоты. Сохранённые превышения не удаляются; длинный скрипт без доступа блокируется целиком, также при потере доступа во время исполнения. Ожидающие обработчики освобождаются и на паузе. Прямые макросы подписок требуют Premium, условия и переходы остаются бесплатны.
 - Free automation: 16 steps per block, 8 subscriptions per owner, 4 actions per object and 8 handlers per causal cascade. Premium removes quotas. Excess preparation is retained; oversized scripts are blocked in full, including on access loss during execution. Pending handlers release even while paused. Direct subscription macros require Premium; conditions and transitions remain free.
 - Справочники имеют общую непрозрачную подложку Generics; «Сигнал эмитента» в подписках выбирается через справочник.

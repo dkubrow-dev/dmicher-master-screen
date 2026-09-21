@@ -235,12 +235,13 @@ export class ObjectAutomationApplication extends ObjectForm {
     this.dirty=true; return true;
   }
   scriptParameterContext(context = this.context()) {
-    const ownDialogues = new Set(registeredToolIds(this.draft, "dialogue"));
+    const hostsTools = objectCapabilities(this.descriptor.type, this.draft).tools;
+    const ownDialogues = new Set(hostsTools ? registeredToolIds(this.draft, "dialogue") : []);
     const catalog = getSignalCatalog(context.scene), subscription = this.selectedScript?.kind === "event" && catalog.subscriptions.find(entry=>entry.id === this.selectedScript.referenceId);
     const actionSignals=objectActionContracts(this.draft);
     return { ownerKey: this.ownerKey, owner: context.document, functionsOwner: context.document, scriptScope: "object", playerCharacter: this.draft.playerCharacter === true,
       document: context.document, definitions: context.definitions, scene:context.scene,
-      shopOptions:context.catalog.shops.filter(entry=>registeredToolIds(this.draft,"shop").includes(entry.id)), workspacePresets:getWorkspacePresets(context.scene),
+      shopOptions:hostsTools ? context.catalog.shops.filter(entry=>registeredToolIds(this.draft,"shop").includes(entry.id)) : [], workspacePresets:getWorkspacePresets(context.scene),
       signalOptions:subscription ? catalog.signals.filter(signal=>signal.id===subscription.signalId) : this.selectedScript?.kind === "reaction" ? actionSignals.filter(signal=>signal.id.endsWith(`:${this.selectedScript.referenceId}`)) : [],
       dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
       catalog:{...catalog,signals:[...catalog.signals,...actionSignals]} };
@@ -283,7 +284,8 @@ export class ObjectAutomationApplication extends ObjectForm {
     const context = this.context({ reload: true }), { definition } = context;
     if (this.draft.playerCharacter && this.behaviorTab === "routine") { this.behaviorTab = "event"; this.selectedScript = null; }
     const tabs = [["information",t("Информация","Information")],["states",t("Состояния","States")],["properties",t("Свойства","Properties")],["behavior",t("Поведение","Behavior")]];
-    if (objectCapabilities(this.descriptor.type).tools) tabs.push(["shops",toolTitle("shop")],["dialogues",toolTitle("dialogue")]);
+    if (objectCapabilities(this.descriptor.type, this.draft).tools) tabs.push(["shops",toolTitle("shop")],["dialogues",toolTitle("dialogue")]);
+    if (!tabs.some(([tab]) => tab === this.tab)) this.tab = "information";
     const nav = '<nav class="ms-object-tabs">'+tabs.map(([tab,name]) => button("tab",name,`data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")+"</nav>";
     let body;
     if (this.tab === "information") body = renderObjectInformation(context.document, context.definitions, this.draft, { automationEnabled: this.automationEnabled });

@@ -6,6 +6,7 @@ import { evaluateInteractionMacro } from "./interaction-macro.js";
 import { createExecutionScope, executionGeneration, sceneExecutionGeneration, isExecutionHalted } from "./execution.js";
 import { resetShopInventory } from "./shop-inventory.js";
 import { commandBehaviorEnabled } from "./object-command-state.js";
+import { objectCapabilities } from "./object-capabilities.js";
 import * as premium from "./premium-provider.js";
 import { debugError, debugTrace } from "./debug.js";
 
@@ -91,7 +92,7 @@ export class ShopRestoration {
     };
     const byShop=new Map(),assets=new Set(list(catalog.shops).map(shop=>shop.id));
     for (const binding of Object.values(bindings.bindings ?? {})) {
-      if (!binding.groupId || groupId && binding.groupId !== groupId || !getSceneObject(scene,binding)) continue;
+      if (!binding.groupId || groupId && binding.groupId !== groupId || !objectCapabilities(binding.type,binding).tools || !getSceneObject(scene,binding)) continue;
       if (!commandBehaviorEnabled(scene,binding,flag(scene,"groupRuntimes")?.[binding.groupId])) continue;
       const state=snapshot(scene,binding.groupId);
       if (!state.exists || !state.stateId) continue;

@@ -5,6 +5,7 @@ import { ScreenLayout, MAIN_TABS } from "./screen-layout.js";
 import { renderSceneTree, renderSceneControls, syncSceneControls, renderSignalTree, renderMacroList, renderParameters, renderOtherList, renderMenu, renderMenuSettings, renderObjectList } from "./ide-view.js";
 import { menuParent } from "./navigation-tree.js";
 import { NavigationFilter } from "./navigation-filter.js";
+import { NavigationOrder } from "./navigation-order.js";
 import { renderGroupBadges, updateSceneNavigationBadges } from "./group-badges.js";
 import { GroupEditor } from "../group-editor.js";
 import { SignalCatalog } from "../signal-catalog.js";
@@ -62,6 +63,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.componentsDisposers = [];
     this.foldedDialogues = new Map();
     this.navigationFilter = new NavigationFilter();
+    this.navigationOrder = new NavigationOrder();
     this.directorConsole = new DirectorConsole();
     this.directorActivity = new DirectorActivity({ onAction: (action, entry) => this.activityAction(action, entry), onError: notify });
   }
@@ -70,6 +72,7 @@ export class MasterScreenApplication extends EditorApplication {
 
   async _onClose(options) {
     this.navigationFilter.dispose();
+    this.navigationOrder.dispose();
     this.directorConsole.dispose();
     this.directorActivity.dispose();
     this.menuController?.dispose();
@@ -378,6 +381,8 @@ export class MasterScreenApplication extends EditorApplication {
       if (button) button.textContent = node.open ? "▾" : "▸";
     }
     const selectionKey = `${this.selectionSceneId}:${this.layout.preferences.mainTab}:${JSON.stringify(this.selection)}`;
+    this.navigationOrder.attach(this.element, { worldId: game.world?.id, userId: game.user?.id,
+      sceneId: this.selectionSceneId, tab: this.layout.preferences.mainTab, mode: this.mode }, { onError: notify });
     this.navigationFilter.attach(this.element, this.stateKey());
     if (selectionKey !== this.revealedSelection) {
       const content = this.element.querySelector("[data-main-content]"), row = content?.querySelector('[aria-selected="true"], .is-selected');
@@ -912,21 +917,15 @@ export class MasterScreenApplication extends EditorApplication {
       this.resetDraft(); return this.selectNode("macro",macroKey({ownerKey,uuid:macro.uuid}));
     }
     if (data.type !== "DmicherScreenNode" || data.sceneId !== scene.id || !(await this.mayDiscard())) return;
-    if (data.kind === "group" && target.dataset.ideKind === "group") {
-      const ids = groups.list().map((entry) => entry.groupId), from = ids.indexOf(data.id), to = ids.indexOf(target.dataset.ideId);
-      if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await groups.reorderGroups(ids); }
-    } else if (data.kind === "state") {
+    if (data.kind === "state") {
       const destination = target.dataset.groupId;
-      if (data.groupId === destination) {
-        const ids = groups.get(destination).states.map((entry) => entry.id), from = ids.indexOf(data.id), to = target.dataset.ideKind === "state" ? ids.indexOf(target.dataset.ideId) : ids.length - 1;
-        if (from >= 0 && to >= 0) { ids.splice(to, 0, ids.splice(from, 1)[0]); await groups.reorderStates(destination, ids); }
-      } else {
+      if (destination && data.groupId !== destination) {
         const result = await this.inlineChoice(t("Состояние в другой группе: скопировать или переместить?", "State from another group: copy or move?"), [{ value: "copy", label: t("Скопировать", "Copy") }, { value: "move", label: t("Переместить", "Move") }, { value: "cancel", label: t("Отмена", "Cancel") }]);
         if (result === "cancel") return;
         const entry = await groups.transferState(data.groupId, destination, data.id, { copy: result === "copy" });
         this.resetDraft(); await this.selectNode("state", entry.id, destination);
-      }
-    }
+      } else return;
+    } else return;
     this.resetDraft(); this.parameterDraft = null; this.controller.changed(scene); return this.render({ force: true });
   }
 
