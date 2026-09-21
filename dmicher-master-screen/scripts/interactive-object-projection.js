@@ -22,7 +22,7 @@ export function potentialInteractiveDocuments(scene, user = globalThis.game?.use
   const result = [];
   for (const [key,binding] of Object.entries(bindings)) {
     const document = scene[SCENE_OBJECT_COLLECTIONS[binding.type]]?.get(binding.id);
-    if (!document || binding.playerCharacter) continue;
+    if (!document) continue;
     const run = binding.groupId && definitions[binding.groupId]?.schemaVersion === 1 ? runs[binding.groupId] : null;
     const running = Boolean(run?.runId && run.stateId && run.state && !isExecutionHalted(scene,run));
     const enabled = behavior[key] !== false && !run?.disabledObjects?.includes(key);

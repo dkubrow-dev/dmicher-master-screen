@@ -1,5 +1,9 @@
 # dmicher 🎬 Master screen | Ширма мастера
 
+Дополнение 21.09.2026: группы принимают сигналы и выполняют подписанные скрипты; инструменты Спотлайта подключают мировой редактор подписок без зависимости от карты. Функции выбираются из общего справочника, новый макрос создаётся и прикрепляется явно. Группа «Игроки» существует без записи пустой подготовки: её объекты поддерживают переходы, события и команды, но не рутину. Команды чужим персонажам требуют согласия владельца или мастера. Premium позволяет временно запрещать действие владельца вместо прерывания скрипта.
+
+21 Sep 2026: groups execute signal subscriptions; Spotlight tools expose world subscriptions independent of the current map. Functions use one searchable catalog, and new macros are explicitly created and attached. Players exists without writing empty preparation: its objects support transitions, events and commands, but no routine. Commands to other players' characters require owner or GM consent. Premium can temporarily forbid owner actions instead of interrupting the script.
+
 Ширма освобождает мастера от множества небольших, взаимосвязанных действий во время игры. Мастер готовит поведение объектов, игроки взаимодействуют с живой сценой, а решение о дальнейшем развитии игры остаётся за мастером.
 
 **Версия разработки 0.0.1**, Foundry VTT **13 и 14**. Единственная обязательная зависимость — **dmicher-generics 1.0.0**, API 1. Premium, Spotlight и сторонние библиотеки не требуются. Удалённый релиз не опубликован.

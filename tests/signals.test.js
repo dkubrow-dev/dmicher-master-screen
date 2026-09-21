@@ -84,8 +84,8 @@ test("signal recursion is bounded and does not deadlock", async () => {
   try {
     await f.bus.emit(f.scene, { emitterKey: signal.emitterKey, name: signal.name });
     await f.bus.whenIdle();
-    assert.equal(f.bus.history(f.scene).length, 32);
-    assert.ok(f.bus.history(f.scene).some((entry) => entry.status === "failed"));
+    assert.equal(f.bus.history(f.scene).length, 2);
+    assert.ok(f.bus.history(f.scene).every((entry) => entry.status === "done"));
   } finally { console.error = error; }
 });
 test("validating another group cannot wake subscribers owned by a stopped group", async () => {
@@ -103,7 +103,7 @@ test("global halt cancels ungrouped pending handlers and restart does not revive
   let begin, release, late;
   const ready = new Promise((resolve) => { begin = resolve; }), delay = new Promise((resolve) => { release = resolve; });
   await f.subscribe(signal, "Scene:scene", async function (context) { begin(); await delay; try { await context.emit("activated"); } catch (error) { late = error; } });
-  const task = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, name: signal.name });
+  const task = f.bus.emit(f.scene, { emitterKey: signal.emitterKey, name: signal.name, parameters:{sceneUuid:"Scene.scene",userUuid:"User.gm"} });
   await ready; const generation = requestSceneHalt(f.scene); f.data.automationHalted = true; finishSceneHalt(f.scene, generation);
   assert.equal((await task).status, "stale");
   f.data.automationHalted = false; release(); await new Promise((resolve) => setImmediate(resolve)); assert.ok(late);

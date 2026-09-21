@@ -1,24 +1,29 @@
 import { MODULE_ID, emptyRuntime } from "./model.js";
-import { getRuntime, isAuthority } from "./store.js";
+import { getRuntime, getDefinitions, isAuthority } from "./store.js";
 import { getObjectBindings, getSceneObject, objectKey } from "./scene-objects.js";
 import { createExecutionScope, isExecutionHalted, isSceneAutomationHalted, notifyExecutionChange } from "./execution.js";
 import { text } from "./localization.js";
 import { scriptProgressKey } from "./script-model.js";
+import { InvocationScriptRunner } from "./invocation-script-runner.js";
+import { getSignalCatalog } from "./signal-catalog.js";
 
 /** Events and reactions use the same interpreter as routine and initial scripts.
- * Only the invocation lease/completion belong here; there is no second clock. */
+ * Object invocations use the scene runtime; groups supply an in-memory host. */
 export class ObjectInvocations {
-  constructor(runtime) { this.runtime = runtime; this.pending = new Map(); }
+  constructor(runtime) { this.runtime = runtime; this.pending = new Map();
+    this.groups = new InvocationScriptRunner({ effects: runtime.effects, now: runtime.now,
+      canUsePremiumStep: kind => runtime.canUsePremiumStep(kind), onError: error => runtime.report(error) });
+  }
   current(scene, run) {
     const invocation = this.pending.get(run.runId), key = objectKey(run.target);
-    const binding = scene.getFlag(MODULE_ID,"objectBindings")?.bindings?.[key];
+    const binding = getObjectBindings(scene).bindings[key];
     if (!invocation || this.runtime.disposed || globalThis.canvas?.scene?.id !== scene.id || !isAuthority()
       || !invocation.finished && !this.runtime.manualRuns.has(run.runId) || !invocation.current() || isSceneAutomationHalted(scene)
-      || !getSceneObject(scene,run.target) || !binding || binding.playerCharacter
+      || !getSceneObject(scene,run.target) || !binding
       || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[key] === false) return false;
     if (!run.groupId) return !binding?.groupId;
     const parent = scene.getFlag(MODULE_ID,"groupRuntimes")?.[run.groupId];
-    return scene.getFlag(MODULE_ID,"groupDefinitions")?.[run.groupId]?.schemaVersion === 1
+    return getDefinitions(scene).some(group => group.groupId === run.groupId)
       && binding.groupId === run.groupId && parent?.runId === run.parentRunId && parent.stateId === run.stateId
       && !isExecutionHalted(scene,parent) && !parent.disabledObjects?.includes(key);
   }
@@ -76,7 +81,15 @@ export class ObjectInvocations {
     void this.run(scene,{target:entry.target,script:entry.script,purpose:entry.purpose,progress:entry.progress,
       ...entry.executionContext}).catch(error=>this.runtime.report(error,{category:"script",event:"invocation.resume.failed",context:{sceneId:scene.id,target:entry.target}}));
   }
-  event(scene,{owner,subscription,parameters,signal,current}) {
+  event(scene,{owner,subscription,parameters,signal,current,context}) {
+    if (owner.type === "Group") return this.groups.run({ host: scene, owner, scope: "group", script: subscription.script,
+      current: () => !this.runtime.disposed && isAuthority() && globalThis.canvas?.scene?.id === scene.id && current(),
+      context: { ...context, parameters, signal, state: getRuntime(scene, { groupId: owner.groupId }).state },
+      adapters: {
+        isMacroAttached: uuid => getSignalCatalog(scene).macros.some(entry => entry.ownerKey === owner.key && entry.uuid === uuid),
+        emitSignal: (id, values, active) => { const entry = getSignalCatalog(scene).signals.find(entry => entry.emitterKey === owner.key && entry.id === id); return active() && entry ? context.emit(entry.name, values) : {}; },
+        changeStates: async (pairs, active) => { for (const pair of pairs) { if (!active()) break; await context.transition(pair.groupId, pair.stateId); } }
+      } });
     const target = {type:owner.type,id:owner.id}, binding = getObjectBindings(scene).bindings[objectKey(target)];
     return this.run(scene,{target,script:binding?.eventScripts?.find(entry => entry.subscriptionId === subscription.id)?.script,
       purpose:"event",parameters,signal,current});

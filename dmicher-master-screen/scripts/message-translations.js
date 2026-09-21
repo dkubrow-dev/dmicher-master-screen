@@ -398,7 +398,6 @@ export const MESSAGE_TRANSLATIONS = Object.freeze({
   "Сигналы исполняет выбранный активный полный мастер.": "Signals are executed by the selected active full GM.",
   "Обработчик сигналов остановлен.": "The signal handler has been stopped.",
   "Эмитент не объявлял этот сигнал в текущей сцене.": "The emitter has not declared this signal in the current scene.",
-  "Цепочка сигналов превысила 32 вложения или 64 вызова.": "The signal chain exceeded 32 nested levels or 64 calls.",
   "ID сигнала уже использован с другими параметрами.": "This signal ID has already been used with different parameters.",
   "Слишком много незавершённых сигналов.": "Too many signals are still pending.",
   "Подписка относится к прежнему запуску автоматизации.": "The subscription belongs to a previous automation run.",

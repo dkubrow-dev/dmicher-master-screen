@@ -41,7 +41,7 @@ export async function importShopEntry(uuid, { stock = 1 } = {}) {
 export function getShopContext(sceneId, source, groupId = "main", selectedShopId) {
   const scene = game.scenes?.get(sceneId), runtime = scene ? getRuntime(scene, { groupId }) : null;
   const target = objectDescriptor(source), binding = scene && getObjectBindings(scene).bindings[objectKey(target)];
-  const asset = selectedShopId && binding?.groupId === groupId && !binding.playerCharacter && registeredToolIds(binding, "shop").includes(selectedShopId)
+  const asset = selectedShopId && binding?.groupId === groupId && registeredToolIds(binding, "shop").includes(selectedShopId)
     ? getInteractionCatalog(scene).shops.find(item => item.id === selectedShopId) : null;
   const registered = asset ? { asset, config: { ...copy(asset), enabled: true, shopId: asset.id, target } } : null;
   const player = scene && runtime && selectedShopId ? resolveObjectShop(scene, target, { groupId, stateId: runtime.stateId }, selectedShopId) : null;

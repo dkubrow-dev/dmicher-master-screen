@@ -14,7 +14,7 @@ function references() {
 }
 
 test("a script block round trip preserves row order, graph, timing and options without exporting its state slot", () => {
-  const interruptions = { combat: "restart-script", interaction: "next-step", manual: "restart-step", command: "stop", error: { mode: "restart-script", retries: 10, delaySeconds: 0.25 } };
+  const interruptions = { playerAction: "stop", combat: "restart-script", interaction: "next-step", manual: "restart-step", command: "stop", error: { mode: "restart-script", retries: 10, delaySeconds: 0.25 } };
   const original = { name: "Patrol", stateId: "calm", enabled: false, repeat: true, combat: { enabled: true, turnSeconds: 9 }, interruptions,
     steps: [wait(8, [1]), wait(1, [8])] }, before = structuredClone(original), refs = references();
   const envelope = exportScriptBlock(original, refs);

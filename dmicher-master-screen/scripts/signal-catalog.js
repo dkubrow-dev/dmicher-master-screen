@@ -7,6 +7,7 @@ import { normalizeSignalFields, signalName } from "./signal-types.js";
 import { validateSignalMacro, validateStandaloneMacro, validateBindingScriptMacroInterfaces } from "./signal-macros.js";
 import { notifyExecutionChange } from "./execution.js";
 import { isObjectSignalEnabled, isNativeObjectEmitter } from "./object-signal-settings.js";
+import { isGroupOwner, normalizeGroupScript } from "./group-subscriptions.js";
 
 export { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 const clone = (value) => structuredClone(value);
@@ -51,15 +52,16 @@ export function normalizeCatalog(raw = {}, { scene } = {}) {
   const macros = list(raw, "macros").map((entry) => ({ ownerKey: signalName(entry.ownerKey, localizedMessage("Владелец макроса")), uuid: signalName(entry.uuid, localizedMessage("UUID макроса")) }));
   const subscriptions = list(raw, "subscriptions", 2000).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, localizedMessage("Подписчик")),
     emitterKey: signalName(entry.emitterKey, localizedMessage("Эмитент")), signalId: signalName(entry.signalId, localizedMessage("ID сигнала")), handler: entry.handler === "script" ? "script" : "macro",
-    macroUuid: entry.handler === "script" ? "" : signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false }));
+    macroUuid: entry.handler === "script" ? "" : signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false,
+    ...(entry.handler === "script" && isGroupOwner(entry.ownerKey) ? { script: normalizeGroupScript(entry.script) } : {}) }));
   unique(signals, (entry) => entry.id, localizedMessage("ID сигнала")); unique(signals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя сигнала у эмитента"));
   unique(macros, (entry) => `${entry.ownerKey}\0${entry.uuid}`, localizedMessage("Макрос объекта")); unique(subscriptions, (entry) => entry.id, localizedMessage("ID подписки"));
-  unique(subscriptions, (entry) => `${entry.ownerKey}\0${entry.signalId}\0${entry.macroUuid}`, localizedMessage("Подписка макроса"));
+  unique(subscriptions.filter(entry => !(isGroupOwner(entry.ownerKey) && entry.handler === "script")), (entry) => `${entry.ownerKey}\0${entry.signalId}\0${entry.macroUuid}`, localizedMessage("Подписка макроса"));
   const allSignals = [...builtin.filter((entry) => !signals.some((signal) => signal.id === entry.id)), ...signals];
   unique(allSignals, (entry) => `${entry.emitterKey}\0${entry.name}`, localizedMessage("Имя системного сигнала"));
   for (const subscription of subscriptions) {
-    if (subscription.handler === "script" && !isNativeObjectEmitter(subscription.ownerKey))
-      throw new Error(text("Скрипт события может принадлежать только объекту сцены.", "An event script can belong only to a scene object."));
+    if (subscription.handler === "script" && !isNativeObjectEmitter(subscription.ownerKey) && !isGroupOwner(subscription.ownerKey))
+      throw new Error(text("Скрипт события может принадлежать объекту или группе сцены.", "An event script can belong to a scene object or group."));
     const signal = allSignals.find((entry) => entry.id === subscription.signalId && entry.emitterKey === subscription.emitterKey);
     if (scene && !signal && listSignalEmitters(scene).some((entry) => entry.key === subscription.emitterKey)) throw new Error(localizedMessage("Подписка ссылается на отсутствующий сигнал эмитента."));
     if (subscription.handler !== "script" && !macros.some((entry) => entry.ownerKey === subscription.ownerKey && entry.uuid === subscription.macroUuid)) throw new Error(localizedMessage("Объект не владеет макросом подписки."));
@@ -117,7 +119,7 @@ export class SignalCatalog {
   removeSignal(id, options) {
     return this.change((catalog) => {
       if (this.list().signals.find((entry) => entry.id === id)?.builtin) throw new Error(localizedMessage("Системный сигнал нельзя удалить."));
-      if (catalog.subscriptions.some((entry) => entry.signalId === id) || hasPreparedSignalReference(this.scene, id)) throw new Error(localizedMessage("Сигнал используется подпиской или подготовленным поведением."));
+      if (catalog.subscriptions.some((entry) => entry.signalId === id || entry.script?.steps.some(step => ["signal", "macro"].includes(step.kind) && step.parameters.signalId === id)) || hasPreparedSignalReference(this.scene, id)) throw new Error(localizedMessage("Сигнал используется подпиской или подготовленным поведением."));
       catalog.signals = catalog.signals.filter((entry) => entry.id !== id);
     }, options);
   }
@@ -134,7 +136,7 @@ export class SignalCatalog {
     return this.change((catalog) => {
       const binding = this.scene.getFlag(MODULE_ID, "objectBindings")?.bindings?.[ownerKey];
       const used = bindingScriptSteps(binding).some((step) => step.kind === "macro" && step.parameters?.macroUuid === uuid);
-      if (catalog.subscriptions.some((entry) => entry.ownerKey === ownerKey && entry.macroUuid === uuid) || used) throw new Error(localizedMessage("Макрос используется подпиской или скриптом объекта."));
+      if (catalog.subscriptions.some((entry) => entry.ownerKey === ownerKey && (entry.macroUuid === uuid || entry.script?.steps.some(step => step.kind === "macro" && step.parameters.macroUuid === uuid))) || used) throw new Error(localizedMessage("Макрос используется подпиской или скриптом объекта."));
       catalog.macros = catalog.macros.filter((entry) => entry.ownerKey !== ownerKey || entry.uuid !== uuid);
     }, options);
   }
@@ -146,6 +148,20 @@ export class SignalCatalog {
     const bindings = this.scene.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {};
     const signals = [...builtinCatalog(this.scene, { includeUnavailable: true }).signals.filter(signal => !catalog.signals.some(entry => entry.id === signal.id)), ...catalog.signals];
     for (const key of new Set(ownerKeys)) {
+      if (isGroupOwner(key)) for (const subscription of catalog.subscriptions.filter(entry => entry.ownerKey === key && entry.handler === "script")) {
+        for (const step of normalizeGroupScript(subscription.script).steps) {
+          if (step.kind === "macro") {
+            if (!catalog.macros.some(macro => macro.ownerKey === key && macro.uuid === step.parameters.macroUuid)) throw new Error(text("Группа не владеет макросом скрипта.", "The group does not own the script macro."));
+            if (step.parameters.signalId) {
+              const signal = signals.find(signal => signal.id === subscription.signalId);
+              if (step.parameters.signalId !== signal?.id) throw new Error(text("Интерфейс макроса должен совпадать с сигналом подписки.", "The macro interface must match the subscription signal."));
+              await this.requireInterface(step.parameters.macroUuid, signal);
+            }
+          }
+          if (step.kind === "signal" && !signals.some(signal => signal.emitterKey === key && signal.id === step.parameters.signalId)) throw new Error(text("Группа может испустить только собственный сигнал.", "The group can emit only its own signal."));
+          if (step.kind === "state" && step.parameters.transitions.some(pair => !getDefinitions(this.scene).some(group => group.groupId === pair.groupId && group.states.some(state => state.id === pair.stateId)))) throw new Error(text("Выберите существующее состояние группы.", "Select an existing group state."));
+        }
+      }
       const binding = bindings[key];
       if (binding?.eventScripts?.length) await validateBindingScriptMacroInterfaces(binding, { ...catalog, signals }, { resolveMacro: this.resolveMacro });
     }
@@ -153,8 +169,8 @@ export class SignalCatalog {
   saveSubscription(source, options) {
     return this.change(async (catalog) => {
       this.requireOwner(source.ownerKey); this.requireOwner(source.emitterKey);
-      if (source.handler === "script" && !isNativeObjectEmitter(source.ownerKey))
-        throw new Error(text("Скрипт события может принадлежать только объекту сцены.", "An event script can belong only to a scene object."));
+      if (source.handler === "script" && !isNativeObjectEmitter(source.ownerKey) && !isGroupOwner(source.ownerKey))
+        throw new Error(text("Скрипт события может принадлежать объекту или группе сцены.", "An event script can belong to a scene object or group."));
       const signal = this.list().signals.find((entry) => entry.id === source.signalId && entry.emitterKey === source.emitterKey);
       if (!signal) throw new Error(localizedMessage("Сигнал этого эмитента не зарегистрирован."));
       if (source.handler !== "script") {
@@ -182,28 +198,59 @@ export class SignalCatalog {
 export function exportCatalogDependencies(scene, ownerKeys = []) {
   const all = getSignalCatalog(scene), owners = new Set(ownerKeys.filter((key) => typeof key === "string"));
   const subscriptions = all.subscriptions.filter((entry) => !owners.size || owners.has(entry.ownerKey)), ids = new Set(subscriptions.map((entry) => entry.signalId));
+  for (const subscription of subscriptions) for (const step of subscription.script?.steps ?? []) {
+    if (["signal", "macro"].includes(step.kind) && step.parameters.signalId) ids.add(step.parameters.signalId);
+  }
   return { schemaVersion: 1, revision: 0, signals: all.signals.filter((entry) => (!entry.builtin || [...entry.parameters, ...entry.returns].some((field) => !field.builtin)) && (!owners.size || owners.has(entry.emitterKey) || ids.has(entry.id))),
     macros: all.macros.filter((entry) => !owners.size || owners.has(entry.ownerKey)), subscriptions };
 }
-export function mergeCatalogDependencies(scene, source = {}, { emitterMapping = new Map(), idMapping = new Map() } = {}) {
+export function mergeCatalogDependencies(scene, source = {}, { emitterMapping = new Map(), idMapping = new Map(), subscriptionMapping = new Map(),
+  macroMapping = new Map(), sourceGroupId, groupId, stateMapping = new Map() } = {}) {
   const current = normalizeCatalog(scene?.getFlag?.(MODULE_ID, "signalCatalog") ?? {}, { scene }), incoming = normalizeCatalog(source);
   const mapKey = (key) => emitterMapping.get(key) ?? key;
+  const mapSignal = value => {
+    if (idMapping.has(value)) return idMapping.get(value);
+    for (const [from, to] of emitterMapping) if (value?.startsWith(`builtin:${from}:`)) {
+      const mapped = `builtin:${to}:${value.slice(`builtin:${from}:`.length)}`;
+      idMapping.set(value, mapped); return mapped;
+    }
+    return value;
+  };
+  const knownSignals = getSignalCatalog(scene).signals;
   for (const signal of incoming.signals) {
-    const emitterKey = mapKey(signal.emitterKey), match = getSignalCatalog(scene).signals.find((entry) => entry.emitterKey === emitterKey && entry.name === signal.name);
+    const emitterKey = mapKey(signal.emitterKey), match = knownSignals.find((entry) => entry.emitterKey === emitterKey && entry.name === signal.name);
     const next = { ...signal, emitterKey, id: match?.id ?? (signal.builtin ? signal.id.replace(signal.emitterKey, emitterKey) : randomId()) };
     idMapping.set(signal.id, next.id);
     if (match) {
       const contract = (fields) => fields.map(({ description, builtin, ...field }) => field);
       if (JSON.stringify(contract(match.parameters)) !== JSON.stringify(contract(next.parameters)) || JSON.stringify(contract(match.returns)) !== JSON.stringify(contract(next.returns))) throw new Error(localizedMessage("Конфликт сигнала «{0}» принимающего эмитента.", [signal.name]));
-    } else current.signals.push(next);
+    } else { current.signals.push(next); knownSignals.push(next); }
   }
   for (const entry of incoming.macros) {
-    const next = { ...entry, ownerKey: mapKey(entry.ownerKey) };
+    const next = { ...entry, ownerKey: mapKey(entry.ownerKey), uuid: macroMapping.get(entry.uuid) ?? entry.uuid };
     if (!current.macros.some((item) => item.ownerKey === next.ownerKey && item.uuid === next.uuid)) current.macros.push(next);
   }
   for (const entry of incoming.subscriptions) {
-    const next = { ...entry, id: randomId(), ownerKey: mapKey(entry.ownerKey), emitterKey: mapKey(entry.emitterKey), signalId: idMapping.get(entry.signalId) ?? entry.signalId.replace(entry.emitterKey, mapKey(entry.emitterKey)) };
-    if (!current.subscriptions.some((item) => item.ownerKey === next.ownerKey && item.signalId === next.signalId && item.macroUuid === next.macroUuid)) current.subscriptions.push(next);
+    const next = { ...entry, id: randomId(), ownerKey: mapKey(entry.ownerKey), emitterKey: mapKey(entry.emitterKey), signalId: mapSignal(entry.signalId),
+      macroUuid: macroMapping.get(entry.macroUuid) ?? entry.macroUuid };
+    if (entry.script) {
+      next.script = clone(entry.script);
+      for (const step of next.script.steps) {
+        if (["signal", "macro"].includes(step.kind)) step.parameters.signalId = mapSignal(step.parameters.signalId);
+        if (step.kind === "macro") step.parameters.macroUuid = macroMapping.get(step.parameters.macroUuid) ?? step.parameters.macroUuid;
+        if (step.kind === "state") for (const pair of step.parameters.transitions) {
+          if (pair.groupId !== sourceGroupId || stateMapping.size && !stateMapping.has(pair.stateId)) continue;
+          pair.groupId = groupId; pair.stateId = stateMapping.get(pair.stateId) ?? pair.stateId;
+        }
+      }
+    }
+    // Inline group handlers are separate subscriptions, including identical
+    // bodies. Never collapse them merely because their trigger is the same.
+    const mappedId = subscriptionMapping.get(entry.id);
+    const match = current.subscriptions.find(item => mappedId ? item.id === mappedId : !next.script
+      && item.ownerKey === next.ownerKey && item.signalId === next.signalId && item.macroUuid === next.macroUuid && item.handler === next.handler);
+    if (!match) current.subscriptions.push(next);
+    subscriptionMapping.set(entry.id, match?.id ?? next.id);
   }
   return normalizeCatalog({ ...current, revision: current.revision + 1 });
 }
@@ -212,5 +259,11 @@ export function removeSignalOwner(catalog, ownerKey) {
   next.signals = next.signals.filter((entry) => entry.emitterKey !== ownerKey);
   next.macros = next.macros.filter((entry) => entry.ownerKey !== ownerKey);
   next.subscriptions = next.subscriptions.filter((entry) => entry.ownerKey !== ownerKey && entry.emitterKey !== ownerKey && !ids.has(entry.signalId));
+  for (const subscription of next.subscriptions) for (const step of subscription.script?.steps ?? []) {
+    if (["signal", "macro"].includes(step.kind) && (ids.has(step.parameters.signalId) || step.parameters.signalId?.startsWith(`builtin:${ownerKey}:`))
+      || isGroupOwner(ownerKey) && step.kind === "state" && step.parameters.transitions.some(pair => `Group:${pair.groupId}` === ownerKey)) {
+      throw new Error(text("Объект используется скриптом подписки другой группы. Сначала измените этот скрипт.", "Another group's subscription script uses this owner. Update that script first."));
+    }
+  }
   return { ...next, revision: next.revision + 1 };
 }

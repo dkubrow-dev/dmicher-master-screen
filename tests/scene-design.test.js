@@ -13,7 +13,7 @@ test("groups and states have independent order, unique names, copy and move", as
   const f = sceneFixture(), a = await f.editor.createGroup({ name: "North" }), b = await f.editor.createGroup({ name: "South" });
   const second = await f.editor.createState(a.groupId, { name: "Tension" });
   await assert.rejects(f.editor.createGroup({ name: "NORTH" })); await assert.rejects(f.editor.createState(a.groupId, { name: "TENSION" }));
-  await f.editor.reorderGroups([b.groupId, a.groupId]); assert.deepEqual(f.editor.list().map((entry) => entry.groupId), [b.groupId, a.groupId]);
+  await f.editor.reorderGroups([b.groupId, a.groupId, "players"]); assert.deepEqual(f.editor.list().map((entry) => entry.groupId), [b.groupId, a.groupId, "players"]);
   await f.editor.reorderStates(a.groupId, [second.id, a.entryStateId]); assert.equal(f.editor.get(a.groupId).states[0].id, second.id);
   const copied = await f.editor.transferState(a.groupId, b.groupId, second.id, { copy: true }); assert.notEqual(copied.id, second.id);
   const moved = await f.editor.transferState(a.groupId, b.groupId, second.id, { copy: false, name: "Moved" }); assert.equal(moved.id, second.id); assert.equal(f.editor.get(a.groupId).states.length, 1);
@@ -26,11 +26,11 @@ test("existing groups retain one valid entry state; an empty scene may have no g
   const firstHalt = f.scene.flags[MODULE_ID].automationHaltId; assert.ok(firstHalt);
   await runtime.haltAll(f.scene); assert.notEqual(f.scene.flags[MODULE_ID].automationHaltId, firstHalt);
   assert.deepEqual(Object.keys(f.scene.flags[MODULE_ID]).sort(), ["automationHaltId", "automationHalted"]);
-  assert.deepEqual(getRuntimes(f.scene), []); assert.ok(getSignalCatalog(f.scene).signals.every((entry) => entry.builtin));
+  assert.deepEqual(getRuntimes(f.scene).map(run => [run.groupId, run.runId]), [["players", ""]]); assert.ok(getSignalCatalog(f.scene).signals.every((entry) => entry.builtin));
   const group = await f.editor.createGroup({ name: "Explicit" }), other = await f.editor.createGroup({ name: "Other" });
   assert.equal(group.states.length, 1); assert.equal(getRuntime(f.scene, { groupId: group.groupId }).runId, "");
   await assert.rejects(f.editor.deleteState(group.groupId, group.entryStateId)); await assert.rejects(f.editor.transferState(group.groupId, other.groupId, group.entryStateId, { copy: false }));
-  await f.editor.deleteGroup(group.groupId); await f.editor.deleteGroup(other.groupId); assert.deepEqual(getDefinitions(f.scene), []);
+  await f.editor.deleteGroup(group.groupId); await f.editor.deleteGroup(other.groupId); assert.deepEqual(getDefinitions(f.scene).map(group => group.groupId), ["players"]);
 });
 test("two running groups halt, restart and change states independently", async () => {
   const f = sceneFixture(), a = await f.editor.createGroup({ name: "A" }), b = await f.editor.createGroup({ name: "B" }), next = await f.editor.createState(a.groupId, { name: "Next" });

@@ -53,6 +53,7 @@ test("deleted, malformed or mismatched runtime records cannot authorize remote p
 test("manual presentation rejects malformed group keys safely and remains valid outside groups", () => {
   const f = fixture();
   assert.equal(scriptPresentationIsCurrent(f.scene, { ...f.data, manual: true, groupId: "bad.group", manualGroupStamp: null, manualHaltId: null }), false);
+  f.flags.objectBindings.bindings["Token:npc"].groupId = null;
   const outside = scriptPresentationScope(f.scene, { ...f.data, manual: true });
   assert.equal(outside.manualGroupStamp, null); assert.equal(scriptPresentationIsCurrent(f.scene, outside), true);
 });
@@ -69,8 +70,8 @@ test("step clocks do not invalidate presentation, while generations, object disa
   f.run.disabledObjects.length = 0; f.run.halted = true; assert.equal(scriptPresentationIsCurrent(f.scene, f.data), false);
 });
 
-test("only the active Stop or Cancel command can present while its ordinary object automation is disabled", () => {
-  for (const id of ["stop", "cancel"]) {
+test("only the active Behavior-off or Cancel command can present while ordinary automation is disabled", () => {
+  for (const id of ["behavior-off", "cancel"]) {
     const f = fixture(), scriptKey = "Token:npc:command-before:script";
     f.run.disabledObjects = ["Token:npc"];
     const command = { schemaVersion: 1, command: true, runId: "command", parentRunId: f.run.runId, groupId: "hall", target: f.target,

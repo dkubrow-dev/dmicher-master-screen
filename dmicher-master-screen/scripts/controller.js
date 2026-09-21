@@ -26,7 +26,7 @@ import { ConstructorIndicator } from "./apps/constructor-indicator.js";
 import { ObjectContextMenu } from "./apps/object-context-menu.js";
 import { ObjectAutomationApplication } from "./apps/object-tools.js";
 import { listAvailableInteractions, objectDescriptor } from "./interaction-access.js";
-import { getSceneObject, listNativeSceneObjects } from "./scene-objects.js";
+import { getSceneObject, getObjectBindings, listNativeSceneObjects } from "./scene-objects.js";
 import { focusCanvasObject, clearCanvasObjectFocus } from "./apps/canvas-object.js";
 import { StateChooserApplication } from "./apps/state-chooser.js";
 import { isSceneAutomationHalted, isExecutionHalted } from "./execution.js";
@@ -41,7 +41,7 @@ import { ObjectInteractionService } from "./object-interaction-service.js";
 import { ObjectEventSignals } from "./object-event-signals.js";
 import { createInteractiveHighlights } from "./interaction-highlights.js";
 import { potentialInteractiveDocuments } from "./interactive-object-projection.js";
-import { chooseCommandDelegate, chooseDelegatedTask } from "./apps/command-delegation-picker.js";
+import { pickCommandTarget } from "./command-target-session.js";
 
 export class ScreenController {
   constructor() {
@@ -147,16 +147,18 @@ export class ScreenController {
     const app = generics.windows.openSingletonApplication(windows.get(key), () => new Application(this, descriptor), { moduleId: MODULE_ID });
     windows.set(key, app); return app;
   }
-  async openObjectMenu(descriptor, position = {}) {
+  async openObjectMenu(descriptor, position = {}, { actorCaptured = false, actorTokenId:capturedActor } = {}) {
     const scene = currentScene(), ru = game.i18n?.lang?.startsWith("ru");
     if (!getSceneObject(scene, descriptor)) return false;
     const generation = this.menuGeneration=(this.menuGeneration ?? 0)+1;
-    let items;
+    let items, header;
     if (game.user.isGM && this.mode === "constructor") {
       items = [{label:t("Автоматизация","Automation"),icon:"⚙",action:()=>this.openObjectAutomation(descriptor)}];
     } else {
-      const actorTokenId = this.getActingTokenId(undefined, descriptor.type === "Token" ? descriptor.id : undefined);
+      const targetTokenId = descriptor.type === "Token" ? descriptor.id : undefined;
+      const actorTokenId = actorCaptured ? capturedActor ? this.getActingTokenId(capturedActor, targetTokenId) : undefined : this.getActingTokenId(undefined, targetTokenId);
       const actorToken = scene.tokens?.get(actorTokenId);
+      header = this.objectMenuHeader(scene, descriptor, actorToken);
       let choices=this.getAvailableInteractions(scene,descriptor,actorToken);
       if (choices.some(entry => entry.conditionMacro)) {
         const listeners = choices.filter(entry => entry.kind === "listen");
@@ -177,30 +179,41 @@ export class ScreenController {
       }
       const activeCommand = this.runtime.commandExecutor?.activeForObject(scene, descriptor);
       const commands = availableObjectCommands(scene, descriptor, actorToken, game.user, activeCommand);
-      const delegated=actorToken ? availableObjectCommands(scene,descriptor,actorToken,game.user,activeCommand,{method:"delegated"}) : [];
       const playerCommands=game.user.isGM && actorToken ? availableObjectCommands(scene,descriptor,actorToken,game.user,activeCommand,{method:"player"}) : [];
-      const commandItems=commands.concat(playerCommands,delegated).map(command=>({
-        label:`${objectCommandName(command.id,descriptor.type)}${command.method === "delegated" ? ` · ${t("Поручить","Delegate")}` : command.method === "player" && game.user.isGM ? ` · ${t("От персонажа","As character")}` : ""}`,
-        gmOnly:command.gmOnly,action:()=>this.issueObjectCommand(descriptor,actorTokenId,command.id,{method:command.method})}));
+      const entry = command=>({
+        label:objectCommandName(command.id,descriptor.type),
+        gmOnly:command.gmOnly,action:()=>this.issueObjectCommand(descriptor,actorTokenId,command.id,{method:command.method})});
+      const commandItems = (game.user.isGM ? playerCommands : commands).map(entry);
+      if (game.user.isGM && commands.length) commandItems.push({ label:t("Как мастер","As GM"), gmOnly:true, children:commands.map(entry) });
       if(commandItems.length) items.push({label:t("Команды","Commands"),icon:"⚙",children:commandItems});
       if(game.user.isGM) items.push({label:t("Автоматизация","Automation"),icon:"⚙",gmOnly:true,action:()=>this.openObjectAutomation(descriptor)});
     }
     if (!items.length) { this.objectMenu.close(); return false; }
-    this.objectMenu.open(items, position); return true;
+    this.objectMenu.open(items, { ...position, header }); return true;
+  }
+  objectMenuHeader(scene, target, actor) {
+    const document = getSceneObject(scene, target), binding = getObjectBindings(scene).bindings[`${target.type}:${target.id}`];
+    const name = binding?.displayName?.trim() || document?.name?.trim() || document?.text?.trim() || document?.label?.trim();
+    return { actor: actor?.name || (game.user.isGM ? t("Мастер", "Game Master") : game.user.name),
+      target: name ? `${t("Влиять на", "Influence")} ${name}` : "" };
   }
   async issueObjectCommand(target, actorTokenId, commandId, {method,delegateTokenId} = {}) {
     const scene = currentScene(), actor = scene?.tokens?.get(actorTokenId), object = getSceneObject(scene, target);
     if (!scene || !object || !this.commandService || !actor && !game.user?.isGM) return;
     this.objectMenu.close(); this.cancelPick?.();
     if(commandId === "delegate") {
-      const task=await chooseDelegatedTask(scene,target,actorTokenId);
+      if (!actor || object.documentName !== "Token") return;
+      const picking = pickCommandTarget({ scene, actor, executor:object, menu:this.objectMenu,
+        header:descriptor=>this.objectMenuHeader(scene,descriptor,actor),
+        commands:descriptor=>availableObjectCommands(scene,descriptor,actor,game.user,this.runtime.commandExecutor?.activeForObject(scene,descriptor),{method:"delegated",delegate:object}) });
+      const cancel = () => picking.cancel(); this.cancelPick = cancel;
+      let task;
+      try { task = await picking; }
+      finally { if (this.cancelPick === cancel) this.cancelPick = null; }
       if(task && currentScene()?.id === scene.id) return this.issueObjectCommand(task.target,actorTokenId,task.commandId,{method:"delegated",delegateTokenId:task.delegateTokenId});
       return;
     }
-    if(method === "delegated" && !delegateTokenId) {
-      delegateTokenId=await chooseCommandDelegate(scene,target,actorTokenId,commandId);
-      if(!delegateTokenId || currentScene()?.id !== scene.id) return;
-    }
+    if(method === "delegated" && !delegateTokenId) return;
     const picking = pickCommandParameters(commandId, { scene, actor:actor ?? object, object });
     const cancel = () => picking.cancel(); this.cancelPick = cancel;
     let parameters;
@@ -370,6 +383,7 @@ export class ScreenController {
     if (targeted.length > 1) return undefined;
     const controlled = asArray(canvas.tokens?.controlled).map((token) => token.document ?? token).filter(allowed);
     if (controlled.length === 1) return controlled[0].id;
+    if (game.user.isGM) return undefined;
     const candidates = this.getPlayerTokens().filter(allowed);
     return candidates.length === 1 ? candidates[0].id : undefined;
   }

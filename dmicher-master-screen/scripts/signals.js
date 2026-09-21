@@ -1,4 +1,4 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { MODULE_ID, randomId } from "./model.js";
 import { getRuntime, getRuntimeForRun, requireGM, isAuthority } from "./store.js";
 import { getSignalCatalog } from "./signal-catalog.js";
@@ -69,7 +69,8 @@ export class SceneSignals {
     if (!isObjectSignalEnabled(scene, emitter.key, signal)) return Promise.resolve({ id, emitterKey: emitter.key, signalId: signal.id,
       name: signal.name, status: "disabled", results: [], allowed: true, exit: false, interrupt: false, messages: [] });
     const inherited = input.context ?? {}, chain = inherited._chain ?? { count: 0 }, depth = inherited.depth ?? 0;
-    if (depth >= 32 || chain.count >= 64) throw new Error(localizedMessage("Цепочка сигналов превысила 32 вложения или 64 вызова."));
+    const depthLimit = inherited._worldCause ? 16 : 32;
+    if (depth >= depthLimit || chain.count >= 64) throw new Error(text(`Цепочка сигналов превысила ${depthLimit} вложений или 64 вызова.`, `The signal chain exceeded ${depthLimit} nested events or 64 calls.`));
     const signature = JSON.stringify([emitter.key, signal.id, parameters]);
     let receipts = this.receipts.get(scene);
     if (!receipts) this.receipts.set(scene, receipts = new Map());
@@ -122,11 +123,15 @@ export class SceneSignals {
       const live = catalog.subscriptions.find((entry) => entry.id === subscription.id && entry.enabled && entry.handler === subscription.handler && entry.macroUuid === subscription.macroUuid);
       const trace = (event, details = {}, error) => signalTrace(event, () => ({ ...diagnosticContext(scene, delivery, subscription, owner), ...details }), error);
       if (!owner || !live) { trace("subscriber.skipped", { reason: "removed" }); continue; }
+      if (context._subscriptions?.includes(subscription.id)) {
+        trace("subscriber.skipped", { reason: "cycle" }); continue;
+      }
+      const nestedContext = { ...context, _subscriptions: [...(context._subscriptions ?? []), subscription.id] };
       const state = owner.groupId ? getRuntime(scene, { groupId: owner.groupId }) : null;
       const validation = signal.returns.some((field) => field.name === "allowed");
       const binding = scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[owner.key];
-      if (binding?.playerCharacter || state?.disabledObjects?.includes(owner.key)) {
-        trace("subscriber.skipped", { reason: binding?.playerCharacter ? "player-character" : "disabled" }); continue;
+      if (state?.disabledObjects?.includes(owner.key)) {
+        trace("subscriber.skipped", { reason: "disabled" }); continue;
       }
       const validatesOwnGroup = ["validateStart", "validateTransition"].includes(signal.name) && emitter.type === "Group" && emitter.id === owner.groupId;
       if (!allowStopped && !validatesOwnGroup && state && (!state.runId || isExecutionHalted(scene, state))) { trace("subscriber.skipped", { reason: "halted" }); continue; }
@@ -138,10 +143,9 @@ export class SceneSignals {
         if (!liveOwner || liveOwner.groupId !== owner.groupId) return false;
         const liveState = owner.groupId ? getRuntime(scene, { groupId: owner.groupId }) : null;
         return (!owner.groupId || liveState?.runId === state?.runId && !liveState?.disabledObjects?.includes(owner.key))
-          && !scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[owner.key]?.playerCharacter
           && (subscription.handler === "script" || catalog.macros.some((entry) => entry.ownerKey === owner.key && entry.uuid === subscription.macroUuid))
           && catalog.subscriptions.some((entry) => entry.id === subscription.id && entry.enabled && entry.handler === subscription.handler && entry.macroUuid === subscription.macroUuid
-            && entry.ownerKey === owner.key && entry.emitterKey === emitter.key && entry.signalId === signal.id);
+            && entry.ownerKey === owner.key && entry.emitterKey === emitter.key && entry.signalId === signal.id && JSON.stringify(entry.script) === JSON.stringify(subscription.script));
       };
       const entry = { subscriptionId: subscription.id, ownerKey: owner.key, ownerName: owner.name, status: "done", returns: {} };
       result.results.push(entry);
@@ -155,12 +159,12 @@ export class SceneSignals {
             transition: (groupId, stateId) => {
               if (!isCurrent()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
               const active = getRuntime(scene, { groupId });
-              return this.runtime.enter(scene, stateId, { groupId, expectedRunId: active.runId, signalContext: { ...context, current: isCurrent, depth: context.depth + 1 } });
+              return this.runtime.enter(scene, stateId, { groupId, expectedRunId: active.runId, signalContext: { ...nestedContext, current: isCurrent, depth: context.depth + 1 } });
             },
             halt: (groupId = owner.groupId) => { if (!isCurrent()) throw new Error(localizedMessage("Подписка остановлена.")); return groupId ? this.runtime.halt(scene, { groupId }) : this.runtime.haltAll(scene); },
             emit: (name, values = {}) => {
               if (!isCurrent()) throw new Error(localizedMessage("Подписка относится к прежнему запуску автоматизации."));
-              return this.emit(scene, { emitterKey: owner.key, name, parameters: values, context: { ...context, current: isCurrent, depth: context.depth + 1 } });
+              return this.emit(scene, { emitterKey: owner.key, name, parameters: values, context: { ...nestedContext, current: isCurrent, depth: context.depth + 1 } });
             }
           };
           if (subscription.handler === "script") {

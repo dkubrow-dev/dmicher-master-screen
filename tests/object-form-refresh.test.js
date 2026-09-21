@@ -259,6 +259,16 @@ test("a rejected save unlocks the form and preserves its dirty draft for correct
   } finally { SceneObjects.prototype.save = previousSave; }
 });
 
+test("saving the information runtime toggle delegates object automation without changing preparation", async () => {
+  const { app } = fixture(); let call;
+  app.controller.runtime = { setObjectAutomation: async (...args) => { call = args; } };
+  app.automationEnabled = false; app.originalAutomationEnabled = true; app.dirty = true;
+  app.render = async () => app;
+  await app.persist();
+  assert.equal(call[0].id, "scene"); assert.deepEqual(call[1], app.descriptor); assert.equal(call[2], false);
+  assert.deepEqual(call[3], { groupId: "main" }); assert.equal(app.originalAutomationEnabled, false);
+});
+
 test("script warnings combine in one confirmation; cancelling keeps the full draft and prevents restoration", async () => {
   const { app } = fixture(), previousSave = SceneObjects.prototype.save, api = foundry.applications.api, previousDialog = api.DialogV2;
   const editable = { name: "script", type: "textarea", disabled: false };

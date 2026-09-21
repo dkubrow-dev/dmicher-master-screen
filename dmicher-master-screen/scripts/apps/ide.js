@@ -28,6 +28,8 @@ import { notifyError } from "../ui.js";
 import { WorkspacePresetStore, getWorkspacePresets } from "../workspace-presets-store.js";
 import { normalizeWorkspacePreset, normalizeNoteEntry } from "../workspace-presets-model.js";
 import { presetSelectionKind, renderWorkspacePresetList, renderWorkspacePresetForm, readWorkspacePresetForm } from "./workspace-presets-view.js";
+import { openEmojiPicker } from "./emoji-picker.js";
+import { openGroupSubscription } from "./group-subscription-editor.js";
 
 const clone = (value) => structuredClone(value);
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
@@ -338,7 +340,10 @@ export class MasterScreenApplication extends EditorApplication {
         if (this.subscriptionDraft) detailHTML += renderSubscriptionFields(this.subscriptionDraft, catalog, this.subscriptionConstraints());
         detailHTML += renderMacroValidation(this.subscriptionValidation);
       }
-      if (this.selection.kind === "group" && selected) detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
+      if (this.selection.kind === "group" && selected) {
+        detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
+        if (this.mode === "constructor") detailHTML += `<h4>${t("Подписки группы", "Group subscriptions")}</h4>` + renderSubscriptions(catalog.subscriptions.filter(row => row.ownerKey === `Group:${selected.groupId}`), catalog);
+      }
       if (this.mode === "director" && selected && ["group", "state"].includes(this.selection.kind)) detailHTML += actionButton("showActivity", t("Показать активность", "Show activity"));
     }
     return { ...base, ...presentation, mainHTML, detailHTML, nodeActions,
@@ -418,7 +423,17 @@ export class MasterScreenApplication extends EditorApplication {
       const segments = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(symbol.value)];
       if (segments.length > 1) symbol.value = segments[0].segment;
     };
-    if (symbol) { symbol.addEventListener("input", constrainSymbol, listeners); symbol.addEventListener("compositionend", constrainSymbol, listeners); }
+    if (symbol) {
+      symbol.addEventListener("input", constrainSymbol, listeners); symbol.addEventListener("compositionend", constrainSymbol, listeners);
+      const picker = this.element.querySelector("[data-group-symbol-picker]"); let closePicker = () => {};
+      picker?.addEventListener("click", (event) => {
+        event.preventDefault(); event.stopPropagation();
+        const wasOpen = picker.getAttribute("aria-expanded") === "true"; closePicker();
+        if (!wasOpen) closePicker = openEmojiPicker(picker, { signal: this.events.signal, onSelect(value) {
+          symbol.value = value; symbol.dispatchEvent(new symbol.ownerDocument.defaultView.Event("input", { bubbles: true })); symbol.focus();
+        } });
+      }, listeners);
+    }
     for (const zone of this.element.querySelectorAll("[data-shop-stock-drop]")) {
       zone.addEventListener("dragover", (event) => event.preventDefault(), listeners);
       zone.addEventListener("drop", (event) => { event.preventDefault(); void this.dropShopItem(event).catch(notify); }, listeners);
@@ -832,6 +847,12 @@ export class MasterScreenApplication extends EditorApplication {
     if (this.subscriptionDraft && this.element.querySelector("[data-subscription-fields]")) this.subscriptionDraft = readSubscriptionFields(this.element, this.subscriptionDraft, new SignalCatalog(this.assertScene()).list(), this.subscriptionConstraints());
   }
   async signalAction(action, button) {
+    if (this.selection.kind === "group" && ["newSignalSubscription", "editSignalSubscription"].includes(action)) {
+      if (this.mode !== "constructor") return true;
+      this.captureParameterDraft();
+      openGroupSubscription(this.assertScene(), this.selection.id, action === "editSignalSubscription" ? button.dataset.id : null, () => this.refresh());
+      return true;
+    }
     if (action === "toggleSignalBranch") {
       const node = button.closest("[data-emitter-node]");
       if (node) { node.open = !node.open; button.textContent = node.open ? "▾" : "▸"; }

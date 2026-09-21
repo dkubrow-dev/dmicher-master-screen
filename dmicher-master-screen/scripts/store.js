@@ -2,6 +2,7 @@ import { message as localizedMessage } from "./localization.js";
 import { writeSceneFlags, replacementFlagData } from "./scene-flags.js";
 import { MODULE_ID, DEFAULT_GROUP_ID, normalizeDefinition, normalizeRuntime, normalizeTags, emptyRuntime } from "./model.js";
 import { generics } from "./generics.js";
+import { PLAYERS_GROUP_ID, playersGroupDefinition } from "./players-group.js";
 
 const queues = new WeakMap();
 export const asArray = (collection) => Array.from(collection?.values?.() ?? collection ?? []);
@@ -19,10 +20,22 @@ export function requireGroupId(id = DEFAULT_GROUP_ID) {
   return id;
 }
 export const getDefinitions = (scene) => {
+  if (!scene?.id) return [];
   const stored = scene?.getFlag(MODULE_ID, "groupDefinitions");
-  return Object.entries(stored ?? {}).filter(([, value]) => value?.schemaVersion === 1)
-    .map(([id, value]) => normalizeDefinition({ ...value, groupId: requireGroupId(id) })).sort((a, b) => a.order - b.order);
+  const definitions = Object.entries(stored ?? {}).filter(([, value]) => value?.schemaVersion === 1)
+    .map(([id, value]) => normalizeDefinition({ ...value, groupId: requireGroupId(id) }));
+  if (!definitions.some(entry => entry.groupId === PLAYERS_GROUP_ID)) definitions.push(playersGroupDefinition());
+  return definitions.sort((a, b) => a.order - b.order);
 };
+/** The empty virtual Players group is visible in preparation but does not need a
+ * runtime document merely because the GM starts or stops the whole scene. */
+export function getExecutionDefinitions(scene) {
+  const hasPlayers = Boolean(scene?.getFlag(MODULE_ID, "groupDefinitions")?.[PLAYERS_GROUP_ID]
+    || scene?.getFlag(MODULE_ID, "groupRuntimes")?.[PLAYERS_GROUP_ID]
+    || Object.values(scene?.getFlag(MODULE_ID, "objectBindings")?.bindings ?? {})
+      .some(binding => binding.groupId === PLAYERS_GROUP_ID || binding.playerCharacter));
+  return getDefinitions(scene).filter(group => group.groupId !== PLAYERS_GROUP_ID || hasPlayers);
+}
 export const getDefinition = (scene, { groupId = DEFAULT_GROUP_ID } = {}) => {
   const id = requireGroupId(groupId), found = getDefinitions(scene).find((entry) => entry.groupId === id);
   if (!found) throw new Error(localizedMessage("Группа больше не существует"));

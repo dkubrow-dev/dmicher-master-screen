@@ -19,11 +19,8 @@ export const OBJECT_COMMAND_DEFINITIONS = Object.freeze([
   { id: "follow", category: "movement", defaults: { speed: 5, minDistance: 0, maxDistance: 5, mode: "path" } },
   { id: "patrol", category: "movement", defaults: { speed: 5 } },
   { id: "wait", category: "movement", defaults: { seconds: 10 } },
-  { id: "open-door", category: "interaction", defaults: { speed: 5 } },
-  { id: "close-door", category: "interaction", defaults: { speed: 5 } },
   { id: "light-on", category: "interaction", defaults: { bright: 10, dim: 20 } },
   { id: "light-off", category: "interaction", defaults: {} },
-  { id: "stop", category: "interaction", defaults: { issuer: "gm" } },
   { id: "cancel", category: "interaction", defaults: { issuer: "commander", waitSeconds: 1 } },
   { id: "delegate", category: "interaction", defaults: { speed: 5 } },
   { id: "visible", category: "interaction", defaults: {} },
@@ -55,12 +52,9 @@ export const OBJECT_COMMAND_TYPES = Object.freeze({
   MeasuredTemplate: Object.freeze(["visible", "invisible", ...controls, "delete"])
 });
 export const commandDefinitionsFor = type => (OBJECT_COMMAND_TYPES[type] ?? []).map(id => OBJECT_COMMAND_DEFINITIONS.find(entry => entry.id === id));
-// Token door travel remains the executor of a delegated door operation, with the
-// same footprint collision rules. The old menu shortcuts are no longer exposed.
-export const objectSupportsCommand = (type, id) => OBJECT_COMMAND_TYPES[type]?.includes(id) === true
-  || type === "Token" && ["open-door", "close-door", "stop"].includes(id);
-export const commandStopsBehavior = id => ["stop", "behavior-off"].includes(id);
-export const commandPermitsDisabledBehavior = id => ["stop", "cancel", "behavior-on", "behavior-off", "signals-on", "signals-off"].includes(id);
+export const objectSupportsCommand = (type, id) => OBJECT_COMMAND_TYPES[type]?.includes(id) === true;
+export const commandStopsBehavior = id => id === "behavior-off";
+export const commandPermitsDisabledBehavior = id => ["cancel", "behavior-on", "behavior-off", "signals-on", "signals-off"].includes(id);
 
 export function objectCommandName(id, type) {
   if (type === "AmbientLight" && ["source-on", "source-off"].includes(id)) return id === "source-on" ? text("Зажгись", "Light up") : text("Погасни", "Extinguish");
@@ -68,9 +62,8 @@ export function objectCommandName(id, type) {
   const names = {
     come: text("Подойди", "Come here"), away: text("Отойди", "Move away"), go: text("Встань там", "Stand there"),
     follow: text("Следуй за мной", "Follow me"), patrol: text("Патрулируй", "Patrol"), wait: text("Жди здесь", "Wait here"),
-    "open-door": text("Открой дверь", "Open the door"), "close-door": text("Закрой дверь", "Close the door"),
     "light-on": text("Зажги свет", "Light on"), "light-off": text("Потуши свет", "Light off"),
-    stop: text("Стой", "Stop"), cancel: text("Отмена", "Cancel"), delegate: text("Поручение", "Delegate"),
+    cancel: text("Отмена", "Cancel"), delegate: text("Поручение", "Delegate"),
     visible: text("Видимый", "Visible"), invisible: text("Невидимый", "Hidden"),
     "signals-on": text("Включить сигналы", "Enable signals"), "signals-off": text("Выключить сигналы", "Disable signals"),
     "behavior-on": text("Включить поведение", "Enable behavior"), "behavior-off": text("Выключить поведение", "Disable behavior"),
@@ -111,8 +104,7 @@ function normalizeParameters(id, raw = {}) {
     if (!["path", "direct"].includes(parameters.mode)) fail(text("Выберите способ следования.", "Select a following mode."));
     if (parameters.maxDistance < parameters.minDistance) fail(text("Максимальное расстояние не может быть меньше минимального.", "Maximum distance cannot be less than minimum distance."));
   }
-  if (id === "stop" && !["gm", "players"].includes(parameters.issuer)
-    || id === "cancel" && !["gm", "commander", "players"].includes(parameters.issuer)) {
+  if (id === "cancel" && !["gm", "commander", "players"].includes(parameters.issuer)) {
     fail(text("Выберите, кто может выдать команду.", "Select who may issue this command."));
   }
   return parameters;
@@ -157,8 +149,12 @@ export function normalizeObjectCommand(raw) {
 }
 export const defaultObjectCommand = id => normalizeObjectCommand({ id });
 export function normalizeObjectCommands(raw = []) {
-  if (!Array.isArray(raw) || raw.length > OBJECT_COMMAND_IDS.length) fail(text("Ожидается список встроенных команд объекта.", "Expected a list of built-in object commands."));
-  const commands = raw.map(normalizeObjectCommand);
+  // Removed shortcuts may remain in saved scenes. Omit only these known retired
+  // preparations from the read projection; never rewrite their document flags.
+  const retired = new Set(["stop", "open-door", "close-door"]);
+  if (!Array.isArray(raw) || raw.length > OBJECT_COMMAND_IDS.length + retired.size) fail(text("Ожидается список встроенных команд объекта.", "Expected a list of built-in object commands."));
+  const commands = raw.filter(entry => !retired.has(entry?.id)).map(normalizeObjectCommand);
+  if (commands.length > OBJECT_COMMAND_IDS.length) fail(text("Ожидается список встроенных команд объекта.", "Expected a list of built-in object commands."));
   if (new Set(commands.map(command => command.id)).size !== commands.length) fail(text("Команда объекта не должна повторяться.", "An object command cannot be repeated."));
   return commands;
 }

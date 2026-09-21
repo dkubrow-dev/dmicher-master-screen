@@ -1,9 +1,10 @@
-import { message as localizedMessage } from "./localization.js";
+import { message as localizedMessage, text } from "./localization.js";
 import { writeSceneFlags, replacementFlagData } from "./scene-flags.js";
 import { MODULE_ID, createGroupDefinition, defaultState, normalizeDefinition, randomId } from "./model.js";
 import { getDefinitions, getDefinition, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { removeSignalOwner, normalizeCatalog } from "./signal-catalog.js";
 import { reconcileDefinitionBindings, exportObjectConfiguration, importObjectConfiguration, getObjectBindings } from "./scene-objects.js";
+import { PLAYERS_GROUP_ID, isPlayersGroup } from "./players-group.js";
 
 const clone = (value) => structuredClone(value);
 const uniqueName = (entries, name, except, key = "name") => {
@@ -48,10 +49,24 @@ export class GroupEditor {
         return normalized;
       });
       const bindingChanges = reconcileDefinitionBindings(this.scene, previous, next);
-      const groupMap = (entries) => Object.fromEntries(entries.map((entry) => [entry.groupId, entry]));
-      const data = { ...(this.scene.getFlag(MODULE_ID, "groupDefinitions") ?? {}), ...replacementFlagData(groupMap(previous), groupMap(next)) };
+      const stored = this.scene.getFlag(MODULE_ID, "groupDefinitions") ?? {};
+      const meaningful = entry => { const { revision, order, ...value } = entry; return JSON.stringify(value); };
+      const changedPlayers = meaningful(previous.find(entry => isPlayersGroup(entry.groupId))) !== meaningful(next.find(entry => isPlayersGroup(entry.groupId)));
+      const persisted = next.filter(entry => !isPlayersGroup(entry.groupId) || stored[PLAYERS_GROUP_ID] || changedPlayers);
+      const groupMap = entries => Object.fromEntries(entries.map(entry => [entry.groupId, entry]));
+      const data = replacementFlagData(stored, groupMap(persisted));
       for (const removed of previous.filter((entry) => !next.some((value) => value.groupId === entry.groupId))) {
         relatedFlags.signalCatalog = removeSignalOwner(relatedFlags.signalCatalog ?? normalizeCatalog(this.scene.getFlag(MODULE_ID, "signalCatalog") ?? {}), `Group:${removed.groupId}`);
+      }
+      // A retained inline handler must not silently lose a prepared destination.
+      // Only newly removed pairs are guarded; reading old dangling data does not
+      // invent a migration or prevent unrelated edits.
+      const subscriptions = (relatedFlags.signalCatalog ?? this.scene.getFlag(MODULE_ID, "signalCatalog"))?.subscriptions ?? [];
+      for (const entry of subscriptions) for (const step of entry.script?.steps ?? []) {
+        if (step.kind === "state" && step.parameters.transitions.some(pair => previous.some(group => group.groupId === pair.groupId && group.states.some(state => state.id === pair.stateId))
+          && !next.some(group => group.groupId === pair.groupId && group.states.some(state => state.id === pair.stateId)))) {
+          throw new Error(text("Состояние используется скриптом подписки группы. Сначала измените этот скрипт.", "A group's subscription script uses this state. Update that script first."));
+        }
       }
       const fields = { groupDefinitions: data, ...(bindingChanges ? { objectBindings: bindingChanges } : {}), ...relatedFlags };
       await writeSceneFlags(this.scene, fields);
@@ -67,11 +82,12 @@ export class GroupEditor {
   updateGroup(id, patch, options = {}) { return this.change((definitions) => {
     const entry = definitions.find((value) => value.groupId === id);
     if (!entry) throw new Error(localizedMessage("Группа не найдена."));
-    if (patch.name !== undefined || patch.groupName !== undefined) entry.groupName = uniqueName(definitions, patch.name ?? patch.groupName, id, "groupName");
+    if (!isPlayersGroup(id) && (patch.name !== undefined || patch.groupName !== undefined)) entry.groupName = uniqueName(definitions, patch.name ?? patch.groupName, id, "groupName");
     for (const key of ["background", "textColor", "description", "symbol", "entryStateId"]) if (patch[key] !== undefined) entry[key] = patch[key];
     return entry;
   }, { ...options, groupId: id }); }
   deleteGroup(id) { return this.change((definitions) => {
+    if (isPlayersGroup(id)) throw new Error(text("Системную группу игроков нельзя удалить.", "The built-in Players group cannot be deleted."));
     if (!definitions.some((entry) => entry.groupId === id)) throw new Error(localizedMessage("Группа не найдена."));
     if (getRuntimes(this.scene).some((state) => state.groupId === id && state.runId && !state.halted)) throw new Error(localizedMessage("Сначала остановите автоматизацию удаляемой группы."));
     definitions.splice(definitions.findIndex((entry) => entry.groupId === id), 1);

@@ -126,10 +126,10 @@ try {
       const f = fixture(), wall = { documentName: "Wall", id: "door", parent: f.scene, door: 1, c: [20, 20, 20, 40] };
       f.scene.walls.set(wall.id, wall); f.child.wall = { document: wall };
       f.child.on("pointerdown", () => f.calls.door++);
-      const picking = pickCommandParameters("open-door", f.options);
+      const picking = pickCommandParameters("go", f.options);
       f.click(f.child);
-      assert.deepEqual(await picking, { doorUuid: "Scene.scene.Wall.door" });
-      f.clean(); assert.equal(f.calls.door, 0, "picking a door opened it natively"); f.nativeDragWorks();
+      assert.deepEqual(await picking, { point: { x: 20, y: 30 } });
+      f.clean(); assert.equal(f.calls.door, 0, "picking a point over a door opened it natively"); f.nativeDragWorks();
     }
 
     for (const cancellation of ["escape", "teardown", "cancel"]) {

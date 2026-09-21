@@ -5,6 +5,7 @@ import { objectReferenceKey } from "./object-reference.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { commandParent, commandBehaviorEnabled, isCommandParentHalted } from "./object-command-state.js";
 import { commandPermitsDisabledBehavior } from "./object-command-model.js";
+import { PLAYERS_GROUP_ID } from "./players-group.js";
 
 // One local cancellation barrier shared by scene effects, triggers and event subscriptions.
 // The persisted halted state remains authoritative after reconnect; the barrier closes
@@ -103,7 +104,7 @@ function presentationRunForId(scene, runId) {
 }
 const groupStamp = (scene, groupId) => {
   if (!groupId) return null;
-  if (!validGroupId(groupId) || scene.getFlag?.(MODULE_ID, "groupDefinitions")?.[groupId]?.schemaVersion !== 1) return undefined;
+  if (!validGroupId(groupId) || groupId !== PLAYERS_GROUP_ID && scene.getFlag?.(MODULE_ID, "groupDefinitions")?.[groupId]?.schemaVersion !== 1) return undefined;
   const run = scene.getFlag?.(MODULE_ID, "groupRuntimes")?.[groupId];
   // A prepared group without its first run has the same initial stamp as
   // emptyRuntime; this is an absent execution, not a saved-format migration.
@@ -128,10 +129,11 @@ export function scriptPresentationIsCurrent(scene, data) {
   if (!scene || !validScriptPresentationScope(data)) return false;
   const key = data.target && objectReferenceKey(data.target);
   const binding = key && scene.getFlag?.(MODULE_ID, "objectBindings")?.bindings?.[key];
-  if (data.target && (!key || !scene[SCENE_OBJECT_COLLECTIONS[data.target.type]]?.get(data.target.id) || !binding || binding.playerCharacter)) return false;
+  if (data.target && (!key || !scene[SCENE_OBJECT_COLLECTIONS[data.target.type]]?.get(data.target.id) || !binding)) return false;
   // Manual initial runs are local to the GM. Scene/group stamps gate remote
   // admission, while the creating client also checks its live execution lease.
   if (data.manual) {
+    if ((binding?.playerCharacter ? PLAYERS_GROUP_ID : binding?.groupId ?? null) !== (data.groupId ?? null)) return false;
     const stamp = groupStamp(scene, data.groupId);
     return stamp !== undefined && data.manualHaltId === haltId(scene) && data.manualGroupStamp === stamp;
   }
@@ -143,10 +145,10 @@ export function scriptPresentationIsCurrent(scene, data) {
   if (commandCurrent && (run?.groupId !== command.groupId || run?.runId !== command.parentRunId)) return false;
   const progress = hasScriptScope(data) && (commandCurrent ? command : run)?.scriptStates?.[data.scriptKey];
   const scriptCurrent = !hasScriptScope(data) || progress && (progress.generation ?? 0) === (data.scriptGeneration ?? 0);
-  // Stop disables the object's ordinary automation at admission. Its own
+  // Behavior-off disables the object's ordinary automation at admission. Its own
   // before/after scripts (and Cancel) retain the executor's narrow exception;
   // group halts, interruptions and generation changes still revoke delivery.
   const permitsDisabled = commandCurrent && commandPermitsDisabledBehavior(command.config?.id);
   return Boolean(run && scriptCurrent && !(commandCurrent ? isCommandParentHalted(scene, run) : isExecutionHalted(scene, run))
-    && (!key || binding.groupId === run.groupId && (permitsDisabled || commandBehaviorEnabled(scene, data.target, run))));
+    && (!key || (binding.playerCharacter ? PLAYERS_GROUP_ID : binding.groupId) === run.groupId && (permitsDisabled || commandBehaviorEnabled(scene, data.target, run))));
 }

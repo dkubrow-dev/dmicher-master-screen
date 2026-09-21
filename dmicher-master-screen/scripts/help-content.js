@@ -3,14 +3,18 @@ import { OBJECT_HELP_PAGES, OBJECT_HELP_SETTINGS } from "./object-help-content.j
 import { INTERACTION_HELP_SETTINGS } from "./interaction-help-content.js";
 import { WORKSPACE_HELP_PAGES, WORKSPACE_HELP_SETTINGS } from "./workspace-help-content.js";
 import { languageCode } from "./localization.js";
+import { SPOTLIGHT_HELP_PAGES } from "./spotlight-help-content.js";
+import { AUTOMATION_HELP_PAGES, AUTOMATION_HELP_SETTINGS } from "./automation-help-content.js";
 const section = (id, ru, en, bodyRu, bodyEn) => ({ id, ru, en, bodyRu, bodyEn });
 const page = (id, ru, en, sections) => ({ id, ru, en, sections });
 export const SCREEN_HELP_PAGES = [
+  ...AUTOMATION_HELP_PAGES,
+  ...SPOTLIGHT_HELP_PAGES,
   ...WORKSPACE_HELP_PAGES,
   ...OBJECT_HELP_PAGES,
   page("start", "Подготовить сцену", "Prepare a scene", [
     section("prepare", "Открыть Ширму", "Open Master screen", "Создайте карту и объекты средствами Foundry. В категории 🎬 выберите «Ширма». Она открывается панелью; повторное нажатие закрывает её. Положение и размеры сохраняются. Вверху панели можно переключить Конструктор и Режиссёр или отделить Ширму в окно браузера.", "Create the map and objects in Foundry. Select Master screen in the 🎬 category to open the panel; select it again to close it. Position and size are remembered. Use the top bar to switch Constructor and Director or detach the screen into a browser window."),
-    section("states", "Создать подготовку", "Create preparation", "Новая сцена не содержит групп. На вкладке «Сцена» создайте группу: в ней сразу будет одно состояние. Добавьте нужные состояния, например «Спокойствие» и «Тревога». Группы независимо управляют разными объектами. Сохранение подготовки ничего не запускает.", "New scenes have no groups. Create a group on Scene; it starts with one state. Add states such as Calm and Alarm. Groups independently control different objects. Saving preparation never starts it.")
+    section("states", "Создать подготовку", "Create preparation", "В новой сцене есть только пустая группа «Игроки». На вкладке «Сцена» создайте группу для остальных объектов: в ней сразу будет одно состояние. Добавьте нужные состояния, например «Спокойствие» и «Тревога». Группы независимо управляют разными объектами. Сохранение подготовки ничего не запускает.", "A new scene has only the empty Players group. Create a group for other objects on Scene; it starts with one state. Add states such as Calm and Alarm. Groups independently control different objects. Saving preparation never starts it.")
   ]),
   page("constructor", "Организовать подготовку", "Organize preparation", [
     section("filter", "Найти нужную строку", "Find a row", "В основной зоне Конструктора и Режиссёра введите часть текста в поле «Фильтр». Регистр букв не важен. В дереве остаются совпавшие строки и их родительские строки для ориентира; соседние строки скрываются. Очистите поле, чтобы вернуть весь список и прежнее сворачивание ветвей. Каждая вкладка запоминает свой фильтр на время работы с Ширмой; подготовка сцены не изменяется.", "In the main area of Constructor or Director, enter part of a row's text in Filter. Letter case does not matter. The tree keeps matching rows and their ancestors for context, hiding unrelated siblings. Clear the field to restore the full list and previous branch folds. Each tab remembers its filter while Master screen is open; scene preparation is unchanged."),
@@ -135,6 +139,7 @@ export const SCREEN_HELP_PAGES = [
 ];
 
 export const SCREEN_HELP_SETTINGS = [
+  ...AUTOMATION_HELP_SETTINGS,
   ...WORKSPACE_HELP_SETTINGS,
   ...INTERACTION_HELP_SETTINGS,
   ...OBJECT_HELP_SETTINGS,
@@ -580,7 +585,7 @@ export function getScreenHelpContent(language = globalThis.game?.i18n?.lang) {
   pages.push(...SCREEN_HELP_SETTINGS.map(value => ({ id: value.id, title: title(value), html: value.fields.map(f => `<section><h3 id="${f[1]}">${f[ru ? 2 : 3]}</h3><p>${f[ru ? 4 : 5]}</p></section>`).join("") })));
   const entry = id => ({ id, pageId: id, title: pages.find(p => p.id === id).title });
   return { pages, footer: ["author", "thanks", "modules"], labels: { contents: ru ? "Содержание" : "Contents", resizeNavigation: ru ? "Изменить ширину меню" : "Resize navigation" }, tree: [
-    { id: "prepare", title: ru ? "Подготовка" : "Preparation", children: ["start", "constructor", "objects", "commands", "catalog-tools", "scripts", "signals", "macros", "npc", "dialogues", "conditions", "workspace", "workspace-presets", "transfer"].map(entry) },
+    { id: "prepare", title: ru ? "Подготовка" : "Preparation", children: ["start", "constructor", "objects", "commands", "catalog-tools", "scripts", "signals", "automation-tools", "spotlight-automation", "macros", "npc", "dialogues", "conditions", "workspace", "workspace-presets", "transfer"].map(entry) },
     { id: "play", title: ru ? "Проведение игры" : "Running the game", children: ["director", "stop", "trade"].map(entry) },
     { id: "settings", title: ru ? "Настройки" : "Settings", children: SCREEN_HELP_SETTINGS.map(p => entry(p.id)) }
   ] };

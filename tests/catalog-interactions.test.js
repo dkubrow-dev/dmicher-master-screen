@@ -321,11 +321,11 @@ test("haltAll blocks ungrouped scene subscribers, explicit restart validates and
     execute: async () => ({ parameters: {}, returns: {}, execute() { calls++; } }) });
   await catalog.attachMacro("Scene:map", "Macro.counter"); await catalog.saveSubscription({ ownerKey: "Scene:map", emitterKey: signal.emitterKey, signalId: signal.id, macroUuid: "Macro.counter" });
   await f.runtime.haltAll(f.scene); assert.equal(f.flags.automationHalted, true);
-  assert.equal((await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated" })).status, "stale"); assert.equal(calls, 0);
+  assert.equal((await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated", parameters:{sceneUuid:"Scene.map",userUuid:"User.gm"} })).status, "stale"); assert.equal(calls, 0);
   const manual = createManualDialogueService({ openWindow: async (view) => view });
   assert.equal((await manual.openManualDialogue({ sceneId: "map", dialogueId: "talk" })).dialogue.name, "Common conversation");
   await f.runtime.enter(f.scene, "calm", { groupId: "main", restart: true }); assert.equal(f.flags.automationHalted, false);
-  assert.equal((await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated" })).status, "done"); assert.equal(calls, 1);
+  assert.equal((await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated", parameters:{sceneUuid:"Scene.map",userUuid:"User.gm"} })).status, "done"); assert.equal(calls, 1);
   await f.runtime.halt(f.scene, { groupId: "main" });
-  await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated" }); assert.equal(calls, 2);
+  await bus.emit(f.scene, { emitterKey: "Scene:map", name: "activated", parameters:{sceneUuid:"Scene.map",userUuid:"User.gm"} }); assert.equal(calls, 2);
 });

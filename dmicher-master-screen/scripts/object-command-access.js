@@ -45,7 +45,7 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
   }
   const target = { type: object.documentName, id: object.id }, binding = getObjectBindings(scene).bindings[objectKey(target)];
   const raw = binding?.commands?.find(entry => entry.id === packet.commandId);
-  if (!raw || binding.playerCharacter || !objectSupportsCommand(object.documentName, packet.commandId)) rejectCommand("disabled", text("Этот объект не принимает такую команду.", "This object does not accept that command."));
+  if (!raw || !objectSupportsCommand(object.documentName, packet.commandId)) rejectCommand("disabled", text("Этот объект не принимает такую команду.", "This object does not accept that command."));
   const config = normalizeObjectCommand(raw), runtime = binding.groupId ? getRuntime(scene, { groupId: binding.groupId }) : commandParent(scene, binding);
   if (!config.permissions[method] || !config.enabled) rejectCommand("issuer", text("У вас нет разрешения на эту команду.", "You do not have permission to give this command."));
   if (!runtime?.runId || isStateEntryPreparing(scene,runtime) || isCommandParentHalted(scene, runtime) || !commandBehaviorEnabled(scene, target, runtime) && !commandPermitsDisabledBehavior(config.id)) {
@@ -58,7 +58,7 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
     if (distance > config.conditions.range) rejectCommand("range", text("Персонаж слишком далеко, чтобы отдать команду.", "Your character is too far away to give this command."));
     rejectCommand("conditions", text("Условия этой команды сейчас не выполнены.", "This command's conditions are not currently met."));
   }
-  if (["come", "away", "go", "follow", "patrol", "open-door", "close-door", "delegate"].includes(config.id) && !scriptObjectCapabilities(object).position) {
+  if (["come", "away", "go", "follow", "patrol", "delegate"].includes(config.id) && !scriptObjectCapabilities(object).position) {
     rejectCommand("movement", text("Этот объект нельзя перемещать по карте.", "This object cannot move on the map."));
   }
   if (["open", "close"].includes(config.id) && (object.documentName !== "Wall" || !object.door)) rejectCommand("door", text("Команда доступна только для двери.", "This command is available only for doors."));
@@ -68,11 +68,11 @@ export function validateCommandAccess(scene, packet, user, { active, selecting =
     if (!delegation?.enabled) rejectCommand("delegation", text("Выбранный персонаж не принимает поручения.", "The selected character does not accept delegated tasks."));
   }
   const issuer = config.parameters.issuer;
-  if ((config.id === "stop" || config.id === "cancel") && !user.isGM && (issuer === "gm" || issuer === "commander" && active?.request.userId !== user.id)) {
+  if (config.id === "cancel" && !user.isGM && (issuer === "gm" || issuer === "commander" && active?.request.userId !== user.id)) {
     rejectCommand("issuer", text("У вас нет разрешения на эту команду.", "You do not have permission to give this command."));
   }
   if (active?.pendingReplacement && !commandStopsBehavior(config.id)) rejectCommand("busy", text("Объект уже ожидает принятую команду. Дождитесь её выполнения.", "This object is already waiting for an accepted command. Wait for it to run."));
-  if (active && !commandStopsBehavior(config.id) && config.id !== "cancel" && !(config.id === "wait" && ["come", "away", "go", "follow", "patrol", "open-door", "close-door", "delegate"].includes(active.config.id))) {
+  if (active && !commandStopsBehavior(config.id) && config.id !== "cancel" && !(config.id === "wait" && ["come", "away", "go", "follow", "patrol", "delegate"].includes(active.config.id))) {
     rejectCommand("busy", text("Объект уже выполняет другую команду. Дождитесь её завершения.", "This object is already carrying out a command. Wait for it to finish."));
   }
   if (!selecting && config.id === "cancel" && !active) rejectCommand("idle", text("У объекта нет команды, которую можно отменить.", "This object has no command to cancel."));

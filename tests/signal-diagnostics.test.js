@@ -111,7 +111,7 @@ test("skipped subscribers show the reason without claiming acceptance or executi
   f.data.objectBindings.bindings["Token:other"] = { playerCharacter: true };
   await f.bus.emit(f.scene, { emitterKey: signal.emitterKey, signalId: signal.id });
   assert.deepEqual(records().map(entry => entry.event), ["emitted", "subscriber.skipped", "completed"]);
-  assert.equal(records()[1].context.reason, "player-character");
+  assert.equal(records()[1].context.reason, "halted");
   assert.equal(records()[1].context.subscriberName, "Other");
 });
 

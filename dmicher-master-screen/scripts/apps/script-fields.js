@@ -3,14 +3,12 @@ import { moveScriptStep } from "../script-editing.js";
 import { escapeHTML as e, formValue, parameterRow, selectOptions } from "./form-fields.js";
 import { normalizeScriptInterruptions } from "../script-interruption-model.js";
 import { completeScriptParameters, renderScriptParameters } from "./script-parameters.js";
-import { scriptActionOptions } from "../script-action-labels.js";
 import { generics } from "../generics.js";
 import { scriptTransitionMacroTemplate } from "../script-transitions.js";
-import { canExecuteScriptKind } from "../premium-provider.js";
+import { canExecuteScriptKind, isPlayerActionLockAvailable } from "../premium-provider.js";
+import { getScriptCatalogEntries } from "./script-catalog-input.js";
 
-const kinds = scriptActionOptions;
-
-export function buildScriptInterruptionFields(interruptions, prefix, { legend = t("При прерывании скрипта", "When the script is interrupted"), modeNames = {}, excludedSources = [] } = {}) {
+export function buildScriptInterruptionFields(interruptions, prefix, { legend = t("При прерывании скрипта", "When the script is interrupted"), modeNames = {}, excludedSources = [], playerCharacter = false } = {}) {
   const settings = normalizeScriptInterruptions(interruptions);
   const modes = [
     { id: "stop", name: t("Прервать", "Stop") },
@@ -19,9 +17,15 @@ export function buildScriptInterruptionFields(interruptions, prefix, { legend = 
     { id: "restart-script", name: modeNames["restart-script"] ?? t("Продолжить с начала скрипта", "Restart the script") }
   ];
   const rows = [
-    ["combat", t("Боем", "Combat")], ["interaction", t("Взаимодействием с игроком", "Player interaction")],
+    ["combat", t("Боем", "Combat")], playerCharacter ? ["playerAction", t("Действием игрока", "Player action")] : ["interaction", t("Взаимодействием с игроком", "Player interaction")],
     ["manual", t("Ручной остановкой", "Manual stop")], ["command", t("Командой", "Command")], ["error", t("Ошибкой", "Error")]
-  ].filter(([source]) => !excludedSources.includes(source)).map(([source, label]) => parameterRow(label, `<select name="${prefix}-interruption-${source}" aria-label="${e(label)}"${source === "error" ? " data-script-error-mode" : ""}>${selectOptions(source === "command" ? [...modes, { id: "ignore", name: t("Игнорировать", "Ignore") }] : modes, source === "error" ? settings.error.mode : settings[source])}</select>`));
+  ].filter(([source]) => !excludedSources.includes(source)).map(([source, label]) => {
+    if (source === "playerAction") {
+      const forbid = settings.playerAction === "forbid", access = isPlayerActionLockAvailable();
+      return parameterRow(label, `<select name="${prefix}-interruption-playerAction" aria-label="${e(label)}"><option value="stop"${forbid ? "" : " selected"}>${t("Прервать", "Stop")}</option><option value="forbid"${forbid ? " selected" : ""}${access ? "" : " disabled"}>${t("Запрещать", "Forbid")}</option></select><span class="dmicher-premium-badge">Premium</span>`);
+    }
+    return parameterRow(label, `<select name="${prefix}-interruption-${source}" aria-label="${e(label)}"${source === "error" ? " data-script-error-mode" : ""}>${selectOptions(source === "command" ? [...modes, { id: "ignore", name: t("Игнорировать", "Ignore") }] : modes, source === "error" ? settings.error.mode : settings[source])}</select>`);
+  });
   const disabled = settings.error.mode === "stop" ? " disabled" : "";
   const retriesLabel = t("Повторов после ошибки", "Retries after an error");
   const delayLabel = t("Таймаут повторений, с", "Retry delay, seconds");
@@ -33,8 +37,10 @@ export function buildScriptInterruptionFields(interruptions, prefix, { legend = 
 export function readScriptInterruptionFields(root, prefix, previous) {
   if (!root.querySelector(`[name="${prefix}-interruption-combat"]`)) return previous;
   const value = name => formValue(root, `${prefix}-interruption-${name}`);
+  const playerAction = root.querySelector(`[name="${prefix}-interruption-playerAction"]`);
   return {
-    combat: value("combat"), interaction: value("interaction"), manual: value("manual"), command: value("command") || previous?.command || "stop",
+    combat: value("combat"), interaction: playerAction ? previous?.interaction ?? "stop" : value("interaction"), playerAction: playerAction ? value("playerAction") : previous?.playerAction ?? "stop",
+    manual: value("manual"), command: value("command") || previous?.command || "stop",
     error: { mode: value("error"), retries: Number(value("retries")), delaySeconds: Number(value("delay")) }
   };
 }
@@ -64,24 +70,24 @@ function transitionFields(step, prefix) {
 }
 
 /** Next-row transitions follow display order; explicit edges retain step IDs. */
-export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false, ...parameterContext } = {}) {
+export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, functionsOwner, owner = functionsOwner ?? document, scriptScope = "object", language, playerCharacter = false, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false, ...parameterContext } = {}) {
+  const functions = getScriptCatalogEntries({ scriptScope, owner, language });
   const blocks = scripts.map((script, index) => {
     const prefix = `script-${index}`;
     const check = (name, label, active) => `<label class="ms-check"><input type="checkbox" name="${prefix}-${name}"${active ? " checked" : ""}>${e(label)}</label>`;
     const combat = script.combat ?? {};
     return `<details class="ms-object-feature ms-script-block" data-script-index="${index}"${open ? " open" : ""}><summary>${e(script.name || t("Скрипт", "Script"))}</summary><div class="ms-object-row">
       <label>${t("Название скрипта", "Script name")}<input name="${prefix}-name" value="${e(script.name)}"></label>${check("enabled", t("Включить", "Enable"), script.enabled !== false)}</div>
-      <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция", "Function")}</th><th>${t("Параметры", "Parameters")}</th><th>${t("Переход", "Next")}</th><th></th></tr></thead><tbody>
-      ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td><select aria-label="${t("Функция", "Function")}" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}">${kinds().map(([kind, name]) => `<option value="${kind}"${step.kind === kind ? " selected" : ""}>${e(name)}</option>`).join("")}</select>
-        <button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>JSON</button></td>
-        <td><div data-script-parameter-fields>${renderScriptParameters(step, { ...parameterContext, index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
-        <td data-script-transition>${transitionFields(step, `${prefix}-step-${stepIndex}`)}</td>
-        <td><button type="button" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></td></tr>`).join("")}
+      <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция и параметры", "Function and parameters")}</th><th>${t("Переход", "Next")}</th></tr></thead><tbody>
+      ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td class="ms-script-main-cell"><span class="ms-script-kind-storage" hidden><input type="hidden" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}" value="${e(step.kind)}"></span><div class="ms-script-kind-row"><span class="ms-script-value ms-script-kind-field"><input type="text" data-script-kind-input aria-label="${t("Функция", "Function")}" value="${e(functions.find(entry => entry.id === step.kind)?.path ?? step.kind)}" autocomplete="off"><button type="button" data-script-kind-button aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Открыть справочник функций", "Open function catalog")}">⌄</button></span>
+        <span class="ms-script-json-action"><button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>JSON</button></span></div>
+        <div data-script-parameter-fields>${renderScriptParameters(step, { ...parameterContext, index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
+        <td data-script-transition><div class="ms-script-transition-shell"><div class="ms-script-transition-fields">${transitionFields(step, `${prefix}-step-${stepIndex}`)}</div><button type="button" class="ms-script-remove" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></div></td></tr>`).join("")}
       </tbody></table></div>
       <p class="ms-note">${t("Запуск начинается с шага 1. «Следующий» выполняет строку ниже; «Любой из» и макрос выбирают по номерам шагов.", "Execution starts at step 1. Next row follows display order; Any of and Macro select step IDs.")}</p>
       <button type="button" data-screen-action="add-script-step" data-index="${index}">+ ${t("Шаг", "Step")}</button>
       ${check("repeat", t("Повторять", "Repeat"), script.repeat)}
-      ${buildScriptInterruptionFields(script.interruptions, prefix)}
+      ${buildScriptInterruptionFields(script.interruptions, prefix, { playerCharacter })}
       ${combatSupported ? `<fieldset class="ms-script-combat"><legend>${t("Использование в бою", "Combat use")}</legend>${check("combat-enabled", t("Использовать", "Use in combat"), combat.enabled)}${check("combat-confirm", t("Подтверждать действие", "Confirm action"), combat.confirm !== false)}<div>${check("combat-warning", t("Предупреждение", "Warning"), combat.notifyWarning !== false)}${check("combat-chat", t("В чате мастеру", "In GM chat"), combat.notifyChat)}${check("combat-end-turn", t("Завершать ход", "End turn"), combat.endTurn)}</div><label>${t("Длительность хода, с", "Turn duration, seconds")}<input type="number" min="0.01" step="any" name="${prefix}-combat-seconds" value="${e(combat.turnSeconds ?? 6)}"></label></fieldset>` : ""}
       <div class="ms-script-block-actions"><button type="button" data-screen-action="save">${t("Сохранить", "Save")}</button>${generics.components.renderJSONControls({ id: `script-block-${index}`, importLabel: t("Импорт JSON", "Import JSON"), exportLabel: t("Экспорт JSON", "Export JSON") })}</div></details>`;
   }).join("");

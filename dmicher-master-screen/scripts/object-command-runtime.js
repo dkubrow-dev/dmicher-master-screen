@@ -1,4 +1,5 @@
 import { MODULE_ID } from "./model.js";
+import { PLAYERS_GROUP_ID } from "./players-group.js";
 import { getRuntime, getRuntimeForRun, getRuntimes, withSceneLock, saveRuntime, isAuthority } from "./store.js";
 import { getObjectBindings, getSceneObject, objectKey } from "./scene-objects.js";
 import { writeSceneFlags, replacementFlagData } from "./scene-flags.js";
@@ -22,6 +23,7 @@ const id = () => globalThis.foundry?.utils?.randomID?.() ?? crypto.randomUUID();
 const terminal = progress => !progress || ["done", "stopped", "failed", "uncertain"].includes(progress.status);
 const rawRuns = scene => scene?.getFlag?.(MODULE_ID, "objectCommandRuns") ?? {};
 const parentOf = commandParent;
+const bindingGroup = binding => binding?.playerCharacter === true ? PLAYERS_GROUP_ID : binding?.groupId;
 const phaseAfter = phase => ({ waiting: "before", before: "core", core: "after", after: "complete" })[phase];
 
 /** One command per object, sharing the group clock and its cancellable script
@@ -46,7 +48,7 @@ export class ObjectCommandRuntime {
     const run = this.runs(scene).find(run => run.runId === runId), parent = run && parentOf(scene, run);
     if (!run || run.interruption || !parent || parent.runId !== run.parentRunId || isCommandParentHalted(scene, parent)) return false;
     const binding = scene.getFlag(MODULE_ID, "objectBindings")?.bindings?.[objectKey(run.target)];
-    return Boolean(binding && !binding.playerCharacter && binding.groupId === run.groupId && getSceneObject(scene, run.target)
+    return Boolean(binding && bindingGroup(binding) === run.groupId && getSceneObject(scene, run.target)
       && (commandPermitsDisabledBehavior(run.config.id) || commandBehaviorEnabled(scene, run.target, parent)));
   }
   current(scene, run, target, { ignoreInteractionPause = false, scriptKey, excludeDialogueSessions = [] } = {}) {
@@ -106,6 +108,12 @@ export class ObjectCommandRuntime {
   }
   inputs(scene, packet, access) {
     const raw = packet.parameters ?? {}, { actor, object, config } = access;
+    const doorInput = door => {
+      const observer = access.commander ?? actor;
+      if (!commandLevelsOverlap(observer, door) || !commandLevelsOverlap(object, door)) rejectCommand("door-level", text("Дверь находится на другом уровне.", "The door is on a different level."));
+      if (!access.user.isGM && door.door === 2) rejectCommand("door", text("Выберите доступную дверь на карте.", "Choose an available door on the map."));
+      if (access.method !== "gm" && !commandDoorVisible(scene, observer, door)) rejectCommand("visibility", text("Персонаж, отдающий команду, должен видеть выбранную дверь.", "The character issuing the command must be able to see the chosen door."));
+    };
     const point = input => {
       if (access.method !== "gm") return validateCommandPoint(scene, actor, object, input);
       const result = commandPoint(scene, input);
@@ -116,6 +124,7 @@ export class ObjectCommandRuntime {
     if (config.id === "delegate") {
       const recipient = commandDocument(scene, raw.targetUuid);
       if (!recipient || recipient === object || raw.commandId === "delegate") rejectCommand("delegation", text("Выберите другой объект и команду для поручения.", "Choose another object and a command to delegate."));
+      if (recipient.documentName === "Wall" && recipient.door) doorInput(recipient);
       validateCommandAccess(scene, { ...packet, method: "delegated", delegateTokenUuid: packet.targetUuid,
         targetUuid: raw.targetUuid, commandId: raw.commandId, parameters: raw.parameters ?? {} }, access.user,
       { active: this.activeForObject(scene, { type: recipient.documentName, id: recipient.id }), ignoreRange: true });
@@ -128,15 +137,7 @@ export class ObjectCommandRuntime {
       if (Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) < 1) rejectCommand("points", text("Точки патруля должны различаться.", "Patrol points must be different."));
       return { points };
     }
-    if (["open-door", "close-door"].includes(config.id)) {
-      const door = commandDocument(scene, raw.doorUuid);
-      if (door?.documentName !== "Wall" || !door.door) rejectCommand("door", text("Выберите дверь на карте.", "Choose a door on the map."));
-      if (!commandLevelsOverlap(actor, door) || !commandLevelsOverlap(object, door)) rejectCommand("door-level", text("Дверь находится на другом уровне.", "The door is on a different level."));
-      if (!access.user.isGM && door.door === 2) rejectCommand("door", text("Выберите доступную дверь на карте.", "Choose an available door on the map."));
-      if (access.method !== "gm" && !commandDoorVisible(scene, actor, door)) rejectCommand("visibility", text("Персонаж, отдающий команду, должен видеть выбранную дверь.", "The character issuing the command must be able to see the chosen door."));
-      if (config.id === "open-door" && door.ds === (globalThis.CONST?.WALL_DOOR_STATES?.LOCKED ?? 2)) rejectCommand("locked", text("Дверь заперта.", "The door is locked."));
-      return { doorUuid: raw.doorUuid };
-    }
+    if (["open", "close"].includes(config.id)) doorInput(object);
     return {};
   }
   async accept(scene, packet, user, { trusted = false, isCurrent = () => true } = {}) {
@@ -264,7 +265,7 @@ export class ObjectCommandRuntime {
       let run = clone(snapshot);
       const object = getSceneObject(scene, run.target), parent = parentOf(scene, run);
       const binding = scene.getFlag(MODULE_ID, "objectBindings")?.bindings?.[objectKey(run.target)];
-      if (!object || !parent || binding?.groupId !== run.groupId || binding.playerCharacter
+      if (!object || !parent || bindingGroup(binding) !== run.groupId
         || parent.stateId !== run.stateId || parent.runId !== run.parentRunId && run.interruption?.source !== "manual") {
         await this.finish(scene, run, { cancelled: true, reason: "state-changed" }); continue;
       }
@@ -359,7 +360,8 @@ export class ObjectCommandRuntime {
       void Promise.resolve().then(async () => {
         if (!this.current(scene, run, run.target)) return;
         const user = game.users?.get(run.request.userId);
-        await this.accept(scene, { ...run.request, requestId: `${run.runId}:delegated`, method: "delegated",
+        const accept = this.acceptDelegated ? (...args)=>this.acceptDelegated(...args) : (...args)=>this.accept(...args);
+        await accept(scene, { ...run.request, requestId: `${run.runId}:delegated`, method: "delegated",
           delegateTokenUuid: run.request.targetUuid, targetUuid: parameters.targetUuid, commandId: parameters.commandId, parameters: parameters.parameters }, user,
         { isCurrent: () => this.current(scene, run, run.target) });
         pending.done = true;

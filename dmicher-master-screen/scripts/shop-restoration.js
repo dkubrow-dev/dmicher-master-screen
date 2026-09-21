@@ -91,7 +91,7 @@ export class ShopRestoration {
     };
     const byShop=new Map(),assets=new Set(list(catalog.shops).map(shop=>shop.id));
     for (const binding of Object.values(bindings.bindings ?? {})) {
-      if (binding.playerCharacter || !binding.groupId || groupId && binding.groupId !== groupId || !getSceneObject(scene,binding)) continue;
+      if (!binding.groupId || groupId && binding.groupId !== groupId || !getSceneObject(scene,binding)) continue;
       if (!commandBehaviorEnabled(scene,binding,flag(scene,"groupRuntimes")?.[binding.groupId])) continue;
       const state=snapshot(scene,binding.groupId);
       if (!state.exists || !state.stateId) continue;

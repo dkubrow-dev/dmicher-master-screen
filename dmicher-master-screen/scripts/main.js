@@ -18,8 +18,10 @@ import { createObjectCommandBadges } from "./object-command-badges.js";
 import { SCENE_OBJECT_TYPES } from "./scene-object-types.js";
 import { registerInteractionSettings } from "./interaction-settings.js";
 import { installCommandNoteVisibility } from "./object-command-visibility-state.js";
+import { createCommandLinks } from "./apps/command-links.js";
+import { SpotlightAutomationBridge } from "./spotlight-automation.js";
 
-let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals, removeDialogueVolume, removeObjectEvents, removeNoteVisibility;
+let controller, removeControls, unregister, removeSettingHelp, removeSceneSignals, removeDialogueVolume, removeObjectEvents, removeNoteVisibility, spotlightAutomation;
 const hooks = [];
 let detachCanvas;
 const on = (name, callback) => hooks.push([name, Hooks.on(name, callback)]);
@@ -28,15 +30,18 @@ function attachCanvas() {
   detachCanvas?.();
   controller.cancelPick?.();
   if (!globalThis.canvas?.stage) return;
-  const handleTap = (event) => {
+  const handleTap = (event, acting) => {
     if (controller.cancelPick || event.button > 0 || event.shiftKey || event.ctrlKey || event.altKey) return;
     const constructorMode = controller.mode === "constructor" && game.user.isGM;
-    if (game.user.isGM && !constructorMode && controller.mode !== "director") return;
     const target = findCanvasObject(canvas, event, { constructorMode });
-    if (target) void controller.openObjectMenu(target, canvasPointerPosition(canvas, event)).catch(notifyError);
+    if (target) void controller.openObjectMenu(target, canvasPointerPosition(canvas, event), acting).catch(notifyError);
     else controller.objectMenu.close();
   };
-  detachCanvas = listenCanvasObjectClicks(canvas, handleTap);
+  detachCanvas = listenCanvasObjectClicks(canvas, handleTap, { onPress:event => {
+    if (controller.cancelPick) return;
+    const target = findCanvasObject(canvas, event, { constructorMode:controller.mode === "constructor" && game.user.isGM });
+    return { actorCaptured:true, actorTokenId:controller.getActingTokenId(undefined, target?.type === "Token" ? target.id : undefined) };
+  } });
   controller.changed(canvas.scene);
   controller.runtime.commandExecutor.activate(canvas.scene);
   controller.commandLights.reindex(canvas.scene);
@@ -53,12 +58,25 @@ Hooks.once("init", () => {
   controller = new ScreenController();
   controller.commandLights = new ObjectCommandLights();
   controller.commandBadges = createObjectCommandBadges();
+  controller.commandLinks = createCommandLinks();
   controller.runtime.commandExecutor = new ObjectCommandRuntime({ runtime: controller.runtime,
     signals: controller.signals, lights: controller.commandLights });
   controller.commandService = new ObjectCommandService({ executor: controller.runtime.commandExecutor, signals: controller.signals });
+  spotlightAutomation = new SpotlightAutomationBridge({ effects: controller.runtime.effects, onError: notifyError,
+    onStop: () => controller.commandService.consent.cancelAll(),
+    onSceneEvent: async (event, current, causality) => {
+      const scene = globalThis.canvas?.scene;
+      if (!scene || !current()) return;
+      await controller.signals.emit(scene, { id: event.id, emitterKey: `Spotlight:${event.owner.type}:${event.owner.id}`,
+        name: event.name, parameters: { event: JSON.stringify(event.parameters) },
+        context: { current: () => current() && globalThis.canvas?.scene === scene, depth: causality.depth,
+          _chain: { count: causality.visited.length }, _worldCause: causality } });
+    } });
+  spotlightAutomation.registerSettings();
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));
   removeControls = installControls(controller);
   const api = Object.freeze({ apiVersion: 1, version: VERSION,
+    automation: spotlightAutomation.api,
     openPanel: () => controller.openScreen("panel"), openWindow: () => controller.openScreen("window"),
     openConstructor: () => controller.setMode("constructor"), openDirector: () => controller.setMode("director"),
     openShops: () => controller.openShops(),
@@ -77,12 +95,14 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", () => {
+  spotlightAutomation.install();
   void syncDialogueRollMode().catch(notifyError);
   on("clientSettingChanged", key => { if (key === "core.rollMode") void syncDialogueRollMode().catch(notifyError); });
   removeDialogueVolume = new DialogueVolumeController().install();
   controller.runtime.start();
   controller.shopRestoration.install();
   controller.interactiveHighlights.install();
+  controller.commandLinks.install();
   removeObjectEvents = controller.objectEvents.install();
   removeNoteVisibility = installCommandNoteVisibility();
   removeSceneSignals = installSceneSignals(controller.signals, { onError: notifyError });
@@ -116,6 +136,7 @@ Hooks.once("ready", () => {
     void controller.interactions.processMessage(message,userId).catch(notifyError);
   });
   on(generics.chat.getChatMessageRenderHook(), (message, html) => {
+    controller.commandService.consent.render(message, html);
     controller.shop.renderChatMessage?.(message, html);
     controller.dialogueChat.render(message, html);
   });
@@ -124,11 +145,13 @@ Hooks.once("ready", () => {
 });
 
 globalThis.addEventListener?.("pagehide", () => {
+  spotlightAutomation?.dispose();
   controller?.editor?.layout?.dispose();
   controller?.objectMenu.close(); controller?.constructorIndicator.dispose();
   controller?.dialogueMarkers.clear();
   controller?.commandBadges?.clear(); controller?.commandLights?.dispose(); controller?.commandService?.dispose?.();
   controller?.interactiveHighlights.dispose(); controller?.interactions.dispose(); removeObjectEvents?.();
+  controller?.commandLinks?.dispose();
   removeNoteVisibility?.();
   clearCanvasObjectFocus(globalThis.canvas);
   controller?.runtime.dispose(); controller?.signals.dispose(); controller?.dialogues.dispose?.(); controller?.cancelPick?.();

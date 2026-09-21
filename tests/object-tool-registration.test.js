@@ -11,7 +11,7 @@ test("registration before assigning a group grants no player action and does not
   assert.equal(binding.groupId, null);
   assert.deepEqual(registeredToolIds(binding, "dialogue"), [dialogue.id]);
   assert.deepEqual(resolveObjectTools(f.scene, descriptor, { groupId: "main", stateId: "calm" }, "dialogue"), []);
-  assert.equal(f.editor.list().length, 0);
+  assert.deepEqual(f.editor.list().map(group => group.groupId), ["players"]);
 });
 
 test("registered tools are shared by scripts and separately gated player assignments", async () => {

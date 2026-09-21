@@ -1,11 +1,53 @@
 import { MODULE_ID } from "./model.js";
 import { bindingScriptSteps } from "./object-binding-model.js";
+import { text } from "./localization.js";
 
 /** Validate a complete draft without writing partially imported flags to the world. */
 export function stageScene(scene, flags) {
   const staged = Object.create(scene);
   staged.getFlag = (scope, key) => scope === MODULE_ID && Object.hasOwn(flags, key) ? flags[key] : scene.getFlag(scope, key);
   return staged;
+}
+
+/** Inline handlers carry typed references alongside opaque signal input JSON. */
+export function validateInlineSubscriptionReferences(catalog, definitions) {
+  for (const entry of catalog.subscriptions ?? []) if (entry.script) {
+    if (!definitions.some(group => `Group:${group.groupId}` === entry.ownerKey)) throw new Error(text("Группа скрипта подписки не найдена.", "The subscription script's group is missing."));
+    const input = catalog.signals.find(signal => signal.id === entry.signalId && signal.emitterKey === entry.emitterKey);
+    if (!input) throw new Error(text("Сигнал скрипта подписки не найден.", "The subscription script's signal is missing."));
+    for (const step of entry.script.steps) {
+      const p = step.parameters;
+      if (step.kind === "macro" && (!catalog.macros.some(macro => macro.ownerKey === entry.ownerKey && macro.uuid === p.macroUuid)
+        || p.signalId && p.signalId !== entry.signalId)) throw new Error(text("Макрос или его интерфейс не принадлежит скрипту подписки.", "The macro or its interface does not belong to the subscription script."));
+      if (step.kind === "signal" && !catalog.signals.some(signal => signal.id === p.signalId && signal.emitterKey === entry.ownerKey)) throw new Error(text("Скрипт группы ссылается на чужой или отсутствующий сигнал.", "The group script refers to another owner's or a missing signal."));
+      if (step.kind === "state" && p.transitions.some(pair => !definitions.some(group => group.groupId === pair.groupId && group.states.some(state => state.id === pair.stateId)))) throw new Error(text("Переход скрипта подписки ссылается на отсутствующую группу или состояние.", "The subscription script transition refers to a missing group or state."));
+    }
+  }
+}
+
+/** Full-scene imports recreate documents but preserve preparation values which
+ * merely resemble UUIDs, including signal payloads and script source text. */
+export function remapCatalogReferences(catalog, mapping, remapSignalData = value => structuredClone(value)) {
+  const next = structuredClone(catalog);
+  const reference = value => {
+    if (mapping.has(value)) return mapping.get(value);
+    for (const [from, to] of mapping) if (value?.startsWith(`builtin:${from}:`)) return `builtin:${to}:${value.slice(`builtin:${from}:`.length)}`;
+    return value;
+  };
+  next.signals = (next.signals ?? []).map(signal => {
+    const remapped = remapSignalData(signal, mapping);
+    remapped.id = reference(signal.id); remapped.emitterKey = reference(signal.emitterKey); return remapped;
+  });
+  for (const macro of next.macros ?? []) { macro.ownerKey = reference(macro.ownerKey); macro.uuid = reference(macro.uuid); }
+  for (const entry of next.subscriptions ?? []) {
+    entry.ownerKey = reference(entry.ownerKey); entry.emitterKey = reference(entry.emitterKey); entry.signalId = reference(entry.signalId);
+    if (entry.macroUuid) entry.macroUuid = reference(entry.macroUuid);
+    for (const step of entry.script?.steps ?? []) {
+      if (["signal", "macro"].includes(step.kind) && step.parameters.signalId) step.parameters.signalId = reference(step.parameters.signalId);
+      if (step.kind === "macro") step.parameters.macroUuid = reference(step.parameters.macroUuid);
+    }
+  }
+  return next;
 }
 
 const remapSignalReference = (reference, mapping) => {
@@ -26,11 +68,13 @@ export function remapDialogueSignals(dialogue, mapping) {
   return next;
 }
 
-export function remapBindingSignals(binding, mapping) {
+export function remapBindingSignals(binding, mapping, subscriptionMapping = new Map()) {
   const next = structuredClone(binding);
   for (const step of bindingScriptSteps(next)) {
-    if (step.kind === "signal") remapSignalReference(step.parameters, mapping);
+    if (["signal", "macro"].includes(step.kind)) remapSignalReference(step.parameters, mapping);
   }
+  for (const event of next.eventScripts ?? []) event.subscriptionId = subscriptionMapping.get(event.subscriptionId) ?? event.subscriptionId;
+  if (next.signals?.enabledIds) next.signals.enabledIds = next.signals.enabledIds.map(id => mapping.get(id) ?? id);
   return next;
 }
 

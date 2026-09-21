@@ -35,7 +35,7 @@ test("scene readers never adopt singular definitions, runtime or separate tag fl
   const scene = world()();
   scene.flags[MODULE_ID] = { definition: defaultDefinition(), runtime: { ...emptyRuntime(), runId: "old" }, objectTags: { Token: { npc: ["old"] } } };
   const before = copy(scene.flags);
-  assert.deepEqual(getDefinitions(scene), []); assert.equal(getRuntime(scene).runId, ""); assert.deepEqual(getObjectTags(scene), {});
+  assert.deepEqual(getDefinitions(scene).map(group => group.groupId), ["players"]); assert.equal(getRuntime(scene).runId, ""); assert.deepEqual(getObjectTags(scene), {});
   assert.deepEqual(scene.flags, before); assert.equal(scene.writes.length, 0);
 });
 

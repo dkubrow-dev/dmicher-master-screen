@@ -112,11 +112,32 @@ test("a validator cannot change accepted configuration without a fresh admission
 });
 
 test("an unselected secret door or a door on another level cannot be forged by UUID", async () => {
-  const f = await commandFixture({ commands: ["open-door"] });
+  const f = await commandFixture({ commands: ["delegate"] });
   const door = { id: "door", uuid: "Scene.scene.Wall.door", documentName: "Wall", parent: f.scene, door: 2, ds: 0, c: [0, 0, 100, 0] };
   f.scene.walls.set(door.id, door);
-  await assert.rejects(f.accept("open-door", { doorUuid: door.uuid }), /available door/);
+  f.flags.objectBindings.bindings["Wall:door"] = { type: "Wall", id: "door", commands: [configured("open")] };
+  await assert.rejects(f.accept("delegate", { targetUuid: door.uuid, commandId: "open" }), /available door/);
   door.door = 1; door.levels = new Set(["upstairs"]); f.pc.level = "downstairs";
-  await assert.rejects(f.accept("open-door", { doorUuid: door.uuid }), /different level/);
+  await assert.rejects(f.accept("delegate", { targetUuid: door.uuid, commandId: "open" }), /different level/);
   assert.equal(f.active(), null);
+});
+
+test("playerCharacter commands use Players even when stored groupId names another group", async () => {
+  const f = await commandFixture({ commands: ["wait"] });
+  try {
+    f.binding.playerCharacter = true;
+    await f.runtime.enter(f.scene, "default", { groupId: "players" });
+    await f.accept("wait");
+    assert.equal(f.active().groupId, "players");
+    assert.equal(f.binding.groupId, "main", "reading effective group must not mutate preparation");
+    assert.equal(f.executor.owns(f.scene, f.active().runId), true);
+    await complete(f); assert.deepEqual(f.errors, []);
+  } finally { f.runtime.dispose(); }
+});
+
+test("runtime disposal releases group invocation runner", async () => {
+  const f = await commandFixture(); let disposed = 0;
+  const release = f.runtime.invocations.groups.dispose.bind(f.runtime.invocations.groups);
+  f.runtime.invocations.groups.dispose = () => { disposed++; release(); };
+  f.runtime.dispose(); assert.equal(disposed, 1);
 });

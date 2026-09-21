@@ -4,6 +4,7 @@ import { readScriptFields, buildScriptFields, bindScriptInterruptions } from "..
 import { appendScriptStep, removeScriptStep, moveScriptStep } from "../dmicher-master-screen/scripts/script-editing.js";
 import { normalizeScript, scriptStepTemplate, SCRIPT_STEP_KINDS } from "../dmicher-master-screen/scripts/script-model.js";
 import { completeScriptParameters, renderScriptParameters, setScriptParameter } from "../dmicher-master-screen/scripts/apps/script-parameters.js";
+import { registerScriptFunctions } from "../dmicher-master-screen/scripts/script-functions/index.js";
 
 test("delete and append cannot resurrect an incoming edge to a removed step", () => {
   const script = { stateId: "calm", repeat: false, steps: [] };
@@ -115,7 +116,7 @@ test("saving script interruption options includes disabled limits and rejects in
     return Object.hasOwn(fields, name) ? { value: fields[name], checked: fields[name] === true } : null;
   } };
   const saved = normalizeScript(readScriptFields(root, [script])[0]);
-  assert.deepEqual(saved.interruptions, { combat: "restart-step", interaction: "next-step", manual: "restart-script", command: "stop", error: { mode: "stop", retries: 10, delaySeconds: 0.1 } });
+  assert.deepEqual(saved.interruptions, { combat: "restart-step", interaction: "next-step", playerAction: "stop", manual: "restart-script", command: "stop", error: { mode: "stop", retries: 10, delaySeconds: 0.1 } });
   fields["script-0-interruption-retries"] = "1.5";
   assert.throws(() => normalizeScript(readScriptFields(root, [script])[0]));
 });
@@ -165,6 +166,72 @@ test("all built-in action kinds expose compact tables and a collapsed synchroniz
   assert.ok(html.includes(param(["volume"])));
   assert.ok(html.includes(param(["visible"])));
   assert.ok(html.includes(param(["before"])));
+});
+
+test("script rows use service, function-with-parameters and transition columns", () => {
+  globalThis.game = { i18n: { lang: "en" }, modules: new Map() };
+  const step = { id: 1, ...scriptStepTemplate("wait") };
+  const html = buildScriptFields([{ name: "A", enabled: true, steps: [step] }], { states: [] }, "Token", {}, { scriptScope: "object", owner: token });
+  const header = html.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/)?.[1] ?? "";
+  assert.equal((header.match(/<th\b/g) ?? []).length, 3);
+  assert.match(html, /<input type="hidden"[^>]*data-script-kind[^>]*value="wait"/);
+  assert.match(html, /class="ms-script-kind-storage" hidden><input type="hidden"/);
+  assert.match(html, /<td class="ms-script-main-cell">[\s\S]*data-script-kind-input[\s\S]*data-script-json[\s\S]*data-script-parameter-fields/);
+  assert.match(html, /<td data-script-transition>[\s\S]*data-screen-action="remove-script-step"/);
+  assert.match(html, /class="ms-script-kind-row"/);
+  assert.match(html, /class="ms-script-json-action"/);
+  assert.match(html, /data-script-kind-input[^>]*value="system\.general\.Wait"/);
+  assert.match(html, /data-script-kind-button/);
+  assert.doesNotMatch(html, /<select[^>]*data-script-kind/);
+});
+
+test("automation has explicit fields, pause has no parameters and provider templates use generic fields", () => {
+  const automation = renderScriptParameters({ kind: "automation", parameters: { objectUuid: "Token.target", enabled: false } });
+  assert.ok(automation.includes(param(["objectUuid"])));
+  assert.ok(automation.includes(param(["enabled"])));
+  const pause = renderScriptParameters({ kind: "pause", parameters: {} });
+  assert.doesNotMatch(pause, /data-script-param=/);
+
+  const unregister = registerScriptFunctions([{
+    id: "provider-example", label: { ru: "Пример", en: "Example" }, category: { ru: "внешние", en: "external" },
+    description: { ru: "Поля провайдера", en: "Provider fields" }, scopes: ["object"], premium: false,
+    template: { title: "Keep", count: 2, enabled: true, nested: { flag: false }, values: [1, 2] }, normalize: value => value
+  }]);
+  try {
+    const html = renderScriptParameters({ kind: "provider-example", parameters: { title: "Keep", count: 2, enabled: true, nested: { flag: false }, values: [1, 2] } });
+    for (const path of [["title"], ["count"], ["enabled"], ["nested", "flag"], ["values"]]) assert.ok(html.includes(param(path)), JSON.stringify(path));
+  } finally { unregister(); }
+});
+
+test("provider field metadata localizes labels and keeps stale enum values visible", () => {
+  globalThis.game = { i18n: { lang: "en" } }; let received;
+  const unregister = registerScriptFunctions([{
+    id: "provider-metadata", label: { ru: "Метаданные", en: "Metadata" }, category: { ru: "внешние", en: "external" },
+    description: { ru: "Поля", en: "Fields" }, scopes: ["world"], premium: false,
+    template: { urgency: "legacy", userId: "User.old", minutes: 5 }, normalize: value => value,
+    fields: context => { received = context.ownerKey; return {
+      urgency: { label: { ru: "Срочность", en: "Urgency" }, options: [{ value: "common", label: { ru: "Обычно", en: "Common" } }] },
+      userId: { label: { ru: "Пользователь", en: "User" }, options: [] }, minutes: { label: { ru: "Минуты", en: "Minutes" } }
+    }; }
+  }]);
+  try {
+    const html = renderScriptParameters({ kind: "provider-metadata", parameters: { urgency: "legacy", userId: "User.old", minutes: 5 } }, { ownerKey: "Scene:test" });
+    assert.equal(received, "Scene:test");
+    for (const label of ["Urgency", "User", "Minutes"]) assert.ok(html.includes(label));
+    assert.match(html, /value="legacy" selected disabled/); assert.match(html, /value="User.old" selected disabled/);
+    assert.match(html, /value="common">Common/);
+  } finally { unregister(); }
+});
+
+test("player character scripts replace interaction with a Premium player-action policy", () => {
+  globalThis.game = { i18n: { lang: "en" }, modules: new Map() };
+  const script = normalizeScript({ steps: [], interruptions: { playerAction: "forbid" } });
+  const html = buildScriptFields([script], { states: [] }, "Token", {}, { playerCharacter: true });
+  assert.ok(html.includes("Player action"));
+  assert.ok(html.includes('name="script-0-interruption-playerAction"'));
+  assert.ok(html.includes('value="forbid" selected disabled'));
+  assert.ok(html.includes('class="dmicher-premium-badge">Premium</span>'));
+  assert.ok(!html.includes('name="script-0-interruption-interaction"'));
 });
 
 test("disabling chat hides dependent rows without discarding their JSON values", () => {

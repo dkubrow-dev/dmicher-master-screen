@@ -240,7 +240,7 @@ test("native map notes bring their Journal and retain Page IDs under the new Jou
 test("whole scene import remaps native emitter IDs, built-in subscriptions and custom signal UUID values", async () => {
   const f = fixture(), source = f.sceneData.flags[MODULE_ID].signalCatalog;
   const builtin = getSignalCatalog(f.scene).signals.find((signal) => signal.emitterKey === "Scene:oldScene" && signal.name === "activated");
-  source.signals = [{ ...builtin, parameters: [{ name: "optional", type: "string", nullable: true, default: null }] },
+  source.signals = [{ ...builtin, parameters: [...builtin.parameters, { name: "optional", type: "string", nullable: true, default: null }] },
     { id: "custom", emitterKey: "Scene:oldScene", name: "Custom!", parameters: [{ name: "source", type: "string", default: "Scene.oldScene" }], returns: [] }];
   source.subscriptions = [{ id: "sub", ownerKey: "Token:oldToken", emitterKey: "Scene:oldScene", signalId: builtin.id, macroUuid: f.macro.uuid }];
   const bundle = await exportBundle(f.scene), result = await importBundle(bundle), installed = f.calls.find((call) => call.type === "Scene").data.flags[MODULE_ID].signalCatalog;

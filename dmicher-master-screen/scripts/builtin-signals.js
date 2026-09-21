@@ -2,6 +2,7 @@ import { MODULE_ID } from "./model.js";
 import { asArray, getDefinitions } from "./store.js";
 import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { text } from "./localization.js";
+import { PLAYERS_GROUP_ID } from "./players-group.js";
 
 export const SCENE_COLLECTIONS = SCENE_OBJECT_COLLECTIONS;
 export const sceneUuid = (scene) => scene.uuid ?? `Scene.${scene.id}`;
@@ -51,7 +52,7 @@ const objectCommandSpecs = [
 ];
 const specs = {
   Scene: [
-    ["activated", "Активация", "Activation", "Сцена активирована штатными средствами Foundry.", "The scene was activated in Foundry.", [], []],
+    ["activated", "Активация", "Activation", "Сцена активирована штатными средствами Foundry.", "The scene was activated in Foundry.", sceneUser(), []],
     ["userEntered", "Вход пользователя", "User entered", "Пользователь открыл эту сцену.", "A user started viewing this scene.", sceneUser(), []],
     ["userLeft", "Выход пользователя", "User left", "Пользователь покинул эту сцену.", "A user left this scene.", sceneUser(), []],
     ["pauseChanged", "Приостановка игры", "Game pause changed", "Foundry поставил игру на паузу или снял её.", "Foundry paused or resumed the game.", [...textFields("sceneUuid"), field("paused", "boolean")], []]
@@ -90,14 +91,23 @@ export function listSignalEmitters(scene) {
   for (const group of getDefinitions(scene)) emitters.push({ key: `Group:${group.groupId}`, type: "Group", id: group.groupId, name: group.groupName, groupId: group.groupId, uuid: virtualUuid(scene, "Group", group.groupId), builtin: true });
   for (const [type, collection] of Object.entries(SCENE_COLLECTIONS)) for (const document of asArray(scene[collection])) {
     const key = `${type}:${document.id}`;
-    emitters.push({ key, type, id: document.id, name: document.name ?? type, groupId: raw[key]?.groupId ?? null, uuid: document.uuid ?? `${sceneUuid(scene)}.${type}.${document.id}`, builtin: false,
+    emitters.push({ key, type, id: document.id, name: raw[key]?.displayName || document.name || type, groupId: raw[key]?.playerCharacter ? PLAYERS_GROUP_ID : raw[key]?.groupId ?? null, uuid: document.uuid ?? `${sceneUuid(scene)}.${type}.${document.id}`, builtin: false,
       ...(type === "Wall" ? { door: Number(document.door) > 0 } : {}) });
   }
   const assets = scene.getFlag?.(MODULE_ID, "interactionCatalog") ?? {};
   for (const [type, collection] of [["Shop", "shops"], ["Dialogue", "dialogues"]]) for (const asset of assets[collection] ?? []) emitters.push({ key: `${type}:${asset.id}`, type, id: asset.id, name: asset.name, groupId: null, uuid: virtualUuid(scene, type, asset.id), builtin: true });
+  const spotlight = globalThis.game?.modules?.get?.("dmicher-spotlight-tools");
+  if (spotlight?.active && spotlight.api?.automation?.apiVersion === 1) {
+    for (const source of spotlight.api.automation.sources()) emitters.push({key:`Spotlight:${source.type}:${source.id}`,type:"Spotlight",id:`${source.type}:${source.id}`,
+      name:typeof source.label === "object" ? text(source.label.ru,source.label.en) : source.label ?? source.id,
+      groupId:null,uuid:`World.Spotlight.${source.type}.${source.id}`,events:source.events,builtin:true});
+  }
   return emitters;
 }
 export function builtinSignals(emitter, { includeUnavailable = false } = {}) {
+  if (emitter.type === "Spotlight") return (emitter.events ?? []).map(name => ({id:`builtin:${emitter.key}:${name}`,emitterKey:emitter.key,name,
+    label:description(name,name),description:description("Событие Спотлайта на уровне мира.","A world-level Spotlight event."),builtin:true,
+    parameters:[{name:"event",type:"string",nullable:false,builtin:true,description:description("Параметры события (JSON)","Event parameters (JSON)")}],returns:[]}));
   const native = Object.hasOwn(SCENE_COLLECTIONS, emitter.type);
   const declarations = specs[emitter.type] ?? (native ? [...objectCommandSpecs, ...(nativeObjectSpecs[emitter.type] ?? [])] : []);
   const available = name => emitter.type !== "Wall" || !name.startsWith("door") || emitter.door;

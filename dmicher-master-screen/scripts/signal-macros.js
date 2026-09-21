@@ -16,7 +16,9 @@ export function signalMacroSnippet(signal, { variables = [], objectUuid } = {}) 
   }).join(",\n");
   const encodedContract = JSON.stringify(contract, null, 2).replaceAll("/", "\\u002f");
   const variableSource = variables.length ? `\n${objectVariableMacroSnippet(variables, { objectUuid }).split("\n").map(line => `    ${line}`).join("\n")}\n` : "";
-  return `/* dmicher-signal-interface\n${encodedContract}\n*/\nreturn {\n  parameters: {\n${members(signal.parameters)}\n  },\n  returns: {\n${members(signal.returns)}\n  },\n  async execute(context) {${variableSource}\n    // this.parameters[field].value -> this.returns[field].value\n  }\n};`;
+  const inputs = signal.parameters.map(field => `      [${JSON.stringify(field.name)}, this.parameters[${JSON.stringify(field.name)}].value]`).join(",\n");
+  const example = signal.returns.map(field => `    this.returns[${JSON.stringify(field.name)}].value = ${JSON.stringify(fieldInitialValue(field))};`).join("\n");
+  return `/* dmicher-signal-interface\n${encodedContract}\n*/\nreturn {\n  parameters: {\n${members(signal.parameters)}\n  },\n  returns: {\n${members(signal.returns)}\n  },\n  async execute(context) {\n    if (context.isCurrent && !context.isCurrent()) return;\n    const input = Object.fromEntries([\n${inputs}\n    ]);${variableSource}\n    // ${text("Используйте input[имя] и values[имя] (если объявлены переменные объекта).", "Use input[name] and values[name] (when object variables are declared). ")}\n    // ${text("Замените значения результата своей логикой; исходный пример ничего не меняет в мире.", "Replace result values with your logic; this initial example does not change the world.")}\n${example}\n  }\n};`;
 }
 function requireMacro(macro) {
   if (macro?.documentName !== "Macro" || macro.type !== "script" || macro.canExecute === false) throw new Error(localizedMessage("Нужен доступный скриптовый макрос Foundry."));

@@ -7,7 +7,7 @@ test("all script interruption sources default to stop without mutating preparati
   const source = { steps: [] };
   const script = normalizeScript(source);
   assert.deepEqual(script.interruptions, {
-    combat: "stop", interaction: "stop", manual: "stop", command: "stop", error: { mode: "stop", retries: 3, delaySeconds: 1 }
+    combat: "stop", interaction: "stop", manual: "stop", command: "stop", playerAction: "stop", error: { mode: "stop", retries: 3, delaySeconds: 1 }
   });
   assert.equal(Object.hasOwn(source, "interruptions"), false);
   script.interruptions.error.retries = 8;
@@ -17,7 +17,7 @@ test("all script interruption sources default to stop without mutating preparati
 test("every source accepts each explicit continuation and preserves independent error limits", () => {
   for (const mode of SCRIPT_INTERRUPTION_MODES) {
     for (const retries of [1, 10]) for (const delaySeconds of [0.1, 0.25, 60]) {
-      const interruptions = { combat: mode, interaction: mode, manual: mode, command: mode, error: { mode, retries, delaySeconds } };
+      const interruptions = { combat: mode, interaction: mode, manual: mode, command: mode, playerAction: "stop", error: { mode, retries, delaySeconds } };
       const before = structuredClone(interruptions);
       const actual = normalizeScript({ steps: [], interruptions }).interruptions;
       assert.deepEqual(actual, before);

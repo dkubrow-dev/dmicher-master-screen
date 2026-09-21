@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter, getEventListeners } from "node:events";
-import { pickCommandParameters, findCommandDoor } from "../dmicher-master-screen/scripts/object-command-picker.js";
+import { pickCommandParameters } from "../dmicher-master-screen/scripts/object-command-picker.js";
 import { createObjectCommandBadges } from "../dmicher-master-screen/scripts/object-command-badges.js";
 
 function pickerFixture() {
@@ -64,16 +64,6 @@ test("patrol asks for two points and Escape or scene teardown cancels without ke
   assert.equal(f.board.stage.eventNames().length, 0); assert.equal(f.callbacks.size, 0);
 });
 
-test("selecting a door blocks its native open handler and returns only its UUID", async () => {
-  const f = pickerFixture(); let opens = 0;
-  const wall = { documentName: "Wall", id: "door", parent: f.scene, door: 1, c: [0, 0, 100, 0], update() { opens++; } };
-  f.scene.walls.set(wall.id, wall);
-  const picking = pickCommandParameters("open-door", f.options), target = { wall: { document: wall } }, down = f.event({ x: 50, y: 0 }, target);
-  f.board.stage.emit("pointerdowncapture", down); if (!down.stopped) wall.update();
-  f.board.stage.emit("pointerupcapture", f.event({ x: 50, y: 0 }, target));
-  assert.deepEqual(await picking, { doorUuid: "Scene.one.Wall.door" }); assert.equal(opens, 0);
-  wall.door = 2; assert.equal(findCommandDoor(f.scene, f.event({ x: 50, y: 0 }, target), f.board), null);
-});
 
 test("command badge animation uses prepared text and releases removed or destroyed presentations", () => {
   const counters = { draws: 0, reads: 0 };

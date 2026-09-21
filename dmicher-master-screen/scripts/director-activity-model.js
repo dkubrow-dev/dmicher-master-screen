@@ -92,7 +92,7 @@ export function directorExecutionRows({ bindings = [], groupId, run, manualRuns 
   const routines = new Map((run?.state?.scripts ?? []).map(script => [keyOf(script.target), script]));
   return bindings.filter(binding => binding.groupId === groupId).map(binding => {
     const target = { type: binding.type, id: binding.id }, key = keyOf(target), command = commands.get(key), manual = manuals.get(key);
-    const name = objectName(target), disabled = binding.playerCharacter || run?.disabledObjects?.includes(key);
+    const name = objectName(target), disabled = run?.disabledObjects?.includes(key);
     let detail = manual ? scriptRow(manual, target, manual.script, "initial") : groupScript(run, target, transitions.get(key), routines.get(key));
     let commandLabel = "";
     if (command) {
@@ -110,7 +110,7 @@ export function directorExecutionRows({ bindings = [], groupId, run, manualRuns 
     const result = { key, target, object: name || unavailable(), command: commandLabel,
       ...(detail ?? { script: "—", step: "—", phase: "—", status: run?.runId ? t("Нет скрипта", "No script") : t("Не запущен", "Not started") }) };
     if (!name) result.status = unavailable();
-    else if (disabled && !command) result.status = binding.playerCharacter ? t("Персонаж игрока", "Player character") : t("Автоматизация выключена", "Automation disabled");
+    else if (disabled && !command) result.status = t("Автоматизация выключена", "Automation disabled");
     else if (!manual && (sceneHalted || run?.halted)) result.status = t("Остановлен", "Stopped");
     else if (paused && detail?.active && !command?.interruption) result.status = t("Пауза Foundry", "Foundry paused");
     return result;

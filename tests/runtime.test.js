@@ -58,6 +58,18 @@ function fixture() {
   return { scene, definition, bindings, npc, player, makeToken, runtime, effects, calls, advance: (ms) => { clock += ms; } };
 }
 
+test("a world without a viewed scene performs no scene execution or cleanup", async () => {
+  const f = fixture();
+  canvas.scene = null;
+  let operations = 0;
+  f.runtime.commandExecutor = { tick() { operations++; } };
+  f.runtime.effects.cleanupSpeech = () => { operations++; };
+  assert.equal(f.runtime.owns(null), false);
+  await f.runtime.tick(); await f.runtime.tick();
+  assert.equal(operations, 0);
+  assert.deepEqual(f.calls.errors, []);
+});
+
 test("entry applies object script, sound, spawn and workspace once without replay on reconnect", async () => {
   const f = fixture(); f.bindings["Token:npc"].transitionScripts.calm = { steps: [{ id: 1, kind: "move", parameters: { duration: 0, position: { x: 400, y: 300 } }, next: [] }] };
   f.definition.states[0].sound = "alarm.ogg";

@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { executePlaylistAction, executeScriptToolAction } from "../dmicher-master-screen/scripts/script-tool-actions.js";
+import { executePlaylistAction } from "../dmicher-master-screen/scripts/script-functions/playlist.js";
+import { executeScriptFunction } from "../dmicher-master-screen/scripts/script-functions/index.js";
+const executeScriptToolAction = (job, { runtime, current, executionCurrent = current }) => executeScriptFunction(job.step.kind,
+  { ...job, job, p: job.step.parameters, engine: { runtime }, admitted: current, executionCurrent });
 
 function playlistFixture() {
   const calls = [], sound = { id: "track", playing: false, pausedTime: null, volume: 1, sound: { currentTime: 23.5 },

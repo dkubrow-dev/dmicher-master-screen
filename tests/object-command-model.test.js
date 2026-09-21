@@ -1,14 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OBJECT_COMMAND_IDS, defaultObjectCommand, normalizeObjectCommand, normalizeObjectCommands,
-  objectCommandName, objectCommandConditionsMatch } from "../dmicher-master-screen/scripts/object-command-model.js";
+  objectCommandName, objectCommandConditionsMatch, objectSupportsCommand } from "../dmicher-master-screen/scripts/object-command-model.js";
 import { normalizeObjectBinding, bindingScripts, reconcileBindingGroups } from "../dmicher-master-screen/scripts/object-binding-model.js";
+import { getObjectBindings } from "../dmicher-master-screen/scripts/scene-objects.js";
 
 const waitScript = () => ({ stateId: "foreign", steps: [{ id: 1, kind: "wait", parameters: { seconds: 1 }, next: [] }] });
 
 test("unconfigured objects allocate no commands, and each explicit built-in starts disabled", () => {
   assert.deepEqual(normalizeObjectBinding({ type: "Token", id: "npc" }).commands, []);
-  assert.equal(OBJECT_COMMAND_IDS.length, 25);
+  assert.equal(OBJECT_COMMAND_IDS.length, 22);
   for (const id of OBJECT_COMMAND_IDS) {
     const command = defaultObjectCommand(id);
     assert.equal(command.enabled, false);
@@ -21,6 +22,27 @@ test("unconfigured objects allocate no commands, and each explicit built-in star
   first.parameters.speed = 999; first.conditions.allowTags.push("changed");
   assert.equal(second.parameters.speed, 5);
   assert.deepEqual(second.conditions.allowTags, []);
+});
+
+test("retired command aliases are absent from preparation and native command API", () => {
+  for (const id of ["stop", "open-door", "close-door"]) {
+    assert.equal(OBJECT_COMMAND_IDS.includes(id), false);
+    assert.equal(objectSupportsCommand("Token", id), false);
+    assert.throws(() => defaultObjectCommand(id));
+    assert.throws(() => normalizeObjectCommand({ id, enabled: true }));
+  }
+});
+
+test("reading a binding projects retired commands out without rewriting stored preparation", () => {
+  const raw = { schemaVersion: 1, revision: 9, bindings: { "Token:npc": { type: "Token", id: "npc", commands: [
+    { id: "stop", enabled: true, parameters: { issuer: "gm" } }, { id: "open-door", enabled: true }, { id: "close-door" },
+    ...OBJECT_COMMAND_IDS.map(id => ({ ...defaultObjectCommand(id), enabled: true }))
+  ] } } };
+  const before = structuredClone(raw); let writes = 0;
+  const scene = { getFlag: () => raw, setFlag: () => { writes++; }, update: () => { writes++; } };
+  assert.deepEqual(getObjectBindings(scene).bindings["Token:npc"].commands.map(entry => entry.id), OBJECT_COMMAND_IDS);
+  assert.equal(writes, 0); assert.deepEqual(raw, before);
+  assert.throws(() => normalizeObjectCommands([{ id: "unrecognized" }]));
 });
 
 test("finite positive motion and wait times reject ambiguous or never-ending commands", () => {

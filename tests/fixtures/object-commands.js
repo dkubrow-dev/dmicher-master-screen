@@ -15,7 +15,7 @@ export function mergeCommandFlags(before, after) {
   }
   return result;
 }
-export async function commandFixture({ commands = ["wait", "come", "cancel", "stop"], scripts = [], core, emit } = {}) {
+export async function commandFixture({ commands = ["wait", "come", "cancel", "behavior-off"], scripts = [], core, emit } = {}) {
   let serial = 0, clock = 1000;
   const gm = { id: "gm", isGM: true, role: 4, active: true }, player = { id: "player", role: 1, active: true, isGM: false };
   globalThis.game = { user: gm, users: new Map([[gm.id, gm], [player.id, player]]), modules: new Map(), combats: new Map(), paused: false,

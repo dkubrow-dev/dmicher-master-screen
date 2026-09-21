@@ -12,7 +12,7 @@ const parserPath = process.env.DMICHER_BABEL_BUNDLE
 const { babelParse } = require(parserPath);
 const cyrillic = /[\u0400-\u04ff]/u;
 // These explicit bilingual data structures are checked by localization.test.js.
-const bilingualData = new Set(["help-content.js", "object-help-content.js", "interaction-help-content.js", "workspace-help-content.js", "object-descriptions.js", "builtin-signals.js", "script-action-labels.js"]);
+const bilingualData = new Set(["help-content.js", "object-help-content.js", "automation-help-content.js", "interaction-help-content.js", "workspace-help-content.js", "object-descriptions.js", "builtin-signals.js", "script-action-labels.js"]);
 const files = (directory, extension) => fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => entry.isDirectory()
   ? files(path.join(directory, entry.name), extension) : entry.name.endsWith(extension) ? [path.join(directory, entry.name)] : []);
 const scripts = files(path.join(root, "dmicher-master-screen/scripts"), ".js");

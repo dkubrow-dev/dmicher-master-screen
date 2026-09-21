@@ -1,121 +1,25 @@
 import { message as localizedMessage, text } from "./localization.js";
-import { normalizeGroupSymbol } from "./model.js";
 import { normalizeScriptInterruptions } from "./script-interruption-model.js";
 import { normalizeScriptTransition } from "./script-transitions.js";
 
-const fail = (message) => { throw new Error(message); };
-const record = (value) => value && typeof value === "object" && !Array.isArray(value);
-const requireText = (value, max, label) => typeof value === "string" && value.length <= max ? value : fail(localizedMessage("{0}: ожидается текст до {1} символов.", [label, max]));
-const number = (value, label, minimum = -Infinity, exclusive = false) => typeof value === "number" && Number.isFinite(value) && (exclusive ? value > minimum : value >= minimum) ? value : fail(localizedMessage("{0}: недопустимое число.", [label]));
-const bool = (value, fallback, label) => value === undefined ? fallback : typeof value === "boolean" ? value : fail(localizedMessage("{0}: требуется логическое значение.", [label]));
-const choice = (value, choices, fallback) => choices.includes(value ?? fallback) ? value ?? fallback : fail(localizedMessage("Ожидается один из вариантов: {0}.", [choices.join(", ")]));
-const effectExecutionMode = (value, fallback) => {
-  if (value === undefined) return fallback;
-  if (!["parallel", "wait"].includes(value)) fail(text("Режим выполнения: выберите parallel или wait.", "Execution mode: choose parallel or wait."));
-  return value;
-};
-const id = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : fail(localizedMessage("Неверный ID скрипта или состояния."));
-const seconds = (value = 0) => number(value, localizedMessage("Длительность"), 0);
-const speed = (value) => number(value, localizedMessage("Скорость"), 0, true);
-const tags = (value = []) => Array.isArray(value) && value.length <= 100 ? [...new Set(value.map((tag) => requireText(tag, 100, localizedMessage("Тег")).trim()).filter(Boolean))] : fail(localizedMessage("Теги должны быть списком."));
-const only = (value, keys) => { if (!record(value) || Object.keys(value).some((key) => !keys.includes(key))) fail(localizedMessage("Неизвестное поле параметров шага.")); return value; };
-function json(value = {}) {
-  if (!record(value) || JSON.stringify(value).length > 16000) fail(localizedMessage("Параметры сигнала должны быть JSON объектом до 16000 символов."));
-  const visit = (entry, depth = 0) => {
-    if (depth > 20) fail(localizedMessage("Параметры слишком глубоко вложены."));
-    if (entry === null || typeof entry === "string" || typeof entry === "boolean" || typeof entry === "number" && Number.isFinite(entry)) return;
-    if (Array.isArray(entry)) { entry.forEach((item) => visit(item, depth + 1)); return; }
-    if (record(entry) && Object.getPrototypeOf(entry) === Object.prototype) { Object.values(entry).forEach((item) => visit(item, depth + 1)); return; }
-    fail(localizedMessage("Параметры могут содержать только значения JSON."));
-  };
-  visit(value); return structuredClone(value);
-}
-export const SCRIPT_STEP_KINDS = Object.freeze(["wait", "move", "approach", "follow", "speech", "emotion", "dialogue", "shop", "command", "visibility", "focus", "sound", "playlist", "state", "windows", "notes", "signal", "macro"]);
-export const PREMIUM_SCRIPT_STEP_KINDS = Object.freeze(["focus", "sound", "playlist", "macro"]);
-export const isPremiumScriptStep = kind => PREMIUM_SCRIPT_STEP_KINDS.includes(kind);
-/** Emoji font size in scene pixels, following canvas zoom rather than screen resolution. */
-export const DEFAULT_EMOTION_SIZE = 32;
+import { fail, record, requireText, number, bool, id, only } from "./script-functions/parameters.js";
+import { builtinScriptFunctions, getScriptFunction } from "./script-functions/index.js";
+export { normalizeStateTransitions, DEFAULT_EMOTION_SIZE } from "./script-functions/parameters.js";
+export const SCRIPT_STEP_KINDS = Object.freeze(builtinScriptFunctions.map(row => row.id));
+export const PREMIUM_SCRIPT_STEP_KINDS = Object.freeze(builtinScriptFunctions.filter(row => row.premium).map(row => row.id));
+export const isPremiumScriptStep = kind => getScriptFunction(kind)?.premium === true;
 /** Stable identity shared by execution progress and its read-only projections. */
 export const scriptProgressKey = (target, script, slot = "routine") => `${target.type}:${target.id}:${slot}:${script.id ?? script.stateId ?? "script"}`;
 export function scriptStepTemplate(kind) {
-  const templates = {
-    wait: { seconds: 1 }, move: { timeMode: "duration", duration: 0, position: null, rotation: null, size: null },
-    approach: { targetUuid: "", distance: 0, timeMode: "duration", duration: 0, speed: 5 }, visibility: { visible: true }, focus: { audience: "all" },
-    speech: { executionMode: "wait", duration: 0, chat: { enabled: true, timing: "before", text: "", allowTags: [], denyTags: [], range: 0, deleteAfter: true }, bubble: { enabled: true, text: "", fontSize: 24 } },
-    emotion: { emoji: "", executionMode: "parallel", duration: 0, size: DEFAULT_EMOTION_SIZE }, sound: { src: "", volume: 1 }, signal: { signalId: "", parameters: {}, before: 0, after: 0 }, macro: { macroUuid: "", signalId: "", before: 0, after: 0 }, state: { transitions: [] },
-    dialogue: { dialogueId: "", tokenUuids: [], waitMode: "all" },
-    shop: { shopId: "", tokenUuid: "", wait: true }, command: { objectUuid: "", commandId: "", parameters: {} },
-    playlist: { playlistId: "", soundId: "", action: "play", volume: 1 }, windows: { configurationId: "" }, notes: { configurationId: "" },
-    follow: { targetUuid: "", minDistance: 0, maxDistance: 5, speed: 5, mode: "trajectory", finishOn: "arrival" }
-  };
-  if (!Object.hasOwn(templates, kind)) fail(localizedMessage("Неизвестный вид действия скрипта."));
-  return { kind, parameters: structuredClone(templates[kind]), next: [], transition: { mode: "next", macro: "" } };
-}
-function movement(p) {
-  const result = { timeMode: choice(p.timeMode, ["duration", "speed"], "duration"), duration: seconds(p.duration), position: null, rotation: null, size: null };
-  if (p.position != null) { const v = only(p.position, ["x", "y", "speed"]); result.position = { x: number(v.x, "X"), y: number(v.y, "Y"), speed: speed(v.speed ?? 5) }; }
-  if (p.rotation != null) { const v = only(p.rotation, ["mode", "angle", "speed"]); result.rotation = { mode: choice(v.mode, ["relative", "absolute"], "relative"), angle: number(v.angle ?? 0, localizedMessage("Угол")), speed: speed(v.speed ?? 90) }; }
-  if (p.size != null) { const v = only(p.size, ["x", "y", "z", "speed"]); result.size = { x: v.x == null ? null : number(v.x, localizedMessage("Размер X"), 0, true), y: v.y == null ? null : number(v.y, localizedMessage("Размер Y"), 0, true), z: v.z == null ? null : number(v.z, localizedMessage("Размер Z"), 0), speed: speed(v.speed ?? 1) }; }
-  return result;
-}
-/** Empty selections are a prepared no-op. A group can only have one destination. */
-export function normalizeStateTransitions(value = []) {
-  if (!Array.isArray(value) || value.length > 100) fail(text("Выберите до 100 переходов групп.", "Select up to 100 group transitions."));
-  const groups = new Set();
-  return value.map((entry) => {
-    const pair = only(entry, ["groupId", "stateId"]);
-    for (const field of ["groupId", "stateId"]) {
-      if (typeof pair[field] !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(pair[field])) {
-        fail(text("Для перехода нужны корректные ID группы и состояния.", "A transition requires valid group and state IDs."));
-      }
-    }
-    if (groups.has(pair.groupId)) fail(text("Для каждой группы можно выбрать только одно состояние.", "Select only one state per group."));
-    groups.add(pair.groupId); return { groupId: pair.groupId, stateId: pair.stateId };
-  });
+  const fn = getScriptFunction(kind);
+  if (!fn) fail(localizedMessage("Неизвестный вид действия скрипта."));
+  return { kind, parameters: structuredClone(fn.template), next: [], transition: { mode: "next", macro: "" } };
 }
 export function normalizeScriptStep(raw) {
-  if (!record(raw) || !SCRIPT_STEP_KINDS.includes(raw.kind) || !Number.isSafeInteger(raw.id) || raw.id < 1) fail(localizedMessage("Шаг требует положительный целый ID и известный вид действия."));
+  if (!record(raw) || !getScriptFunction(raw.kind) || !Number.isSafeInteger(raw.id) || raw.id < 1) fail(localizedMessage("Шаг требует положительный целый ID и известный вид действия."));
   const p = only(raw.parameters ?? {}, Object.keys(scriptStepTemplate(raw.kind).parameters));
   if (!Array.isArray(raw.next ?? []) || raw.next?.some((value) => !Number.isSafeInteger(value) || value < 1)) fail(localizedMessage("Переходы задаются списком положительных целых ID."));
-  let parameters;
-  switch (raw.kind) {
-    case "wait": parameters = { seconds: number(p.seconds, localizedMessage("Ожидание"), 0, true) }; break;
-    case "move": parameters = movement(p); break;
-    case "approach": parameters = { targetUuid: requireText(p.targetUuid ?? "", 2048, text("UUID цели", "Target UUID")), distance: number(p.distance ?? 0, localizedMessage("Расстояние"), 0),
-      timeMode: choice(p.timeMode, ["duration", "speed"], "duration"), duration: seconds(p.duration), speed: speed(p.speed ?? 5) }; break;
-    case "visibility": parameters = { visible: bool(p.visible, true, localizedMessage("Видимость")) }; break;
-    case "focus": parameters = { audience: choice(p.audience, ["all", "players", "gm"], "all") }; break;
-    case "speech": {
-      const c = only(p.chat ?? {}, ["enabled", "timing", "text", "allowTags", "denyTags", "range", "deleteAfter"]), b = only(p.bubble ?? {}, ["enabled", "text", "fontSize"]);
-      parameters = { executionMode: effectExecutionMode(p.executionMode, "wait"), duration: seconds(p.duration), chat: { enabled: bool(c.enabled, true, localizedMessage("Чат")), timing: choice(c.timing, ["before", "after"], "before"), text: requireText(c.text ?? "", 12000, localizedMessage("Текст чата")), allowTags: tags(c.allowTags), denyTags: tags(c.denyTags), range: number(c.range ?? 0, localizedMessage("Расстояние"), 0), deleteAfter: bool(c.deleteAfter, true, localizedMessage("Удалять сообщение")) }, bubble: { enabled: bool(b.enabled, true, localizedMessage("Пузырь")), text: requireText(b.text ?? "", 4000, localizedMessage("Текст пузыря")), fontSize: number(b.fontSize ?? 24, localizedMessage("Размер текста"), 1) } };
-      if (parameters.bubble.fontSize > 200) fail(localizedMessage("Размер текста пузыря не больше 200."));
-      if (!parameters.chat.enabled && !parameters.bubble.enabled) fail(localizedMessage("Для реплики включите чат или пузырь.")); break;
-    }
-    case "emotion": parameters = { emoji: p.emoji === undefined || p.emoji === "" ? "" : normalizeGroupSymbol(p.emoji), executionMode: effectExecutionMode(p.executionMode, "parallel"), duration: seconds(p.duration),
-      size: number(p.size === undefined ? DEFAULT_EMOTION_SIZE : p.size, text("Размер эмоции", "Emotion size"), 0, true) }; break;
-    case "sound": parameters = { src: requireText(p.src, 2048, localizedMessage("Файл звука")).trim(), volume: speed(p.volume ?? 1) }; if (!parameters.src) fail(localizedMessage("Выберите файл звука.")); break;
-    case "signal": parameters = { signalId: requireText(p.signalId, 256, localizedMessage("Сигнал")), parameters: json(p.parameters), before: seconds(p.before), after: seconds(p.after) }; if (!parameters.signalId) fail(localizedMessage("Выберите сигнал.")); break;
-    case "macro": parameters = { macroUuid: requireText(p.macroUuid, 256, localizedMessage("Макрос")), signalId: requireText(p.signalId ?? "", 256, localizedMessage("Сигнал")), before: seconds(p.before), after: seconds(p.after) }; if (!parameters.macroUuid) fail(localizedMessage("Выберите макрос.")); break;
-    case "shop": parameters = { shopId: requireText(p.shopId ?? "", 64, text("Магазин", "Shop")), tokenUuid: requireText(p.tokenUuid ?? "", 2048, text("UUID персонажа", "Character UUID")), wait: bool(p.wait, true, text("Дождаться завершения", "Wait for completion")) }; break;
-    case "command": parameters = { objectUuid: requireText(p.objectUuid ?? "", 2048, text("UUID объекта", "Object UUID")), commandId: requireText(p.commandId ?? "", 100, text("Команда", "Command")), parameters: json(p.parameters) }; break;
-    case "playlist": parameters = { playlistId: requireText(p.playlistId ?? "", 64, text("Плейлист", "Playlist")), soundId: requireText(p.soundId ?? "", 64, text("Композиция", "Track")), action: choice(p.action, ["play", "pause", "resume", "volume", "stop"], "play"), volume: number(p.volume ?? 1, text("Громкость", "Volume"), 0) }; if (parameters.volume > 1) fail(text("Громкость должна быть от 0 до 1.", "Volume must be between 0 and 1.")); break;
-    case "windows": case "notes": parameters = { configurationId: requireText(p.configurationId ?? "", 64, text("Конфигурация", "Configuration")) }; break;
-    case "state": parameters = { transitions: normalizeStateTransitions(p.transitions) }; break;
-    case "dialogue": {
-      if (!Array.isArray(p.tokenUuids ?? []) || (p.tokenUuids?.length ?? 0) > 100) fail(text("Выберите до 100 персонажей для диалога.", "Select up to 100 characters for the dialogue."));
-      parameters = { dialogueId: requireText(p.dialogueId ?? "", 64, text("Диалог", "Dialogue")),
-        tokenUuids: [...new Set((p.tokenUuids ?? []).map(value => requireText(value, 2048, text("UUID персонажа", "Character UUID"))))],
-        waitMode: choice(p.waitMode, ["all", "first", "none"], "all") }; break;
-    }
-    case "follow": {
-      parameters = { targetUuid: requireText(p.targetUuid ?? "", 2048, text("UUID цели", "Target UUID")),
-        minDistance: number(p.minDistance ?? 0, text("Минимальное расстояние", "Minimum distance"), 0),
-        maxDistance: number(p.maxDistance ?? 5, text("Максимальное расстояние", "Maximum distance"), 0), speed: speed(p.speed ?? 5),
-        mode: choice(p.mode, ["trajectory", "direct"], "trajectory"), finishOn: choice(p.finishOn, ["arrival", "state-change"], "arrival") };
-      if (parameters.maxDistance < parameters.minDistance) fail(text("Максимальное расстояние не может быть меньше минимального.", "Maximum distance cannot be less than minimum distance."));
-      break;
-    }
-  }
+  const parameters = getScriptFunction(raw.kind).normalize(p);
   return { id: raw.id, kind: raw.kind, parameters, next: [...new Set(raw.next ?? [])], transition: normalizeScriptTransition(raw.transition) };
 }
 export function normalizeScriptCombat(raw = {}) {

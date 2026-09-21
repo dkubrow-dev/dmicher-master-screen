@@ -1,5 +1,14 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Группы получили подписки со скриптами; инструменты Спотлайта — мировую автоматизацию, работающую без карты. Единый справочник функций содержит поиск, описания и отметки недоступности. Добавлены «Пауза» и общее управление поведением объектов.
+- Groups now support script subscriptions; Spotlight tools support world automation without a scene. The shared function catalog provides search, descriptions and availability. Added Pause and unified object behavior controls.
+- Шаги скрипта отображаются тремя колонками: номер и перетаскивание; функция, JSON и параметры ниже; переход. Подсказки функции и JSON закреплены рядом со своими элементами.
+- Script steps use three columns: ID and drag handle; function, JSON and parameters below; transition. Function and JSON help stay next to their own controls.
+- Постоянная группа «Игроки» допускает переходы, события и команды без рутины. Команды чужому персонажу требуют первого согласия владельца или мастера. Действие владельца прерывает скрипт; Premium может временно запретить движение/изменение видимости.
+- The permanent Players group supports transitions, events and commands without routine. Commands to another player's character need the first valid owner or GM decision. Owner actions interrupt scripts; Premium may temporarily forbid movement/visibility changes.
+- Меню работает и при закрытой Ширме. Поручение выбирается на карте с линиями участников. «К объекту» использует нативное выделение. Новый макрос создаётся с явным подтверждением и прикреплением; прежние команды Stop/open-door/close-door удалены из каталога. Старые настройки этих команд не переписываются.
+- Menus work while Master screen is closed. Delegation uses map selection and participant lines. Go to object uses native selection. New macros require explicit creation and attachment; retired Stop/open-door/close-door entries are no longer offered, without rewriting old preparation.
+
 - Исправлена ошибка `Illegal invocation` при обработке команд и действий игроков: удаление квитанций сохраняет контекст браузерных таймеров. Новые служебные запросы и ответы не показывают пустые карточки. Реплики, диалоги и согласование торговли остаются видимыми.
 - Fixed `Illegal invocation` while processing player commands and actions: receipt cleanup preserves browser timer receivers. New technical requests and replies do not show empty chat cards. Speech, dialogues and trade approval cards remain visible.
 

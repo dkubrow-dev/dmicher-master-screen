@@ -5,12 +5,11 @@ import { text as t } from "../localization.js";
 import { ScreenFormApplication } from "./screen-form.js";
 import { scenePreparationKey } from "./scene-refresh.js";
 import { themedClasses, notifyError } from "../ui.js";
-import { currentScene, getDefinitions, getObjectTags } from "../store.js";
+import { currentScene, getDefinitions, getObjectTags, getRuntime } from "../store.js";
 import { SceneObjects, getObjectBindings, getSceneObject } from "../scene-objects.js";
 import { registeredToolIds, toolRegistration } from "../object-binding-model.js";
 import { getWorkspacePresets } from "../workspace-presets-store.js";
-import { signalMacroSnippet } from "../signal-macros.js";
-import { objectVariableMacroSnippet } from "../object-variables.js";
+import { handleScriptMacroAction } from "./script-macro-actions.js";
 import { objectActionContracts } from "../object-action-contract.js";
 import { getInteractionCatalog } from "../scene-assets.js";
 import { SignalCatalog, getSignalCatalog } from "../signal-catalog.js";
@@ -21,6 +20,7 @@ import { appendScriptStep, removeScriptStep } from "../script-editing.js";
 import { changedScriptWarnings } from "../script-warnings.js";
 import { escapeHTML as e, formValue as value, actionButton as button, textInput as input, selectOptions } from "./form-fields.js";
 import { completeScriptParameters, bindScriptParameters } from "./script-parameters.js";
+import { bindScriptCatalogs, promptAndCreateAttachedScriptMacro } from "./script-catalog-input.js";
 import { exportScriptBlock, importScriptBlock } from "../script-transfer.js";
 import { generics } from "../generics.js";
 import { readObjectGeometry } from "../script-movement.js";
@@ -56,6 +56,8 @@ class ObjectForm extends ScreenFormApplication {
       const draft = clone(new SceneObjects(scene).get(this.descriptor) ?? { ...this.descriptor, groupId: null, tags: getObjectTags(scene, this.descriptor), notes: "", playerCharacter: false, initialScript: null, transitionScripts: {}, scripts: [], shops: [], dialogues: [] });
       const original = clone(draft), previous = this.draft;
       Object.assign(this, { draft, original, revision, reloadRequested: false });
+      const automationEnabled = !draft.groupId || !getRuntime(scene, { groupId: draft.groupId }).disabledObjects.includes(this.ownerKey);
+      this.automationEnabled = automationEnabled; this.originalAutomationEnabled = automationEnabled;
       this.reconcileSelection?.(previous);
     }
     const definitions = getDefinitions(scene), definition = definitions.find((item) => item.groupId === this.draft.groupId);
@@ -138,7 +140,7 @@ class ObjectForm extends ScreenFormApplication {
     this.lockSaveControls();
     this.persistTask = Promise.resolve().then(async () => {
       this.assertCurrentScene(); const scene = this.context().scene;
-      const patch = Object.fromEntries(["groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues", "commands", "variables", "signals", "actions", "eventScripts", "reactionScripts"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
+      const patch = Object.fromEntries(["displayName", "groupId", "tags", "notes", "playerCharacter", "initialScript", "transitionScripts", "scripts", "shops", "dialogues", "commands", "variables", "signals", "actions", "eventScripts", "reactionScripts"].filter((key) => JSON.stringify(this.draft[key]) !== JSON.stringify(this.original[key])).map((key) => [key, clone(this.draft[key])]));
       const warnings = changedScriptWarnings(this.original, this.draft);
       if (warnings.length) {
         const kindNames = { initial: t("Исходное состояние", "Initial state"), transition: t("Переход", "Transition"), routine: t("Рутина", "Routine"), event:t("Событие","Event"),reaction:t("Реакция","Reaction"), "command-before": t("До команды", "Before command"), "command-after": t("После команды", "After command") };
@@ -156,7 +158,11 @@ class ObjectForm extends ScreenFormApplication {
         if (!accepted) return false;
         this.assertCurrentScene();
       }
-      if (Object.keys(patch).length) await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true });
+      const saved = Object.keys(patch).length ? await new SceneObjects(scene).save(this.descriptor, patch, { expectedRevision: this.revision, allowReassign: true }) : null;
+      if (this.automationEnabled !== this.originalAutomationEnabled) {
+        await this.controller.runtime.setObjectAutomation(scene, this.descriptor, this.automationEnabled, { groupId: saved?.groupId ?? this.draft.groupId });
+        this.originalAutomationEnabled = this.automationEnabled;
+      }
       this.reloadRequested = true; this.dirty = false; if (close) await this.close(); this.controller.changed(scene);
       if (!close) await super.refresh();
       return true;
@@ -180,7 +186,8 @@ export class ObjectAutomationApplication extends ObjectForm {
     return this.sectionNavigation([["subscriptions",t("Подписки","Subscriptions")],["signals",t("Сигналы","Signals")],["macros",t("Макросы","Macros")],["actions",t("Действия","Actions")],["commands",t("Команды","Commands")],["variables",t("Переменные","Variables")]],this.propertyTab,"property-tab");
   }
   behaviorNavigation() {
-    return this.sectionNavigation([["routine",t("Рутина","Routine")],["event",t("События","Events")],["reaction",t("Реакции","Reactions")]],this.behaviorTab,"behavior-tab");
+    const items = [["routine",t("Рутина","Routine")],["event",t("События","Events")],["reaction",t("Реакции","Reactions")]];
+    return this.sectionNavigation(this.draft.playerCharacter ? items.filter(([id]) => id !== "routine") : items,this.behaviorTab,"behavior-tab");
   }
   invokedScriptTable({scene}) {
     const kind = this.behaviorTab, catalog = getSignalCatalog(scene);
@@ -228,7 +235,8 @@ export class ObjectAutomationApplication extends ObjectForm {
     const ownDialogues = new Set(registeredToolIds(this.draft, "dialogue"));
     const catalog = getSignalCatalog(context.scene), subscription = this.selectedScript?.kind === "event" && catalog.subscriptions.find(entry=>entry.id === this.selectedScript.referenceId);
     const actionSignals=objectActionContracts(this.draft);
-    return { ownerKey: this.ownerKey, document: context.document, definitions: context.definitions, scene:context.scene,
+    return { ownerKey: this.ownerKey, owner: context.document, functionsOwner: context.document, scriptScope: "object", playerCharacter: this.draft.playerCharacter === true,
+      document: context.document, definitions: context.definitions, scene:context.scene,
       shopOptions:context.catalog.shops.filter(entry=>registeredToolIds(this.draft,"shop").includes(entry.id)), workspacePresets:getWorkspacePresets(context.scene),
       signalOptions:subscription ? catalog.signals.filter(signal=>signal.id===subscription.signalId) : this.selectedScript?.kind === "reaction" ? actionSignals.filter(signal=>signal.id.endsWith(`:${this.selectedScript.referenceId}`)) : [],
       dialogueOptions: context.catalog.dialogues.filter((entry) => ownDialogues.has(entry.id)),
@@ -270,11 +278,12 @@ export class ObjectAutomationApplication extends ObjectForm {
   }
   async _prepareContext() {
     const context = this.context({ reload: true }), { definition } = context;
+    if (this.draft.playerCharacter && this.behaviorTab === "routine") { this.behaviorTab = "event"; this.selectedScript = null; }
     const tabs = [["information",t("Информация","Information")],["states",t("Состояния","States")],["properties",t("Свойства","Properties")],["behavior",t("Поведение","Behavior")]];
     if (objectCapabilities(this.descriptor.type).tools) tabs.push(["shops",toolTitle("shop")],["dialogues",toolTitle("dialogue")]);
     const nav = '<nav class="ms-object-tabs">'+tabs.map(([tab,name]) => button("tab",name,`data-tab="${tab}" aria-pressed="${this.tab === tab}"`)).join("")+"</nav>";
     let body;
-    if (this.tab === "information") body = renderObjectInformation(context.document, context.definitions, this.draft);
+    if (this.tab === "information") body = renderObjectInformation(context.document, context.definitions, this.draft, { automationEnabled: this.automationEnabled });
     else if (this.tab === "properties") {
       const catalog = getSignalCatalog(context.scene);
       this.macroValidation = new Map(await Promise.all(catalog.macros.filter((macro) => macro.ownerKey === this.ownerKey).map(async (macro) => [macro.uuid, await macroValidationSummary(catalog, macro)])));
@@ -289,7 +298,7 @@ export class ObjectAutomationApplication extends ObjectForm {
       const script = this.activeScript();
       if (script) { const scriptContext = this.scriptParameterContext(context); body += buildScriptFields([script], definition ?? { states: [] }, this.descriptor.type, scriptContext.catalog, { ...scriptContext, open: true, combatSupported: Boolean(game.system?.id && globalThis.CONFIG?.Combat?.documentClass) }); }
     }
-    return { body: layout(`${this.draft.playerCharacter ? `<p class="ms-note">${t("Автоматизация персонажа игрока отключена.", "Player-character automation is disabled.")}</p>` : ""}${body}`, nav) };
+    return { body: layout(body, nav) };
   }
   scriptEntry(script, kind, stateId = "") { const attrs = `data-kind="${kind}" data-state-id="${e(stateId)}"`; return `<span>${e(script?.name || "—")}</span>${button("edit-script", script ? t("Править", "Edit") : t("Создать", "Create"), attrs)}${script ? button("delete-script", "×", attrs) : ""}`; }
   commandFields(context) {
@@ -357,7 +366,11 @@ export class ObjectAutomationApplication extends ObjectForm {
   }
   capture() {
     if (!this.draft || !this.element) return;
-    if (this.tab === "information") this.draft = readObjectInformation(this.element,this.draft);
+    if (this.tab === "information") {
+      this.draft = readObjectInformation(this.element,this.draft);
+      const automation = this.element.querySelector('[name="object-automation-enabled"]');
+      if (automation) this.automationEnabled = automation.checked === true;
+    }
     if (this.tab === "properties" && this.propertyTab === "commands") this.draft.commands = readObjectCommandFields(this.element, this.draft.commands, this.selectedCommand, this.context().definitions);
     if (["behavior", "states", "properties"].includes(this.tab) && this.activeScript() && this.element.querySelector("[data-script-index]")) this.setActiveScript(readScriptFields(this.element, [this.activeScript()])[0]);
     if (["shops", "dialogues"].includes(this.tab) && this.activeFeature() && this.element.querySelector('[name="feature-asset"]')) {
@@ -420,6 +433,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     },listeners);
     if (this.activeScript() && this.element.querySelector("[data-script-index]")) bindScriptSorting(this.element, [this.activeScript()], () => { this.dirty = true; }, listeners);
     bindScriptParameters(this.element, () => this.scriptParameterContext(), () => { this.dirty = true; }, listeners);
+    bindScriptCatalogs(this.element, () => this.scriptParameterContext(), { ...listeners, onCreateMacro: () => this.createScriptMacro(), onError: notifyError });
     bindScriptInterruptions(this.element, listeners);
     bindObjectCommandFields(this.element, listeners);
     bindShopRestorationFields(this.element, listeners);
@@ -441,6 +455,21 @@ export class ObjectAutomationApplication extends ObjectForm {
     this.element.addEventListener("dragover", (event) => { if (event.target.closest("[data-object-macro-drop]")) event.preventDefault(); }, listeners);
     this.element.addEventListener("drop", (event) => { if (!event.target.closest("[data-object-macro-drop]")) return; event.preventDefault(); void this.attachMacro(event).catch(notifyError); }, listeners);
   }
+  async createScriptMacro() {
+    this.capture(); this.dirty = true;
+    const selected = clone(this.selectedScript), script = this.activeScript(), eventSignal = this.events?.signal, scene = this.context().scene;
+    const assertCurrent = () => {
+      this.assertCurrentScene();
+      if (!script || this.activeScript() !== script || JSON.stringify(this.selectedScript) !== JSON.stringify(selected)
+        || this.events?.signal !== eventSignal || eventSignal?.aborted || this.persistTask || this.context().scene !== scene) {
+        throw new Error(t("Блок скрипта изменился. Повторите создание макроса.", "The script block changed. Create the macro again."));
+      }
+    };
+    return promptAndCreateAttachedScriptMacro({
+      validate: assertCurrent,
+      attachMacro: uuid => new SignalCatalog(scene).attachMacro(this.ownerKey, uuid)
+    });
+  }
   async attachMacro(event) { const data = JSON.parse(event.dataTransfer.getData("text/plain")), macro = data.uuid && await fromUuid(data.uuid); if (macro?.documentName !== "Macro") throw new Error(t("Перетащите макрос Foundry.", "Drop a Foundry macro.")); this.capture(); await new SignalCatalog(this.context().scene).attachMacro(this.ownerKey, macro.uuid); return this.render({ force: true }); }
   async handleAction(action, target) {
     if (await this.informationAction(action,target)) return;
@@ -448,16 +477,15 @@ export class ObjectAutomationApplication extends ObjectForm {
     if (action !== "cancel" && this.renderedDraft && this.renderedDraft !== this.draft) return this.render({ force: true });
     if (["cancel", "save"].includes(action)) return super.handleAction(action, target);
     this.capture(); const context = this.context(), catalog = new SignalCatalog(context.scene);
-    if (["script-macro-open","script-macro-template"].includes(action)) {
-      const step=this.activeScript()?.steps[Number(target.dataset.step)]; if(step?.kind !== "macro") return;
-      if(action === "script-macro-open") return (await fromUuid(step.parameters.macroUuid))?.sheet?.render(true);
-      const signal=this.scriptParameterContext(context).catalog.signals.find(entry=>entry.id===step.parameters.signalId);
-      const snippet=signal ? signalMacroSnippet(signal,{variables:this.draft.variables,objectUuid:context.document.uuid}) : `${objectVariableMacroSnippet(this.draft.variables,{objectUuid:context.document.uuid})}\nreturn {};`;
-      return new foundry.applications.api.DialogV2({window:{title:t("Шаблон макроса","Macro template")},content:`<textarea readonly rows="18" style="width:100%;font-family:monospace">${e(snippet)}</textarea>`,buttons:[{action:"close",label:t("Закрыть","Close"),default:true}]}).render({force:true});
-    }
+    if (await handleScriptMacroAction(action, this.activeScript()?.steps[Number(target.dataset.step)], {
+      signals: this.scriptParameterContext(context).catalog.signals, variables:this.draft.variables, objectUuid:context.document.uuid
+    })) return;
     if (action === "tab") { this.tab = target.dataset.tab; this.selectedScript = null; this.selectedFeature = null; }
     else if (action === "property-tab") { this.propertyTab = target.dataset.tab; this.selectedScript = null; }
-    else if (action === "behavior-tab") { this.behaviorTab = target.dataset.tab; this.selectedScript = null; }
+    else if (action === "behavior-tab") {
+      if (this.draft.playerCharacter && target.dataset.tab === "routine") return this.render({ force: true });
+      this.behaviorTab = target.dataset.tab; this.selectedScript = null;
+    }
     else if (await this.propertyAction(action,target,context)) { /* Handled by a content section. */ }
     else if (action === "edit-command") {
       this.selectedCommand = target.dataset.commandId; this.selectedScript = null;

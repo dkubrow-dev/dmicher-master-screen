@@ -39,12 +39,12 @@ function containsNative(object, point, event, type) {
 }
 
 /** Prefer the active edit layer; hidden documents remain editable by the GM. */
-export function findCanvasObject(board, event, { constructorMode = false } = {}) {
+export function findCanvasObject(board, event, { constructorMode = false, accepts = () => true } = {}) {
   if (constructorMode && !constructorCanSelect(board)) return null;
   // The actual PIXI event target is more precise than an overlapping bounding box.
   for (let object = event.target; object && object !== board.stage; object = object.parent) {
     const descriptor = descriptorOf(object);
-    if (!descriptor) continue;
+    if (!descriptor || !accepts(descriptor, object)) continue;
     if (constructorMode ? belongsToActiveLayer(board, object, descriptor) : object.isVisible !== false && !isSceneObjectHidden(object.document)) return descriptor;
   }
   const point = event.getLocalPosition(board.stage), layers = constructorMode
@@ -57,6 +57,7 @@ export function findCanvasObject(board, event, { constructorMode = false } = {})
     for (const object of [...(layer.placeables ?? [])].reverse()) {
       const document = object.document, type = document?.documentName ?? document?.constructor?.documentName;
       if (!supported.has(type)) continue;
+      if (!accepts({ type, id: document.id }, object)) continue;
       if (!constructorMode && (object.isVisible === false || isSceneObjectHidden(document))) continue;
       if (containsNative(object, point, event, type)) return { type, id: document.id };
     }
@@ -64,15 +65,8 @@ export function findCanvasObject(board, event, { constructorMode = false } = {})
   return null;
 }
 
-const focused = new WeakMap();
-export function clearCanvasObjectFocus(board) {
-  if (!board) return;
-  const previous = focused.get(board);
-  if (!previous) return;
-  board.app?.ticker?.remove?.(previous.draw);
-  previous.frame?.parent?.removeChild?.(previous.frame);
-  previous.frame?.destroy?.(); focused.delete(board);
-}
+// Kept as a harmless lifecycle hook for callers; native controls own selection.
+export function clearCanvasObjectFocus() {}
 /** Activate the real native layer. No scene document is changed to focus it. */
 export async function focusCanvasObject(board, descriptor) {
   if (!supported.has(descriptor?.type)) return false;
@@ -94,20 +88,6 @@ export async function focusCanvasObject(board, descriptor) {
     if (activeControl?.tools?.select) activeLayer.activate?.({ tool: "select" });
   }
   activeLayer.releaseAll?.(); object.control?.({ releaseOthers: true });
-  const Graphics = globalThis.PIXI?.Graphics;
-  if (Graphics) {
-    const frame = new Graphics(); frame.eventMode = "none";
-    board.stage.addChild(frame);
-    const sceneId = board.scene.id;
-    const draw = () => {
-      if (board.scene?.id !== sceneId || object.destroyed) { clearCanvasObjectFocus(board); return; }
-      const bounds = object.bounds ?? sceneObjectBounds(document, board.scene);
-      if (!bounds) return;
-      const padding = 5 / Number(board.stage.scale?.x || 1), width = Math.max(bounds.width, 16), height = Math.max(bounds.height, 16);
-      frame.clear().lineStyle(2 / Number(board.stage.scale?.x || 1), 0xffc857, 1).drawRect(bounds.x - padding, bounds.y - padding, width + padding * 2, height + padding * 2);
-    };
-    focused.set(board, { frame, draw }); draw(); board.app?.ticker?.add?.(draw);
-  }
   await board.animatePan?.({ ...center, duration: 250 });
   return true;
 }
@@ -122,14 +102,14 @@ export function canvasPointerPosition(board, event) {
 
 /** Capture observes clicks even when native controls stop bubbling. It never
  * prevents Foundry selection/dragging, and a drag does not open a menu on release. */
-export function listenCanvasObjectClicks(board, callback) {
+export function listenCanvasObjectClicks(board, callback, { onPress } = {}) {
   const stage = board?.stage, starts = new Map();
   if (!stage) return () => {};
-  const down = (event) => starts.set(event.pointerId ?? 0, event.global ? { x: event.global.x, y: event.global.y } : null);
+  const down = (event) => starts.set(event.pointerId ?? 0, { point:event.global ? { x: event.global.x, y: event.global.y } : null, context:onPress?.(event) });
   const tap = (event) => {
     const key = event.pointerId ?? 0, start = starts.get(key); starts.delete(key);
-    if (start && event.global && Math.hypot(event.global.x - start.x, event.global.y - start.y) > 5) return;
-    callback(event);
+    if (start?.point && event.global && Math.hypot(event.global.x - start.point.x, event.global.y - start.point.y) > 5) return;
+    callback(event, start?.context);
   };
   stage.on("pointerdowncapture", down); stage.on("pointertapcapture", tap);
   return () => { stage.off("pointerdowncapture", down); stage.off("pointertapcapture", tap); starts.clear(); };

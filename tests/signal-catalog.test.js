@@ -7,8 +7,8 @@ import { exportCatalogDependencies, mergeCatalogDependencies, normalizeCatalog }
 test("reading built-ins creates no world data and covers every requested emitter", () => {
   const f = fixture(), catalog = f.catalog.list();
   assert.equal(f.writes(), 0);
-  assert.deepEqual(catalog.emitters.map((e) => e.type), ["Scene", "Combat", "Group", "Token", "Token", "Shop", "Dialogue"]);
-  for (const [type, count] of [["Scene", 4], ["Combat", 4], ["Group", 4], ["Shop", 4], ["Dialogue", 3]]) {
+  assert.deepEqual(catalog.emitters.map((e) => e.type), ["Scene", "Combat", "Group", "Group", "Token", "Token", "Shop", "Dialogue"]);
+  for (const [type, count] of [["Scene", 4], ["Combat", 4], ["Group", 8], ["Shop", 4], ["Dialogue", 3]]) {
     const signals = catalog.signals.filter((s) => s.emitterKey.startsWith(`${type}:`)); assert.equal(signals.length, count);
     for (const signal of signals) { assert.ok(signal.description.ru && signal.description.en); for (const field of [...signal.parameters, ...signal.returns]) assert.ok(field.description.ru && field.description.en && field.builtin); }
   }
@@ -73,7 +73,7 @@ test("subscription requires an owned macro and validates without executing it", 
 
 test("event script subscribers require a native scene object in saves and imports", async () => {
   const f = fixture(), signal = f.catalog.list().signals.find(row => row.emitterKey === "Scene:scene");
-  for (const ownerKey of ["Scene:scene", "Group:main", "Shop:shop", "Dialogue:dialogue"]) {
+  for (const ownerKey of ["Scene:scene", "Shop:shop", "Dialogue:dialogue"]) {
     const subscription = { id: "sub", ownerKey, emitterKey: signal.emitterKey, signalId: signal.id, handler: "script" };
     const before = f.writes();
     await assert.rejects(f.catalog.saveSubscription(subscription));

@@ -15,8 +15,8 @@ export const OBJECT_HELP_PAGES = [
         "id": "give",
         "ru": "Выдать команду от персонажа",
         "en": "Issue a command as a character",
-        "bodyRu": "Выберите своего персонажа и откройте меню объекта → «Команды». Для «Встань там» кликните видимую точку; для «Патрулируй» — две точки. Escape отменяет выбор, затем карта возвращается к обычному управлению. Для поручения выберите исполнителя, целевой объект и доступную команду. Следите за выполнением по плашке командующего и текущей работы; отдельное подтверждение в чате не требуется. Отказ сопровождается понятным предупреждением игроку и мастеру.",
-        "bodyEn": "Select your character and open the object's menu → Commands. For Stand there, click a visible point; for Patrol, click two points. Escape cancels selection and restores normal map controls. To delegate, choose the performer, target object and available command. Follow progress on the badge showing the commanding character and current work; no separate chat confirmation is needed. Rejection gives the player and GM a readable warning."
+        "bodyRu": "Выберите своего персонажа и откройте меню объекта → «Команды». Для «Встань там» укажите видимую точку; для «Патрулируй» — две. Для поручения выберите исполнителя, затем объект на карте и доступную команду. Escape отменяет выбор. Линии показывают участников поручения. Если исполнитель — персонаж другого игрока, команда ждёт подтверждения владельца или мастера в чате: действует первый ответ, без ответа команда не запускается.",
+        "bodyEn": "Select your character and open the object's menu → Commands. For Stand there, choose a visible point; for Patrol, choose two. To delegate, select the performer, then the target on the map and an available command. Escape cancels selection. Lines show the participants. A command to another player's character waits for owner or GM confirmation in chat: the first answer decides, and no answer means no execution."
       },
       {
         "id": "replacement",
@@ -113,8 +113,8 @@ export const OBJECT_HELP_PAGES = [
         "id": "player",
         "ru": "Подготовить персонажа игрока",
         "en": "Prepare a player character",
-        "bodyRu": "Отметьте «Персонаж игрока»: автоматизация токена отключится, но персонаж сможет обращаться к объектам любых групп без собственной группы. Владение персонажем, дальность, видимость и теги по-прежнему проверяются.",
-        "bodyEn": "Enable Player character: the token's automation is disabled, while it may interact across groups without owning a group. Character ownership, range, visibility and tags still apply."
+        "bodyRu": "Включите «Персонаж игрока»: токен попадёт в постоянную группу «Игроки». Она может быть пустой. У её объектов нет рутины, но работают состояния, события, реакции и разрешённые команды. Персонаж может взаимодействовать с объектами других групп; владение, дальность, видимость и теги продолжают проверяться.",
+        "bodyEn": "Enable Player character to place the token in the permanent Players group. This group may be empty. Its objects have no routine, but support states, events, reactions and allowed commands. The character can interact across groups; ownership, range, visibility and tags still apply."
       },
       {
         "id": "transitions",
@@ -458,7 +458,7 @@ export const OBJECT_HELP_SETTINGS = [
   { id: "settings-objects", ru: "Автоматизация объектов", en: "Object automation", fields: [
     ["register-shop", "register-shop", "Магазины", "Shops", "На вкладке «Магазины» добавьте магазин из каталога. Для самостоятельного обращения игрока настройте условия назначения.", "On Shops, add a catalog shop. Configure its assignment conditions to allow player-initiated access."],
     ["register-dialogue", "register-dialogue", "Диалоги", "Dialogues", "Выберите диалог из каталога и нажмите «Добавить». Он станет доступен скриптам объекта; условия самостоятельного запуска игроком настраиваются отдельно.", "Choose a catalog dialogue and press Add. It becomes available to the object's scripts; player-initiated access is configured separately."],
-    ["object-player-character", "player", "Персонаж игрока", "Player character", "Отключает автоматизацию токена. Разрешает взаимодействия с объектами любых групп с проверкой владения и условий.", "Disables token automation. Allows interaction across groups with ownership and condition checks."],
+    ["object-player-character", "player", "Персонаж игрока", "Player character", "Помещает токен в группу «Игроки»: без рутины, но с состояниями, событиями, реакциями и командами. Взаимодействие с другими группами учитывает владение и условия.", "Places the token in Players: no routine, but states, events, reactions and commands remain available. Interaction across groups still checks ownership and conditions."],
     ["object-group", "owner", "Группа", "Group", "Единственная группа, управляющая автоматизацией объекта. Перед переназначением остановите затронутые группы.", "The single group controlling this object's automation. Stop affected groups before reassigning."],
     ["object-tags", "tags", "Теги", "Tags", "Теги объекта через запятую. Условия инструментов проверяют теги действующего персонажа.", "Comma-separated object tags. Tool conditions check the acting character's tags."],
     ["object-notes", "notes", "Заметки мастера", "GM notes", "Личные заметки подготовки. Enter сохраняет окно; Shift+Enter добавляет строку.", "Private preparation notes. Enter saves the window; Shift+Enter adds a line."],

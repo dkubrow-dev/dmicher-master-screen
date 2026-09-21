@@ -41,6 +41,15 @@ test("Automation opens information without a group and has one tab per responsib
   assert.doesNotMatch(body,/name="register-dialogue"/);
 });
 
+test("player characters hide only Routine while Events and Reactions remain available", async () => {
+  const { app } = fixture();
+  app.draft.playerCharacter = true; app.tab = "behavior"; app.behaviorTab = "routine";
+  const { body } = await app._prepareContext();
+  assert.equal(app.behaviorTab, "event");
+  assert.doesNotMatch(body, /data-tab="routine"/);
+  assert.match(body, /data-tab="event"/); assert.match(body, /data-tab="reaction"/);
+});
+
 test("registering a tool makes it available to scripts without enabling player actions", async () => {
   const { app, fields } = fixture();
   fields.set('[name="register-dialogue"]', { value: "one" });

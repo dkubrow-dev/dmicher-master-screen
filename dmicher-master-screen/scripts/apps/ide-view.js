@@ -143,7 +143,7 @@ export function renderParameters({ selection, draft, catalog, definitions, runti
       return html + `<p class="ms-note">${esc(localizedDescription(draft.description))}</p>`;
     }
     html += input(isGroup ? "groupName" : "name", t("Название", "Name"), isGroup ? draft.groupName : draft.name, 'required maxlength="120"');
-    if (isGroup) html += `<div class="ms-group-symbol">${input("groupSymbol", t("Символ группы", "Group symbol"), draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"')}<span id="ms-symbol-hint" class="ms-note">${t("Одна видимая графема, включая составной эмоджи.", "One visible symbol, including a compound emoji.")}</span></div>${select("entryStateId", t("Состояние входа", "Entry state"), draft.states ?? [], draft.entryStateId)}`;
+    if (isGroup) html += `<div class="ms-group-symbol">${input("groupSymbol", t("Символ группы", "Group symbol"), draft.symbol ?? "🎬", 'required aria-describedby="ms-symbol-hint"')}<button type="button" data-group-symbol-picker aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Выбрать символ группы", "Choose group symbol")}" title="${t("Выбрать символ группы", "Choose group symbol")}">☺</button><span id="ms-symbol-hint" class="ms-note">${t("Одна видимая графема, включая составной эмоджи.", "One visible symbol, including a compound emoji.")}</span></div>${select("entryStateId", t("Состояние входа", "Entry state"), draft.states ?? [], draft.entryStateId)}`;
     html += descriptionField(draft.description);
     html += colorFields(draft);
 

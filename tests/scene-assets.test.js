@@ -14,8 +14,8 @@ const wait = (stateId) => ({ stateId, steps: [{ id: 1, kind: "wait", parameters:
 
 test("removed models are never inferred; current catalogs may be authored without any group", async () => {
   const f = sceneFixture(), old = defaultDefinition(); old.states[0].tokens = { npc: { shop: { items: shopData().items } } }; f.scene.flags[MODULE_ID].definitions = { main: old };
-  const before = clone(f.scene.flags); assert.deepEqual(f.assets.list().shops, []); assert.deepEqual(f.objects.list().bindings, {}); assert.deepEqual(getDefinitions(f.scene), []); assert.deepEqual(f.scene.flags, before);
-  await f.assets.saveShop(shopData()); await f.assets.saveDialogue(dialogueData()); assert.deepEqual(getDefinitions(f.scene), []); assert.equal(f.scene.getFlag(MODULE_ID, "groupRuntimes"), undefined);
+  const before = clone(f.scene.flags); assert.deepEqual(f.assets.list().shops, []); assert.deepEqual(f.objects.list().bindings, {}); assert.deepEqual(getDefinitions(f.scene).map(group => group.groupId), ["players"]); assert.deepEqual(f.scene.flags, before);
+  await f.assets.saveShop(shopData()); await f.assets.saveDialogue(dialogueData()); assert.deepEqual(getDefinitions(f.scene).map(group => group.groupId), ["players"]); assert.equal(f.scene.getFlag(MODULE_ID, "groupRuntimes"), undefined);
 });
 test("catalog revisions, names and quantities reject invalid edits before writing", async () => {
   const f = sceneFixture(), shop = await f.assets.saveShop(shopData()), revision = f.assets.list().revision;
@@ -90,11 +90,11 @@ test("scoped import binds a native scene signal subscription to the receiving sc
   const receiver = f.create("receiver"); await new GroupEditor(receiver).importGroup(f.editor.exportGroup(group.groupId));
   const subscription = getSignalCatalog(receiver).subscriptions[0]; assert.equal(subscription.ownerKey, "Token:npc"); assert.equal(subscription.emitterKey, "Scene:receiver"); assert.equal(subscription.signalId, "builtin:Scene:receiver:activated");
 });
-test("player-character flags retain saved preparation but exclude automated state snapshots", async () => {
-  const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData());
+test("player-character flags use Players with actions but without routine", async () => {
+  const f = sceneFixture(), group = f.editor.get("players"), shop = await f.assets.saveShop(shopData());
   await f.objects.save(descriptor, { groupId: group.groupId, playerCharacter: true, scripts: [wait(group.entryStateId)], shops: [{ shopId: shop.id }] });
-  const materialized = materializeState(f.scene, group, group.states[0]); assert.deepEqual(materialized.scripts, []); assert.deepEqual(materialized.objects, []); assert.deepEqual(materialized.shops, []); assert.equal(f.objects.get(descriptor).shops.length, 1);
-  await f.objects.save({ type: "Token", id: "pc" }, { playerCharacter: true }); assert.equal(f.objects.get({ type: "Token", id: "pc" }).groupId, null); await assert.rejects(f.objects.save({ type: "Tile", id: "counter" }, { playerCharacter: true }));
+  const materialized = materializeState(f.scene, group, group.states[0]); assert.deepEqual(materialized.scripts, []); assert.equal(materialized.objects.length, 1); assert.equal(f.objects.get(descriptor).shops.length, 1);
+  await f.objects.save({ type: "Token", id: "pc" }, { playerCharacter: true }); assert.equal(f.objects.get({ type: "Token", id: "pc" }).groupId, "players"); await assert.rejects(f.objects.save({ type: "Tile", id: "counter" }, { playerCharacter: true }));
 });
 test("whole scene bundles contain catalogs and explicit bindings but no active execution", async () => {
   const f = sceneFixture(), group = await f.editor.createGroup(), shop = await f.assets.saveShop(shopData()); await f.objects.save(descriptor, { groupId: group.groupId, shops: [{ shopId: shop.id }], notes: "Note" });

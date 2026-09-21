@@ -102,11 +102,11 @@ async function stoppedObjectFixture() {
   const routine = normalizeScript({ name: "Routine", steps: [
     step(1, "visibility", { visible: false }, [2]), step(2, "wait", { seconds: 100 })
   ] });
-  const f = await commandFixture({ commands: ["stop"], scripts: [{ stateId: "calm", ...routine }] });
+  const f = await commandFixture({ commands: ["behavior-off"], scripts: [{ stateId: "calm", ...routine }] });
   f.binding.initialScript = initial();
   await f.tick(); await f.tick();
   assert.equal(f.npc.hidden, true, "the routine was already executing before Stop");
-  await f.accept("stop", {}, f.gm);
+  await f.accept("behavior-off", {}, f.gm);
   for (let index = 0; index < 5; index++) await f.tick();
   assert.equal(f.active(), null, "Stop has completed and no command owns the object");
   assert.ok(f.current().disabledObjects.includes("Token:npc"));

@@ -21,7 +21,7 @@ function positionSubmenu(submenu, group, view, preferred = "right") {
 
 /** The same transient menu serves constructor tools and permitted player actions. */
 export class ObjectContextMenu {
-  open(items, { x = 0, y = 0 } = {}) {
+  open(items, { x = 0, y = 0, header, onClose } = {}) {
     this.close();
     if (!items.length) return false;
     const document = globalThis.document, view = document.defaultView;
@@ -30,6 +30,14 @@ export class ObjectContextMenu {
     menu.className = themedClasses("ms-object-menu").join(" ");
     menu.setAttribute("role", "menu");
     const events = new view.AbortController(); this.events = events; this.element = menu;
+    this.onClose = onClose;
+    if (header) {
+      const heading = document.createElement("div"), actor = document.createElement("strong");
+      heading.className = "ms-object-menu-heading"; heading.setAttribute("role", "presentation");
+      actor.textContent = header.actor; actor.style.fontSize = "1.15em"; heading.append(actor);
+      if (header.target) { const target = document.createElement("div"); target.textContent = header.target; heading.append(target); }
+      menu.append(heading);
+    }
     const options = { signal: events.signal };
     const branches = [];
     const cancelBranchTimer = branch => {
@@ -97,7 +105,7 @@ export class ObjectContextMenu {
         appendItems(item.children,submenu); group.append(button,submenu); parent.append(group); continue;
       }
       button.addEventListener("click", () => {
-        this.close();
+        this.close("select");
         void Promise.resolve().then(item.action).catch(notifyError);
       }, options);
       parent.append(button);
@@ -123,8 +131,10 @@ export class ObjectContextMenu {
     menu.querySelector("button")?.focus();
     return true;
   }
-  close() {
+  close(reason = "cancel") {
+    const onClose = this.onClose; this.onClose = null;
     this.events?.abort(); this.element?.remove(); this.events = this.element = null;
     this.previousFocus?.focus?.({ preventScroll: true }); this.previousFocus = null;
+    onClose?.(reason);
   }
 }

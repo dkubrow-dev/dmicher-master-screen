@@ -3,7 +3,7 @@ import { MODULE_ID } from "./model.js";
 import { getDefinitions, getRuntimes, requireGM, withSceneLock } from "./store.js";
 import { getInteractionCatalog, mergeInteractionAssets } from "./scene-assets.js";
 import { getSignalCatalog, exportCatalogDependencies, mergeCatalogDependencies } from "./signal-catalog.js";
-import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences, remapBindingCommandGroups } from "./configuration-transfer.js";
+import { stageScene, remapStateSignals, remapDialogueSignals, remapBindingSignals, remapBindingStateTransitions, remapBindingActionReferences, remapBindingCommandGroups, validateInlineSubscriptionReferences } from "./configuration-transfer.js";
 import { normalizeObjectBinding, normalizeObjectBindings, objectKey, registeredToolIds, toolRegistration, validateBindingReferences, clearGroupContent, reconcileBindingGroups, resolveBindingTools, materializeStateDefinition } from "./object-binding-model.js";
 import { interactionType } from "./interaction-model.js";
 import { replacementFlagData } from "./scene-flags.js";
@@ -86,7 +86,7 @@ export const resolveObjectDialogue = (scene, target, context, id) => resolveObje
 /** Script ownership is independent of a player's state, tag or range policy. */
 export function resolveRegisteredObjectDialogue(scene, target, { groupId }, id) {
   const binding = getObjectBindings(scene).bindings[objectKey(target)];
-  if (!binding?.groupId || binding.groupId !== groupId || binding.playerCharacter || !registeredToolIds(binding, "dialogue").includes(id)) return null;
+  if (!binding?.groupId || binding.groupId !== groupId || !registeredToolIds(binding, "dialogue").includes(id)) return null;
   const asset = getInteractionCatalog(scene).dialogues.find((entry) => entry.id === id);
   return asset ? { binding, asset, config: { ...clone(asset), enabled: true, dialogueId: asset.id, target: { type: binding.type, id: binding.id } } } : null;
 }
@@ -120,13 +120,13 @@ export function exportObjectConfiguration(scene, groupId, { stateId } = {}) {
 export function importObjectConfiguration(scene, source, { groupId, sourceGroupId, stateMapping = new Map(), definitions } = {}) {
   const current = getObjectBindings(scene), incoming = normalizeObjectBindings(source.objectBindings ?? {});
   const { catalog, mapping } = mergeInteractionAssets(scene, source.interactionCatalog ?? {}), next = clone(current);
-  const emitterMapping = new Map([[`Group:${sourceGroupId}`, `Group:${groupId}`]]), idMapping = new Map();
+  const emitterMapping = new Map([[`Group:${sourceGroupId}`, `Group:${groupId}`]]), idMapping = new Map(), subscriptionMapping = new Map();
   if (!validId(source.sourceSceneId)) fail(localizedMessage("В JSON отсутствует ID исходной сцены."));
   for (const type of ["Scene", "Combat"]) emitterMapping.set(`${type}:${source.sourceSceneId}`, `${type}:${scene.id}`);
   for (const [from, to] of mapping) emitterMapping.set(from, `${from.split(":")[0]}:${to}`);
   const flags = { groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, entry])), interactionCatalog: catalog, objectBindings: next };
   const staged = stageScene(scene, flags);
-  const signalCatalog = mergeCatalogDependencies(staged, source.catalog ?? {}, { emitterMapping, idMapping });
+  const signalCatalog = mergeCatalogDependencies(staged, source.catalog ?? {}, { emitterMapping, idMapping, subscriptionMapping, sourceGroupId, groupId, stateMapping });
   flags.signalCatalog = signalCatalog;
   for (const definition of definitions) if (definition.groupId === groupId) definition.states = remapStateSignals(definition.states, idMapping);
   const importedDialogueIds = new Set([...mapping].filter(([key]) => key.startsWith("Dialogue:")).map(([, id]) => id));
@@ -134,7 +134,7 @@ export function importObjectConfiguration(scene, source, { groupId, sourceGroupI
   const remap = (values) => values.map((id) => stateMapping.get(id) ?? id);
   for (const [key, original] of Object.entries(incoming.bindings)) {
     if (current.bindings[key]?.groupId && current.bindings[key].groupId !== groupId) fail(localizedMessage("Объект {0} уже принадлежит другой группе.", [key]));
-    let binding = remapBindingSignals(original, idMapping);
+    let binding = remapBindingSignals(original, idMapping, subscriptionMapping);
     binding = remapBindingStateTransitions(binding, { sourceGroupId, groupId, stateMapping });
     binding = remapBindingCommandGroups(binding, { sourceGroupId, groupId, stateMapping });
     binding = remapBindingActionReferences(binding, {
@@ -161,5 +161,6 @@ export function importObjectConfiguration(scene, source, { groupId, sourceGroupI
     next.bindings[key] = binding;
   }
   for (const binding of Object.values(incoming.bindings)) validateObjectBinding(staged, next.bindings[objectKey(binding)], definitions);
+  validateInlineSubscriptionReferences(getSignalCatalog(staged), definitions);
   next.revision++; return { signalCatalog, interactionCatalog: catalog, objectBindings: objectBindingsWriteData(current, next) };
 }

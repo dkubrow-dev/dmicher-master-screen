@@ -242,16 +242,16 @@ test("switching editor modes retains independent drafts; opening shops preserves
   } finally { await f.dispose(); }
 });
 
-test("an empty scene stays empty through constructor, director and tool windows", async () => {
+test("an empty scene exposes the virtual Players group without writing it through editor windows", async () => {
   const f = fixture(14);
   try {
     f.scene.flags = {};
     const controller = new ScreenController();
-    assert.equal(controller.getContext().definition, null);
+    assert.equal(controller.getContext().definition.groupId, "players");
     await controller.setMode("constructor");
-    assert.equal(controller.editor.context.missingGroup, true);
+    assert.ok(!controller.editor.context.missingGroup);
     assert.match(controller.editor.context.nodeActions, /addGroup/);
-    assert.equal(controller.editor.context.badgesHTML, "");
+    assert.match(controller.editor.context.badgesHTML, /data-group-badge="players"[^>]*data-status="unstarted"/);
     await controller.openObjectAutomation({ type: "Token", id: "guard" }).render();
     await controller.setMode("director");
     await controller.openDialogues().render();
@@ -261,7 +261,7 @@ test("an empty scene stays empty through constructor, director and tool windows"
     assert.equal(controller.getContext().definition.states.length, 4);
     assert.equal(controller.getContext({ groupId: "deleted-group" }).definition, null, "a stale tool must not silently edit the first remaining group");
     canvas.scene = f.scene; await controller.editor.refresh();
-    assert.equal(controller.getContext().definition, null);
+    assert.equal(controller.getContext().definition.groupId, "players");
     assert.deepEqual(f.errors, []);
   } finally { await f.dispose(); }
 });

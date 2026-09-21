@@ -23,7 +23,7 @@ export function installSceneSignals(signals, { hooks = globalThis.Hooks, onError
   };
   snapshot(false);
   const on = (name, fn) => ids.push([name, hooks.on(name, fn)]);
-  on("updateScene", (scene, changes) => { if (changes.active === true) emit(scene, "activated", {}); });
+  on("updateScene", (scene, changes, _options, userId) => { if (changes.active === true) emit(scene, "activated", { sceneUuid: sceneUuid(scene), userUuid: game.users?.get(userId)?.uuid ?? `User.${userId ?? game.user.id}` }); });
   for (const name of ["renderSceneNavigation", "canvasReady", "userConnected"]) on(name, () => snapshot(true));
   on("pauseGame", (paused) => {
     const scene = globalThis.canvas?.scene;

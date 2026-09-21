@@ -13,7 +13,7 @@ import { chooseScriptSuccessor, scriptRowSuccessor, executeScriptTransition } fr
 import { ObjectVariableService } from "./object-variables.js";
 import { canExecuteScriptKind } from "./premium-provider.js";
 import { executeSignalMacro } from "./signal-macros.js";
-import { SCRIPT_TOOL_KINDS, executeScriptToolAction } from "./script-tool-actions.js";
+import { executeScriptFunction } from "./script-functions/index.js";
 
 const clone = structuredClone;
 const LIMIT = 16;
@@ -82,6 +82,7 @@ export class ObjectScriptRuntime {
   }
   canExecute(kind) { return !isPremiumScriptStep(kind) || (this.runtime.canUsePremiumStep?.(kind) ?? canExecuteScriptKind(kind)); }
   variableContext(scene, object, current, extra = {}) {
+    if (this.runtime.variableContext) return this.runtime.variableContext(scene, object, current, extra);
     this.runtime.variables ??= new ObjectVariableService();
     return { ...extra, ...this.runtime.variables.scope(scene, { object: targetOf(object), current }) };
   }
@@ -449,88 +450,13 @@ export class ObjectScriptRuntime {
     }
     // Check again after claim: a prepared Premium value never grants execution.
     if (!this.canExecute(step.kind) && stage !== "combat" && stage !== "endTurn") return { premiumSkipped: true };
-    if (SCRIPT_TOOL_KINDS.includes(step.kind) && stage !== "combat" && stage !== "endTurn") return executeScriptToolAction(job, {
-      runtime: this.runtime, current: admitted, executionCurrent, scriptKey: job.progressKey,
-      waitUntilAdmitted: current => this.waitUntilAdmitted(job, current, executionCurrent)
-    });
     if (stage === "combat") {
       await this.combat.notify(object, script, step, job.rounds, `${job.key}:${job.sequence}`);
       if (!admitted()) return;
       return { decision: await this.combat.confirmAction(object, script, step, job.rounds) };
     }
     if (stage === "endTurn") { if (admitted()) await this.combat.finishTurn(scene, object, job.combat); return {}; }
-    if (step.kind === "speech") {
-      const start = stage === "effect";
-      if (start && admitted()) await effects.clearPreviousSpeech?.(scene, object, admitted);
-      if (admitted() && (start && current?.deleteMessages || !start && p.duration > 0 && p.chat.deleteAfter) && current?.messageIds?.length) await effects.removeSpeech(current.messageIds, admitted);
-      if (admitted() && p.chat.enabled && p.chat.timing === (start ? "before" : "after")) {
-        const messages = await effects.speak(scene, object, p.chat.text, { ...p.chat, visibleOnly: true, rich: true,
-          expiresAfter: !start && p.chat.deleteAfter ? p.duration : 0 }, `${job.key}:${job.sequence}:chat`, admitted);
-        return { messageIds: (messages ?? []).map((message) => message.id) };
-      }
-      return { messageIds: start ? [] : current?.messageIds ?? [] };
-    }
-    if (step.kind === "visibility") {
-      if (!scriptObjectCapabilities(object).visibility) throw new Error(localizedMessage("Этот объект не поддерживает скрытие."));
-      if (admitted()) await object.update({ hidden: !p.visible }); return {};
-    }
-    if (step.kind === "focus") {
-      if (admitted()) await effects.focus(scene, object, p.audience, { runId, groupId: job.groupId,
-        manual: this.state(scene, runId)?.manual === true, scriptKey: job.progressKey, scriptGeneration: job.generation,
-        isCurrent: executionCurrent });
-      return {};
-    }
-    if (step.kind === "sound") { if (admitted()) await effects.sound(p.src, p.volume, { scene, runId, target, groupId: job.groupId, manual: this.state(scene, runId)?.manual === true,
-      scriptKey: job.progressKey, scriptGeneration: job.generation,
-      // Sound may outlive its step. Only its script generation and ownership,
-      // not the next step's sequence number, can end this presentation.
-      isCurrent: () => this.generationCurrent(scene, runId, job.progressKey, job.generation)
-        && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey }) && !this.interruptionSource(scene, object, script, runId) }); return {}; }
-    if (step.kind === "signal") {
-      const state = this.state(scene, runId);
-      if (admitted()) await this.runtime.emitObjectSignal(scene, target, p.signalId, clone(p.parameters), { originSceneId: scene.id,
-        originRunId: state?.command ? state.parentRunId : runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0,
-        ...(state?.command ? { current: executionCurrent } : {}) });
-      return {};
-    }
-    if (step.kind === "state") {
-      await this.runtime.changeStates(scene, p.transitions, { originRunId: runId, admitted,
-        signalContext: { originSceneId: scene.id, originRunId: runId, originGroupId: job.groupId, chainId: `${job.key}:${job.sequence}`, depth: 0 } });
-      return {};
-    }
-    if (step.kind === "dialogue") {
-      if (this.state(scene, runId)?.manual && !this.state(scene, runId)?.purpose) throw new Error(text("Диалог скрипта доступен в переходах и рутине запущенной группы. Для ручного показа используйте окно диалогов.",
-        "Scripted dialogue is available in the transitions and routines of a running group. Use the Dialogues window for manual presentation."));
-      if (!this.runtime.startScriptDialogues) throw new Error(localizedMessage("Неизвестное действие скрипта."));
-      // Opening our first window pauses the object before the result references
-      // can be saved. Exclude only our confirmed windows while admitting the rest.
-      const isCurrent = (started = []) => {
-        const turn = this.combat.context(scene, object);
-        return executionCurrent() && !globalThis.game?.paused && this.current(scene, runId, target, { scriptKey: job.progressKey, excludeDialogueSessions: started })
-          && (!turn || script.combat.enabled && turn.isTurn);
-      };
-      const dialogueRunId = this.interactionState(scene, this.state(scene, runId))?.runId ?? runId;
-      const sessions = await this.runtime.startScriptDialogues({ sceneId: scene.id, groupId: job.groupId, runId: dialogueRunId, target, dialogueId: p.dialogueId, tokenUuids: clone(p.tokenUuids) },
-        { isCurrent, waitForAdmission: (started = []) => this.waitUntilAdmitted(job, () => isCurrent(started), executionCurrent) });
-      return { sessions };
-    }
-    if (step.kind === "macro") {
-      if (!this.runtime.isObjectMacroAttached(scene, target, p.macroUuid)) throw new Error(localizedMessage("Этот макрос не прикреплён к объекту скрипта."));
-      const active = () => admitted() && this.canExecute(step.kind);
-      const state = this.state(scene, runId), context = this.variableContext(scene, object, active,
-        { ...state?.executionContext, scene, token: object, state: state?.state, runId, stepId: step.id, isCurrent: active });
-      if (p.signalId) {
-        // The authority captured this input contract when invoking an event or
-        // reaction. Reactions are local action contracts, not global emitters.
-        const signal = state?.executionContext?.signal;
-        if (!signal || signal.id !== p.signalId) throw new Error(text("Выбранный интерфейс не совпадает с сигналом этого события.", "The selected interface does not match this event's signal."));
-        const macro = await globalThis.fromUuid(p.macroUuid);
-        const macroReturns = await executeSignalMacro(macro, signal, context.parameters ?? {}, context, { isCurrent: active });
-        return { macroReturns };
-      } else await effects.macro(p.macroUuid, context);
-      return {};
-    }
-    throw new Error(localizedMessage("Неизвестное действие скрипта."));
+    return executeScriptFunction(step.kind, { engine: this, job, scene, object, target, runId, step, script, stage, p, effects, current, admitted, executionCurrent });
   }
   /** A partially opened dialogue batch keeps its claimed job and exact views.
    * Pauses/turn changes wait in place; losing the run releases the wait entirely. */

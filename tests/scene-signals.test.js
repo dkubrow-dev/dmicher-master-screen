@@ -25,7 +25,7 @@ test("scene lifecycle observes navigation changes once and reconnect snapshots d
   f.player.active = false; await f.fire("userConnected", f.player, false);
   assert.equal(f.calls.at(-1).name, "userLeft");
   await f.fire("updateScene", f.scenes.get("two"), { name: "Renamed" }); assert.equal(f.calls.length, 3);
-  await f.fire("updateScene", f.scenes.get("two"), { active: true }); assert.deepEqual(f.calls.at(-1).parameters, {});
+  await f.fire("updateScene", f.scenes.get("two"), { active: true }); assert.deepEqual(f.calls.at(-1).parameters, {sceneUuid:"Scene.two",userUuid:"User.gm"});
   await f.fire("pauseGame", true); assert.deepEqual(f.calls.at(-1).parameters, { sceneUuid: "Scene.one", paused: true });
   f.dispose(); assert.equal(f.entries.size, 0); assert.deepEqual(f.errors, []);
 });

@@ -152,16 +152,16 @@ test("explicit stop policy allows an immediate replacement of a command's preced
   assert.deepEqual(coreCalls, ["wait"]); assert.deepEqual(f.errors, []);
 });
 
-test("emergency Stop discards a pending replacement and overrides the current script's Ignore policy", async () => {
+test("behavior-off discards a pending replacement and overrides the current script's Ignore policy", async () => {
   const come = configured("come"); come.beforeScript = block([step(1, "wait", { seconds: 10 })]);
   const coreCalls = [];
-  const f = await commandFixture({ commands: [come, "wait", "stop"], core: { async tick(_scene, run) { coreCalls.push(run.config.id); return { done: true }; } } });
+  const f = await commandFixture({ commands: [come, "wait", "behavior-off"], core: { async tick(_scene, run) { coreCalls.push(run.config.id); return { done: true }; } } });
   await f.accept("come"); await f.tick(); const original = f.active().runId;
   await f.accept("wait"); assert.equal(f.active().runId, original);
-  await within(f.accept("stop", {}, f.gm));
+  await within(f.accept("behavior-off", {}, f.gm));
   assert.notEqual(f.active()?.runId, original);
   for (let index = 0; f.active() && index < 10; index++) await f.tick();
-  assert.equal(f.active(), null); assert.deepEqual(coreCalls, ["stop"]);
+  assert.equal(f.active(), null); assert.deepEqual(coreCalls, ["behavior-off"]);
   assert.ok(f.current().disabledObjects.includes("Token:npc")); assert.deepEqual(f.errors, []);
 });
 

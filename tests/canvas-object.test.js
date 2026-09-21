@@ -37,7 +37,7 @@ test("native child targets and wall hit areas open the corresponding constructor
   assert.deepEqual(findCanvasObject(board, event(105, 150), { constructorMode: true }), { type: "Wall", id: "wall" });
   assert.equal(findCanvasObject(board, event(120, 150), { constructorMode: true }), null);
 });
-test("focusing activates native tools, controls and frames the object without document writes", async () => {
+test("focusing activates only native controls without an additional frame or ticker", async () => {
   const calls = [], tickers = new Set();
   class Graphics { clear() { return this; } lineStyle() { return this; } drawRect(...args) { calls.push(["frame", ...args]); return this; } destroy() { calls.push(["destroy"]); } }
   globalThis.PIXI = { Graphics };
@@ -49,11 +49,18 @@ test("focusing activates native tools, controls and frames the object without do
     app: { ticker: { add: (fn) => tickers.add(fn), remove: (fn) => tickers.delete(fn) } }, animatePan: (options) => calls.push(["pan", options]) };
   assert.equal(await focusCanvasObject(board, { type: "Drawing", id: drawing.id }), true);
   assert.deepEqual(calls[0], ["layer", { tool: "select" }]); assert.ok(calls.some(([kind]) => kind === "control"));
-  assert.deepEqual(calls.at(-1), ["pan", { x: 120, y: 80, duration: 250 }]); assert.equal(tickers.size, 1);
-  drawing.x = 80; [...tickers][0](); assert.equal(calls.at(-1)[1], 75);
-  clearCanvasObjectFocus(board); assert.equal(tickers.size, 0); assert.equal(calls.at(-1)[0], "destroy");
+  assert.deepEqual(calls.at(-1), ["pan", { x: 120, y: 80, duration: 250 }]); assert.equal(tickers.size, 0);
+  assert.equal(calls.some(([kind]) => kind === "frame"), false);
+  clearCanvasObjectFocus(board); assert.equal(tickers.size, 0);
   assert.equal(await focusCanvasObject(board, { type: "Wall", id: "missing" }), false);
   delete globalThis.PIXI;
+});
+test("delegation hit testing skips ineligible foreground objects on every native layer", () => {
+  const token = object("Token", "token"), light = object("AmbientLight", "light");
+  const board = { stage: {}, tokens: { placeables: [token] }, lighting: { placeables: [light] }, activeLayer: { placeables: [] } };
+  assert.deepEqual(findCanvasObject(board, { ...event(), target: token }, { accepts: descriptor => descriptor.type === "AmbientLight" }), { type: "AmbientLight", id: "light" });
+  light.isVisible = false;
+  assert.equal(findCanvasObject(board, event(), { accepts: descriptor => descriptor.type === "AmbientLight" }), null);
 });
 test("capture observes clicks but not drags, and disposal removes both listeners", () => {
   const listeners = new Map(), stage = { on: (name, fn) => listeners.set(name, fn), off: (name) => listeners.delete(name) }, received = [];
@@ -62,6 +69,14 @@ test("capture observes clicks but not drags, and disposal removes both listeners
   assert.equal(received.length, 0);
   listeners.get("pointerdowncapture")({ global: { x: 10, y: 10 } }); listeners.get("pointertapcapture")({ global: { x: 12, y: 10 } });
   assert.equal(received.length, 1); dispose(); assert.equal(listeners.size, 0);
+});
+test("the acting character is captured before native selection switches to the clicked executor", () => {
+  const listeners = new Map(), stage = { on:(name,fn)=>listeners.set(name,fn), off:name=>listeners.delete(name) };
+  let selected = "hero", received;
+  const dispose = listenCanvasObjectClicks({stage}, (_event, context)=>received=context, {onPress:()=>({actorTokenId:selected})});
+  listeners.get("pointerdowncapture")({global:{x:1,y:1}}); selected="executor";
+  listeners.get("pointertapcapture")({global:{x:1,y:1}});
+  assert.deepEqual(received,{actorTokenId:"hero"}); dispose();
 });
 test("constructor creation tools never fall through to tokens on inactive layers", () => {
   const token = object("Token", "token"), wall = object("Wall", "wall");

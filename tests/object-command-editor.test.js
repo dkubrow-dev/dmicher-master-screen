@@ -27,8 +27,7 @@ test("command options share interruption controls and support every builtin with
   assert.match(html, /Restart the current phase/);
   assert.match(html, /name="command-param-minDistance"/);
   assert.match(html, /name="command-param-maxDistance"/);
-  assert.match(renderObjectCommandFields(defaultObjectCommand("stop")), /value="players"/);
-  assert.equal(renderObjectCommandFields(defaultObjectCommand("stop")).includes('value="commander"'), false);
+  assert.doesNotMatch(renderObjectCommandFields(defaultObjectCommand("behavior-off")), /name="command-param-issuer"/);
   assert.match(renderObjectCommandFields(defaultObjectCommand("cancel")), /value="commander"/);
 });
 

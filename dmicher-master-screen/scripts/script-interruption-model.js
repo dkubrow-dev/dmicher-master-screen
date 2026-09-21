@@ -2,7 +2,7 @@ import { text } from "./localization.js";
 
 export const SCRIPT_INTERRUPTION_MODES = Object.freeze(["stop", "restart-step", "next-step", "restart-script"]);
 export const SCRIPT_COMMAND_INTERRUPTION_MODES = Object.freeze([...SCRIPT_INTERRUPTION_MODES, "ignore"]);
-export const SCRIPT_INTERRUPTION_SOURCES = Object.freeze(["combat", "interaction", "manual", "command", "error"]);
+export const SCRIPT_INTERRUPTION_SOURCES = Object.freeze(["combat", "interaction", "playerAction", "manual", "command", "error"]);
 
 const fail = message => { throw new Error(message); };
 function record(value, keys) {
@@ -12,7 +12,7 @@ function record(value, keys) {
   return value;
 }
 function mode(value = "stop", source) {
-  const choices = source === "command" ? SCRIPT_COMMAND_INTERRUPTION_MODES : SCRIPT_INTERRUPTION_MODES;
+  const choices = source === "playerAction" ? ["stop", "forbid"] : source === "command" ? SCRIPT_COMMAND_INTERRUPTION_MODES : SCRIPT_INTERRUPTION_MODES;
   if (!choices.includes(value)) {
     fail(text("Прерывание скрипта: выберите допустимое поведение.", "Script interruption: choose a supported behavior."));
   }
@@ -32,7 +32,7 @@ export function normalizeScriptInterruptions(raw = {}) {
     fail(text("Таймаут повторений: требуется число от 0,1 до 60 секунд.", "Retry delay: enter a number from 0.1 to 60 seconds."));
   }
   return {
-    combat: mode(raw.combat), interaction: mode(raw.interaction), manual: mode(raw.manual), command: mode(raw.command, "command"),
+    combat: mode(raw.combat), interaction: mode(raw.interaction), playerAction: mode(raw.playerAction, "playerAction"), manual: mode(raw.manual), command: mode(raw.command, "command"),
     error: { mode: mode(error.mode), retries, delaySeconds }
   };
 }

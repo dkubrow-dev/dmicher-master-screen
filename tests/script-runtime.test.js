@@ -349,11 +349,13 @@ test("manual state selection and a new start cancel unfinished scene restoration
   assert.equal(f.runtime.manualRuns.size, 0); assert.equal(f.flags.automationHalted, false); assert.equal(getRuntime(f.scene).halted, false);
   for (let i = 0; i < 12; i++) await f.tick(); assert.equal(f.npc.hidden, false);
 });
-test("scene reset skips absent and player objects and an empty scene stays stopped without creating groups", async () => {
+test("scene reset includes player initial scripts, skips absent objects and creates no empty groups", async () => {
   const f = await fixture({ initial: script([step(1, "visibility", { visible: false })]) });
   f.flags.objectBindings.bindings["Token:npc"].playerCharacter = true;
   f.flags.objectBindings.bindings["Token:missing"] = { ...f.flags.objectBindings.bindings["Token:npc"], id: "missing", playerCharacter: false };
-  assert.deepEqual(await f.runtime.restoreAllInitial(f.scene), []); assert.equal(f.npc.hidden, false); assert.equal(f.runtime.isRestoringInitial(f.scene), false);
+  assert.equal((await f.runtime.restoreAllInitial(f.scene)).length, 1);
+  await f.tick(); await f.tick();
+  assert.equal(f.npc.hidden, true); assert.equal(f.runtime.isRestoringInitial(f.scene), false);
   f.flags.groupDefinitions = {}; f.flags.objectBindings = { bindings: {} }; f.flags.groupRuntimes = {};
   assert.deepEqual(await f.runtime.restoreAllInitial(f.scene), []); assert.deepEqual(f.flags.groupDefinitions, {}); assert.deepEqual(f.flags.groupRuntimes, {}); assert.equal(f.flags.automationHalted, true);
 });

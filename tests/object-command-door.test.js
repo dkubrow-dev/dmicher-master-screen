@@ -2,13 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { commandFixture } from "./fixtures/object-commands.js";
 import { commandDoorVisible } from "../dmicher-master-screen/scripts/object-command-visibility.js";
+import { defaultObjectCommand } from "../dmicher-master-screen/scripts/object-command-model.js";
 
 async function doorFixture(generation = 13) {
-  const f = await commandFixture({ commands: ["open-door", "close-door"] });
+  const f = await commandFixture({ commands: ["delegate"] });
   f.scene.tokenVision = true; game.release = { generation };
   const door = { id: "door", uuid: "Scene.scene.Wall.door", documentName: "Wall", parent: f.scene,
     door: 1, ds: 0, c: [300, 0, 300, 100] };
   f.scene.walls.set(door.id, door);
+  f.flags.objectBindings.bindings["Wall:door"] = { type: "Wall", id: "door", commands: ["open", "close"].map(id => ({ ...defaultObjectCommand(id), enabled: true })) };
   const sources = [], samples = [];
   let visible = true;
   f.pc.sight = { enabled: true };
@@ -35,8 +37,8 @@ async function doorFixture(generation = 13) {
 
 for (const generation of [13, 14]) test(`Foundry ${generation}: a player can command a visible closed door while GM has no character selected`, async () => {
   const f = await doorFixture(generation);
-  await f.accept("open-door", { doorUuid: f.door.uuid });
-  assert.equal(f.active().request.parameters.doorUuid, f.door.uuid);
+  await f.accept("delegate", { targetUuid: f.door.uuid, commandId: "open" });
+  assert.equal(f.active().request.parameters.targetUuid, f.door.uuid);
   assert.equal(f.pc.object.controlled, false);
   assert.equal(f.pc.object.vision, undefined);
   assert.ok(f.sources.length > 0);
@@ -48,8 +50,8 @@ for (const generation of [13, 14]) test(`Foundry ${generation}: a player can com
 test("a truly unseen door still rejects either command without starting automation or writing the scene", async () => {
   const f = await doorFixture(); f.hide();
   const writes = f.writes(), signals = f.signals.length;
-  for (const command of ["open-door", "close-door"]) {
-    await assert.rejects(f.accept(command, { doorUuid: f.door.uuid }), error =>
+  for (const command of ["open", "close"]) {
+    await assert.rejects(f.accept("delegate", { targetUuid: f.door.uuid, commandId: command }), error =>
       error.code === "visibility" && /character issuing the command.*chosen door/.test(error.message));
   }
   assert.equal(f.active(), null); assert.equal(f.writes(), writes); assert.equal(f.signals.length, signals);
@@ -58,7 +60,7 @@ test("a truly unseen door still rejects either command without starting automati
 
 test("a visible locked door still cannot be opened and malformed geometry never bypasses admission", async () => {
   const f = await doorFixture(); f.door.ds = 2;
-  await assert.rejects(f.accept("open-door", { doorUuid: f.door.uuid }), error => error.code === "locked");
+  await assert.rejects(f.accept("delegate", { targetUuid: f.door.uuid, commandId: "open" }), error => error.code === "locked");
   f.scene.tokenVision = false;
   for (const coordinates of [undefined, [], [0, 0, 0, 0], [0, 0, Infinity, 2]]) {
     f.door.c = coordinates;

@@ -8,6 +8,8 @@ import { normalizeObjectBindings, validateObjectBinding } from "./scene-objects.
 import { isCommandLightSource } from "./object-command-model.js";
 import { getWorkspacePresets } from "./workspace-presets-store.js";
 import { normalizeWorkspacePresets, remapWorkspacePresetReferences } from "./workspace-presets-model.js";
+import { isPlayersGroup } from "./players-group.js";
+import { validateInlineSubscriptionReferences, remapCatalogReferences } from "./configuration-transfer.js";
 
 const copy = (data) => structuredClone(data);
 function portable(document) {
@@ -31,7 +33,8 @@ export function remapReferences(value, mapping) {
 export async function exportBundle(scene) {
   requireGM();
   if (!scene) throw new Error(localizedMessage("Сначала откройте сцену"));
-  const definitions = getDefinitions(scene), actors = [], macros = [], journals = [];
+  const storedGroups = scene.getFlag(MODULE_ID, "groupDefinitions") ?? {};
+  const definitions = getDefinitions(scene).filter(group => !isPlayersGroup(group.groupId) || storedGroups[group.groupId]), actors = [], macros = [], journals = [];
   const interactionCatalog = getInteractionCatalog(scene), objectBindings = normalizeObjectBindings(scene.getFlag(MODULE_ID, "objectBindings") ?? {});
   const workspacePresets = getWorkspacePresets(scene);
   const signalCatalog = exportCatalogDependencies(scene);
@@ -116,6 +119,7 @@ export function validateBundle(value) {
     scene[key] = new Map((value.scene[key] ?? []).map((entry) => [entry._id, { ...entry, id: entry._id }]));
   }
   const signals = getSignalCatalog(scene).signals;
+  validateInlineSubscriptionReferences(getSignalCatalog(scene), getDefinitions(scene));
   for (const dialogue of getInteractionCatalog(scene).dialogues) for (const page of dialogue.pages) for (const response of page.responses) {
     if (response.signalId) {
       const signal = signals.find((entry) => entry.id === response.signalId && entry.emitterKey === `Dialogue:${dialogue.id}`);
@@ -177,7 +181,7 @@ export async function importBundle(value) {
     }
     await scene.update({ [`flags.${MODULE_ID}`]: {
       groupDefinitions: Object.fromEntries(definitions.map((entry) => [entry.groupId, { ...entry, revision: 1 }])),
-      signalCatalog: normalizeCatalog(remapReferences(catalog, mapping)),
+      signalCatalog: normalizeCatalog(remapCatalogReferences(catalog, mapping, remapReferences)),
       interactionCatalog: normalizeInteractionCatalog(remapReferences(value.interactionCatalog ?? {}, mapping)),
       workspacePresets,
       objectBindings: normalizeObjectBindings(remapReferences(value.objectBindings ?? {}, mapping))

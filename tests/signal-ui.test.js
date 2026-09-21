@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { renderSignalTree, renderParameters, signalTreeCategories } from "../dmicher-master-screen/scripts/apps/ide-view.js";
 import { renderSignalFields, readSignalFields, renderSubscriptionFields, renderMacroValidation } from "../dmicher-master-screen/scripts/apps/signal-fields.js";
 import { buildScriptFields } from "../dmicher-master-screen/scripts/apps/script-fields.js";
+import { getScriptMacroEntries } from "../dmicher-master-screen/scripts/apps/script-catalog-input.js";
 import { readSignalSchemaField } from "../dmicher-master-screen/scripts/apps/signal-schema-fields.js";
 globalThis.game = { i18n: { lang: "en" }, macros: new Map() };
 const catalog = { emitters: [{key:"Token:guard",name:"Guard <safe>",groupId:"market"},{key:"Scene:scene",name:"Scene",groupId:null},{key:"Group:market",name:"Market",groupId:"market"}], signals:[{id:"alert",emitterKey:"Token:guard",name:"Alert <safe>",parameters:[],returns:[]}],macros:[],subscriptions:[] };
@@ -80,12 +81,13 @@ test("an emptied numeric default cannot silently become zero",()=>{
   values["field-default-value"]="0";
   assert.equal(readSignalSchemaField(row,{name:"count",type:"integer",default:12}).default,0);
 });
-test("script pickers offer only signals and macros belonging to their object",()=>{
+test("script pickers render object signals and leave owner macro filtering to the shared catalog",()=>{
   const data={...catalog,signals:[...catalog.signals,{id:"foreign-signal",name:"Foreign",emitterKey:"Token:other"}],macros:[{ownerKey:"Token:guard",uuid:"Macro.own"},{ownerKey:"Token:other",uuid:"Macro.foreign"}]};
   const script={name:"Test",steps:[{id:1,kind:"signal",parameters:{},next:[2]},{id:2,kind:"macro",parameters:{},next:[]}]};
   const html=buildScriptFields([script],{states:[]},"Token",data,{ownerKey:"Token:guard"});
-  assert.ok(html.includes('value="alert"'));assert.ok(html.includes('value="Macro.own"'));assert.ok(!html.includes('value="foreign-signal"'));assert.ok(!html.includes('value="Macro.foreign"'));
-  assert.ok(!html.includes('data-script-index="0" open'));assert.ok(html.includes('value="visibility"'));assert.ok(html.includes('value="sound"'));
+  assert.ok(html.includes('value="alert"'));assert.ok(!html.includes('value="foreign-signal"'));
+  assert.deepEqual(getScriptMacroEntries({ownerKey:"Token:guard",catalog:data}).slice(2).map(entry=>entry.id),["Macro.own"]);
+  assert.ok(!html.includes('data-script-index="0" open'));assert.equal((html.match(/data-script-kind-input/g) ?? []).length, 2);assert.equal((html.match(/data-script-kind-button/g) ?? []).length, 2);
 });
 test("subscription editor offers only the selected subscriber's macros and escaped validation examples",()=>{
   const data={...catalog,macros:[{ownerKey:"Token:guard",uuid:"Macro.own"},{ownerKey:"Scene:scene",uuid:"Macro.foreign"}]};

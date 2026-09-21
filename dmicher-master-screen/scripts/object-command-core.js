@@ -40,7 +40,7 @@ export class ObjectCommandCore {
     switch (id) {
       case "wait": return wait(p.seconds);
       case "cancel": return wait(p.waitSeconds);
-      case "stop": case "behavior-off": return finished(true);
+      case "behavior-off": return finished(true);
       case "behavior-on":
         await setCommandBehavior(scene, run.target, true, run.groupId); return finished(active(options));
       case "signals-on": case "signals-off":
@@ -72,10 +72,15 @@ export class ObjectCommandCore {
       case "delegate": {
         const recipient = target(scene, run.request.parameters.targetUuid), config = run.request.parameters;
         if (!core.arrived) {
-          const result = await move(approachCommandPoint(scene, object, recipient));
+          // Door travel is an internal part of delegation. Approach the nearest
+          // point of its segment, preserving footprint contact and collisions.
+          const doorPoint = recipient.documentName === "Wall" && recipient.door ? nearestDoorPoint(recipient, commandCenter(object, scene)) : null;
+          const destination = doorPoint ? { documentName: "Wall", c: [doorPoint.x, doorPoint.y, doorPoint.x, doorPoint.y] } : recipient;
+          const result = await move(approachCommandPoint(scene, object, destination));
           if (!active(options)) return finished(false);
-          if (!result.done) return finished(false);
-          if (result.blocked && !commandTouches(scene, object, recipient)) rejectCommand("delegation-path", text("Не удалось подойти к объекту поручения: путь перекрыт.", "The delegated character cannot reach the target because the path is blocked."));
+          const touches = doorPoint ? pointGap(scene, object, doorPoint) <= 2 : commandTouches(scene, object, recipient);
+          if (result.blocked && !touches) rejectCommand("delegation-path", text("Не удалось подойти к объекту поручения: путь перекрыт.", "The delegated character cannot reach the target because the path is blocked."));
+          if (!result.done && !touches) return finished(false);
           core.arrived = true;
         }
         return options.delegate ? options.delegate(run, config) : finished(false);
@@ -125,30 +130,6 @@ export class ObjectCommandCore {
         if (result.blocked) return finished(true);
         if (result.done) { core.pointIndex = 1 - core.pointIndex; core.movement.distanceBudget = 0; }
         return finished(false);
-      }
-      case "open-door": case "close-door": {
-        const door = target(scene, run.request.parameters.doorUuid);
-        if (door.documentName !== "Wall" || !door.door || !Array.isArray(door.c) || door.c.length !== 4) {
-          rejectCommand("door", text("Выберите дверь на карте.", "Select a door on the map."));
-        }
-        const states = globalThis.CONST?.WALL_DOOR_STATES ?? { CLOSED: 0, OPEN: 1, LOCKED: 2 };
-        if (door.ds === states.LOCKED) rejectCommand("door-locked", text("Дверь заперта. Объект не может выполнить команду.", "The door is locked. The object cannot carry out this command."));
-        const desired = id === "open-door" ? states.OPEN : states.CLOSED;
-        if (door.ds === desired) return finished(true);
-        const point = nearestDoorPoint(door, commandCenter(object, scene));
-        if (pointGap(scene, object, point) > 2) {
-          const destination = approachCommandPoint(scene, object, { documentName: "Wall", c: [point.x, point.y, point.x, point.y] });
-          const result = await move(destination);
-          if (!active(options)) return finished(false);
-          if (pointGap(scene, object, point) > 2) {
-            if (result.blocked) rejectCommand("door-obstacle", text("Объект не может добраться до двери: путь перекрыт.", "The object cannot reach the door because the path is blocked."));
-            return finished(false);
-          }
-        }
-        if (!active(options)) return finished(false);
-        if (door.ds === states.LOCKED) rejectCommand("door-locked", text("Дверь заперта. Объект не может выполнить команду.", "The door is locked. The object cannot carry out this command."));
-        await door.update({ ds: desired });
-        return finished(active(options));
       }
       default: rejectCommand("unknown", text("Эта команда недоступна.", "This command is unavailable."));
     }

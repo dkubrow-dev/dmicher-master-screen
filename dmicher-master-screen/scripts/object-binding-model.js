@@ -10,6 +10,8 @@ import { normalizeObjectSignalSettings } from "./object-signal-settings.js";
 import { normalizeObjectActions, normalizeInvokedScripts, normalizeActionConditionMacro } from "./object-action-model.js";
 import { objectCapabilities } from "./object-capabilities.js";
 import { normalizeShopRestoration } from "./shop-restoration-policy.js";
+import { PLAYERS_GROUP_ID, isPlayersGroup } from "./players-group.js";
+import { getScriptFunction } from "./script-functions/index.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -43,12 +45,14 @@ export function normalizeObjectBinding(raw) {
   if (raw.groupId != null && !validId(raw.groupId)) fail(localizedMessage("Неверный ID группы объекта."));
   if (raw.playerCharacter !== undefined && typeof raw.playerCharacter !== "boolean") fail(localizedMessage("Флаг персонажа игрока должен быть логическим."));
   if (typeof (raw.notes ?? "") !== "string" || [...(raw.notes ?? "")].length > 12000) fail(localizedMessage("Заметки должны быть текстом до 12000 символов."));
+  if (typeof (raw.displayName ?? "") !== "string" || (raw.displayName ?? "").length > 200) fail(text("Отображаемое имя: не более 200 символов.", "Display name: at most 200 characters."));
   const transitions = raw.transitionScripts ?? {};
   if (!transitions || typeof transitions !== "object" || Array.isArray(transitions)) fail(localizedMessage("Ожидаются скрипты состояний."));
   const entries = Object.entries(transitions).filter(([key, value]) => !(key.startsWith("-=") && value === null));
   if (entries.some(([key]) => !validId(key))) fail(localizedMessage("Неверный ID состояния скрипта."));
-  return { type: raw.type, id: raw.id, groupId: raw.groupId ?? null, playerCharacter: raw.playerCharacter ?? false,
-    tags: normalizeTags(raw.tags), notes: raw.notes ?? "",
+  const playerCharacter = raw.playerCharacter === true || raw.type === "Token" && isPlayersGroup(raw.groupId);
+  return { type: raw.type, id: raw.id, groupId: playerCharacter ? PLAYERS_GROUP_ID : raw.groupId ?? null, playerCharacter,
+    displayName: (raw.displayName ?? "").trim(), tags: normalizeTags(raw.tags), notes: raw.notes ?? "",
     initialScript: raw.initialScript ? normalizeScript(raw.initialScript) : null,
     transitionScripts: Object.fromEntries(entries.map(([id, script]) => [id, normalizeScript(script)])),
     scripts: normalizeScripts(raw.scripts ?? []), shops: references(raw.shops, "shop"), dialogues: references(raw.dialogues, "dialogue"),
@@ -91,6 +95,10 @@ export function validateBindingReferences(binding, { definitions, signals, macro
   }
   const ownerKey = objectKey(binding);
   for (const step of bindingScriptSteps(binding)) {
+    const fn = getScriptFunction(step.kind);
+    if (!fn?.scopes.includes("object") || fn.objectTypes && !fn.objectTypes.includes(binding.type)) {
+      fail(text("Функция скрипта недоступна этому типу объекта.", "The script function is unavailable to this object type."));
+    }
     // Import remapping can merge two formerly distinct destination groups, so
     // recheck uniqueness along with references before the complete draft is saved.
     if (step.kind === "state") for (const transition of normalizeStateTransitions(step.parameters.transitions)) {
@@ -164,7 +172,7 @@ export function reconcileBindingGroups(raw, previous, definitions) {
 }
 
 export function resolveBindingTools(binding, catalog, context, kind) {
-  if (!binding?.groupId || binding.playerCharacter || binding.groupId !== context.groupId || !objectCapabilities(binding.type).tools) return [];
+  if (!binding?.groupId || binding.groupId !== context.groupId || !objectCapabilities(binding.type).tools) return [];
   const { collection, referenceId } = interactionType(kind), assets = catalog[collection];
   const seen = new Set();
   return binding[collection].filter((ref) => ref.playerAction !== false && (!ref.stateIds.length || ref.stateIds.includes(context.stateId))).flatMap((reference) => {
@@ -180,12 +188,12 @@ export function resolveBindingTools(binding, catalog, context, kind) {
 export function materializeStateDefinition(bindings, assets, definition, source) {
   const state = { ...clone(source), objects: [], scripts: [], transitions: [], shops: [], dialogues: [], actions: [] };
   for (const binding of Object.values(bindings)) {
-    if (binding.groupId !== definition.groupId || binding.playerCharacter) continue;
+    if (binding.groupId !== definition.groupId) continue;
     const target = { type: binding.type, id: binding.id };
     state.objects.push({ target });
     state.actions.push(...(binding.actions ?? []).map(action=>({...clone(action),target})));
     const script = binding.scripts.find((entry) => entry.stateId === source.id);
-    if (script?.enabled) state.scripts.push({ ...clone(script), target });
+    if (script?.enabled && !binding.playerCharacter) state.scripts.push({ ...clone(script), target });
     const transition = binding.transitionScripts[source.id];
     if (transition?.enabled) state.transitions.push({ ...clone(transition), target });
     for (const kind of ["shop", "dialogue"]) state[`${kind}s`].push(...resolveBindingTools(binding, assets, { groupId: definition.groupId, stateId: source.id }, kind).map((entry) => entry.config));

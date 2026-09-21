@@ -1,14 +1,16 @@
 import { MODULE_ID } from "./model.js";
 import { text } from "./localization.js";
 import { generics } from "./generics.js";
-import { isAuthority } from "./store.js";
-import { getSceneObject } from "./scene-objects.js";
+import { isAuthority, getRuntime } from "./store.js";
+import { getSceneObject, getObjectBindings } from "./scene-objects.js";
 import { requestGMReply } from "./gm-request.js";
 import { commandTrace } from "./debug.js";
-import { commandDocument, commandObjectUuid, rejectCommand } from "./object-command-access.js";
+import { commandDocument, commandObjectUuid, rejectCommand, validateCommandAccess } from "./object-command-access.js";
 import { defaultObjectCommand } from "./object-command-model.js";
 import { commandParent, isCommandParentHalted } from "./object-command-state.js";
 import { TechnicalMessageCleanup } from "./technical-message-cleanup.js";
+import { PlayerCommandConsent, commandConsentRequirement } from "./player-command-consent.js";
+import { executionGeneration, sceneExecutionGeneration } from "./execution.js";
 
 const CHANNEL = "object-command", REQUEST = "objectCommandRequest", RESULT = "objectCommandResult", NOTE = "objectCommandNote";
 const clone = structuredClone;
@@ -36,7 +38,12 @@ export class ObjectCommandService {
     this.cleanup = new TechnicalMessageCleanup({ current: () => !this.disposed && this.authority(),
       onError: (error, messageId) => commandTrace("object-command.receipt-cleanup", { messageId }, error) });
     this.seenNotes = new Set();
-    if (executor) executor.openNote = (document, run) => this.publishNote(document, run);
+    this.consent = new PlayerCommandConsent({ chat:this.chat, authority:()=>!this.disposed && this.authority(), onError:error=>this.warning(error) });
+    this.consent.install();
+    if (executor) {
+      executor.openNote = (document, run) => this.publishNote(document, run);
+      executor.acceptDelegated = (scene,packet,user,options) => this.acceptDelegated(scene,packet,user,options);
+    }
   }
   warning(error, packet = {}, userId) {
     const message = error?.name === "CommandRejection" ? error.message
@@ -47,6 +54,32 @@ export class ObjectCommandService {
     commandTrace("object-command.rejected", context, error);
     globalThis.ui?.notifications?.warn?.(message);
     return { ok: false, message };
+  }
+  consentValidator(scene, input, user, { isCurrent = () => true } = {}) {
+    const target = commandDocument(scene,input.targetUuid), key = `${target?.documentName}:${target?.id}`;
+    return ({ executing = false } = {}) => {
+      if (!isCurrent()) throw new Error("Originating command was cancelled");
+      const binding = getObjectBindings(scene).bindings[key];
+      const parent = binding?.groupId ? getRuntime(scene,{groupId:binding.groupId}) : commandParent(scene,binding);
+      if (!executing) {
+        const access = validateCommandAccess(scene,input,user,{active:this.executor.activeForObject?.(scene,{type:target.documentName,id:target.id})});
+        this.executor.inputs?.(scene,input,access);
+      }
+      return JSON.stringify([binding?.groupId,parent?.runId,parent?.stateId,parent?.halted,executionGeneration(scene,binding?.groupId),sceneExecutionGeneration(scene),binding?.commands]);
+    };
+  }
+  async acceptDelegated(scene, packet, user, { isCurrent = () => true } = {}) {
+    if (!this.authority() || this.disposed || !isCurrent()) return null;
+    // The final endpoint is itself an executor when its command starts. A
+    // player-controlled Token there needs its own owner's consent as well.
+    if (commandConsentRequirement(scene,packet,user,{executorUuid:packet.targetUuid})) {
+      const result = await this.consent.request({scene,packet,user,executorUuid:packet.targetUuid,waitForDecision:true,
+        validate:this.consentValidator(scene,packet,user,{isCurrent}),
+        execute:current=>this.executor.accept(scene,packet,game.users?.get(user.id),{isCurrent:()=>isCurrent() && current()})});
+      if (!result) rejectCommand("consent",text("Владелец не разрешил поручение или запрос отменён.","The owner did not approve the task or the request was cancelled."));
+      return result;
+    }
+    return this.executor.accept(scene,packet,user,{isCurrent});
   }
   async execute(packet, user) {
     if (!this.authority() || this.disposed || !user || generics.chat.isManagedIdentityUser(user)) return null;
@@ -74,6 +107,10 @@ export class ObjectCommandService {
           parameters: { targetUuid: input.targetUuid, commandId: input.commandId, parameters: input.parameters } };
         delete input.delegateTokenUuid;
       }
+      if (commandConsentRequirement(scene,input,user)) {
+        return this.consent.request({scene,packet:input,user,validate:this.consentValidator(scene,input,user),
+          execute:isCurrent=>this.executor.accept(scene,input,game.users?.get(user.id),{isCurrent})});
+      }
       const result = await this.executor.accept(scene, input, user);
       return { ok: true, commandId: packet.commandId, ...(result?.runId ? { runId: result.runId } : {}) };
     }).catch(error => this.warning(error, packet, user.id)).finally(() => { receipt.done = true; });
@@ -98,12 +135,18 @@ export class ObjectCommandService {
         globalThis.console?.warn?.(`${MODULE_ID} | object-command`, { ...packet, result: response });
         globalThis.ui?.notifications?.warn?.(response?.message ?? text("Команда не выполнена.", "The command was not carried out."));
       }
+      else if (response.pendingConsent) globalThis.ui?.notifications?.info?.(text("Ожидается согласие владельца персонажа или мастера.", "Waiting for the character owner's or GM's consent."));
       return response;
     }).catch(error => this.warning(error, raw, game.user?.id)).finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, task);
     return task;
   }
   async processMessage(message, initiatingUserId) {
+    if (message?.getFlag?.(MODULE_ID,"playerCommandConsentReply")) {
+      const handled = await this.consent.processMessage(message,initiatingUserId);
+      if (handled) this.queueCleanup(message);
+      return handled;
+    }
     if (message?.getFlag?.(MODULE_ID, NOTE)) return this.receiveNote(message);
     const packet = message?.getFlag?.(MODULE_ID, REQUEST);
     if (!packet || !this.authority() || this.disposed) return false;
@@ -155,6 +198,7 @@ export class ObjectCommandService {
     this.cleanup.queue(message);
   }
   dispose() {
+    this.consent.dispose();
     this.disposed = true; this.cleanup.dispose();
     this.inFlight.clear(); this.receipts.clear();
     this.seenNotes.clear();

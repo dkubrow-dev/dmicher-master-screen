@@ -21,9 +21,10 @@ export const interactionConditionId = (config) => config?.shopId || config?.dial
  * player's physical admission rules, but never gains another character or run. */
 export function validateInteractionIdentity({ scene, runtime, descriptor, target }, actorTokenId, user, runId) {
   const fail = (text) => { throw new Error(text); };
+  const binding = descriptor?.target && getObjectBindings(scene).bindings[objectKey(descriptor.target)];
   if (!scene || globalThis.canvas?.scene?.id !== scene.id || !runtime?.runId || runtime.runId !== runId) fail(localizedMessage("Сцена или состояние изменились. Откройте взаимодействие заново."));
   if (isExecutionHalted(scene, runtime) || isStateEntryPreparing(scene,runtime) || !descriptor || !target
-    || getObjectBindings(scene).bindings[objectKey(descriptor?.target)]?.playerCharacter
+    || binding && binding.groupId !== runtime.groupId
     || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(descriptor?.target)] === false
     || runtime.disabledObjects?.includes(objectKey(descriptor.target))) fail(localizedMessage("Взаимодействие сейчас недоступно."));
   const actorToken = scene.tokens?.get(actorTokenId);
@@ -55,7 +56,7 @@ export function validateObjectActionAccess(context,actorTokenId,user,runId) {
   if(descriptor.audience === "gm" && !user?.isGM) throw new Error(localizedMessage("Взаимодействие сейчас недоступно."));
   if(!user?.isGM || actorTokenId) return validateObjectAccess(context,actorTokenId,user,runId,{ignoreQuota:false});
   const binding=getObjectBindings(scene).bindings[objectKey(descriptor.target)];
-  if(!scene || canvas.scene?.id !== scene.id || !target || !binding || binding.playerCharacter || !descriptor.enabled
+  if(!scene || canvas.scene?.id !== scene.id || !target || !binding || !descriptor.enabled
     || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(descriptor.target)] === false
     || !runtime?.runId || isStateEntryPreparing(scene,runtime) || runtime.runId !== runId || runtime.disabledObjects.includes(objectKey(descriptor.target))) throw new Error(localizedMessage("Взаимодействие сейчас недоступно."));
   const gate=getConditionGate(scene,runtime,descriptor.conditions,null,{conditionKey:getConditionKey(runtime,"action",interactionConditionId(descriptor))});

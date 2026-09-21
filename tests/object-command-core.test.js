@@ -83,17 +83,22 @@ test("patrol switches endpoints, and follow remains active after reaching its sp
 
 test("door operations approach a segment, respect locks, and do not open unreachable doors", async () => {
   const f = fixture(), door = { id: "door", uuid: "Scene.scene.Wall.door", documentName: "Wall", parent: f.scene,
-    c: [300, -100, 300, 200], door: 1, ds: 0, async update(changes) { Object.assign(this, changes); } };
+    c: [300, -1000, 300, 200], door: 1, ds: 0, async update(changes) { Object.assign(this, changes); } };
   f.scene.walls.set(door.id, door);
-  const run = f.run("open-door", { speed: 5 }, { doorUuid: door.uuid });
-  assert.equal((await f.core.tick(f.scene, run, f.npc, 2)).done, true);
+  const run = f.run("delegate", { speed: 5 }, { targetUuid: door.uuid, commandId: "open" });
+  let delivered = 0;
+  const delivery = { delegate: async (_run, input) => { delivered++; return f.core.tick(f.scene, f.run(input.commandId), door, 0); } };
+  assert.equal((await f.core.tick(f.scene, run, f.npc, 1, delivery)).done, false);
+  assert.equal(door.ds, 0); assert.equal(delivered, 0, "travel does not open the door or deliver early");
+  assert.equal((await f.core.tick(f.scene, run, f.npc, 1, delivery)).done, true);
   assert.equal(door.ds, 1);
   assert.equal(f.npc.x, 200);
+  assert.equal(f.npc.y, 0, "approach uses the nearest segment point instead of the door midpoint");
   door.ds = 2;
-  await assert.rejects(f.core.tick(f.scene, f.run("close-door", {}, { doorUuid: door.uuid }), f.npc, 1), error => error.code === "door-locked");
+  await assert.rejects(f.core.tick(f.scene, f.run("close"), door, 1), error => error.code === "locked");
   door.ds = 0; f.npc._source.x = 0;
   f.npc.object.checkCollision = point => point.x >= 150;
-  await assert.rejects(f.core.tick(f.scene, f.run("open-door", {}, { doorUuid: door.uuid }), f.npc, 5), error => error.code === "door-obstacle");
+  await assert.rejects(f.core.tick(f.scene, f.run("delegate", {}, { targetUuid: door.uuid, commandId: "open" }), f.npc, 5, delivery), error => error.code === "delegation-path");
   assert.equal(door.ds, 0);
 });
 

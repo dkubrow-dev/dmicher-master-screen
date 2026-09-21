@@ -1,7 +1,7 @@
 import { message as localizedMessage, text } from "./localization.js";
 import { objectCenter, crossesRectangle } from "./scene-object-geometry.js";
 import { MODULE_ID, getState, emptyRuntime } from "./model.js";
-import { getDefinition, getDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
+import { getDefinition, getDefinitions, getExecutionDefinitions, getRuntime, getRuntimes, getRuntimeForRun, saveRuntime, withSceneLock, requireGM, isAuthority, asArray } from "./store.js";
 import { createFoundryEffects } from "./effects.js";
 import { getConditionKey, getConditionGate, consumeCondition, resetStateConditions } from "./interaction-conditions.js";
 import { executionGeneration, requestHalt, finishHalt, isExecutionHalted, notifyExecutionChange,
@@ -20,8 +20,9 @@ import { debugTrace, debugError } from "./debug.js";
 import { ObjectInvocations } from "./object-invocations.js";
 import { ObjectVariableService } from "./object-variables.js";
 import { canExecuteScriptKind } from "./premium-provider.js";
-import { clearBehaviorOverrides } from "./object-command-state.js";
+import { clearBehaviorOverrides, setCommandBehavior } from "./object-command-state.js";
 import { beginStateEntryPreparation, isStateEntryPreparing, clearStateEntryPreparations } from "./state-entry-preparation.js";
+import { PlayerScriptControls } from "./player-script-controls.js";
 
 const clone = (value) => structuredClone(value);
 const randomId = () => globalThis.foundry?.utils?.randomID?.() ?? globalThis.crypto.randomUUID();
@@ -50,10 +51,11 @@ export class GroupRuntime {
     this.scripts = new ObjectScriptRuntime(this);
     this.variables = new ObjectVariableService(); this.invocations = new ObjectInvocations(this);
     this.canUsePremiumStep = canExecuteScriptKind;
+    this.playerControls = new PlayerScriptControls(this);
   }
   requireAuthority(scene) { requireGM(); if (!isAuthority() || !scene || globalThis.canvas?.scene?.id !== scene.id) throw new Error(localizedMessage("Действие доступно исполняющему мастеру текущей сцены.")); }
   owns(scene, runId) {
-    if (this.disposed || !isAuthority() || globalThis.canvas?.scene?.id !== scene?.id) return false;
+    if (!scene?.id || this.disposed || !isAuthority() || globalThis.canvas?.scene?.id !== scene.id) return false;
     if (!runId) return true;
     if (this.commandExecutor?.has(runId)) return this.commandExecutor.owns(scene, runId);
     if (this.manualRuns.has(runId)) {
@@ -71,6 +73,7 @@ export class GroupRuntime {
   start() {
     if (this.interval) return this;
     this.disposed = false;
+    this.playerControls.install();
     const on = (name, fn) => this.hooks.push([name, Hooks.on(name, fn)]);
     on("canvasReady", () => { this.tickTimes.clear(); this.refresh(canvas.scene); });
     on("canvasTearDown", () => { clearStateEntryPreparations(globalThis.canvas?.scene);this.commandExecutor?.clear(globalThis.canvas?.scene); this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); notifyExecutionChange(globalThis.canvas?.scene, "canvas-teardown"); this.tickTimes.clear(); this.visuals?.clear(); });
@@ -98,9 +101,11 @@ export class GroupRuntime {
     return this;
   }
   dispose() {
+    this.playerControls.dispose();
     clearStateEntryPreparations(globalThis.canvas?.scene);
     this.disposed = true; notifyExecutionChange(globalThis.canvas?.scene, "runtime-disposed"); clearInterval(this.interval); this.interval = null;
     this.commandExecutor?.dispose();
+    this.invocations.groups.dispose();
     this.restorations.clear(); this.manualRuns.clear(); this.manualVisuals.clear(); this.scripts.dispose?.(); this.combat.dispose?.(); this.effects.dispose?.(); this.visuals?.clear(); this.presentedRuns.clear();
     for (const [name, id] of this.hooks) Hooks.off(name, id); this.hooks = []; this.tickTimes.clear();
   }
@@ -113,7 +118,7 @@ export class GroupRuntime {
     if (state.command) return this.commandExecutor?.save(scene, state);
     if (state.manual) {
       if (!this.manualRuns.has(state.runId)) return;
-      this.manualRuns.set(state.runId, clone(state)); this.refresh(scene); return state;
+      this.manualRuns.set(state.runId, clone(state)); await this.playerControls.sync(scene); this.refresh(scene); return state;
     }
     return saveRuntime(scene, state);
   }
@@ -122,7 +127,7 @@ export class GroupRuntime {
     const run = this.scriptState(scene, runId), binding = getObjectBindings(scene).bindings[objectKey(target)];
     if (!run || isStateEntryPreparing(scene,run)) return false;
     if (!run.command && !run.manual && scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(target)] === false) return false;
-    if (!getSceneObject(scene, target) || binding?.playerCharacter) return false;
+    if (!getSceneObject(scene, target)) return false;
     if (run.command) return this.commandExecutor.current(scene, run, target, { ignoreInteractionPause, scriptKey, excludeDialogueSessions, excludeShopSessions });
     if (run.manual && objectKey(run.target) !== objectKey(target)) return false;
     if (!run.manual && this.objectRestoreCommands.get(scene)?.has(objectKey(target))) return false;
@@ -143,6 +148,7 @@ export class GroupRuntime {
     return run?.command || run?.purpose ? getRuntimeForRun(scene, run.parentRunId) : run;
   }
   scriptInterruptionSource(scene, target, script, runId) {
+    if (this.playerControls.source(scene,target,runId)) return "playerAction";
     const source = this.commandExecutor?.interruptionSource(scene, target, script, runId);
     if (source && !(source === "command" && script?.interruptions?.command === "ignore")) return source;
     return isInteractionPaused(scene, target, Date.now(), { playerOnly: true, includeCompleted: true }) ? "interaction" : null;
@@ -405,7 +411,7 @@ export class GroupRuntime {
   }
   async halt(scene, { groupId = "main", all = false } = {}) {
     this.requireAuthority(scene);
-    const ids = all ? getDefinitions(scene).map((entry) => entry.groupId) : [getDefinition(scene, { groupId }).groupId];
+    const ids = all ? getExecutionDefinitions(scene).map((entry) => entry.groupId) : [getDefinition(scene, { groupId }).groupId];
     const sceneGeneration = all ? requestSceneHalt(scene) : null;
     const generations = new Map(ids.map((id) => [id, requestHalt(scene, id)]));
     const initialContinuations = this.captureInitialContinuations(scene, all ? undefined : ids);
@@ -437,7 +443,7 @@ export class GroupRuntime {
     this.requireAuthority(scene); this.cancelRestorations(scene); this.groupStartCommands.delete(scene);
     const command = {}; this.startCommands.set(scene, command); notifyExecutionChange(scene, "start-command");
     const result = [], generation = sceneExecutionGeneration(scene);
-    const groups = getDefinitions(scene), generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
+    const groups = getExecutionDefinitions(scene), generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
     const isCurrent = () => this.startCommands.get(scene) === command && sceneExecutionGeneration(scene) === generation
       && groups.every(group => executionGeneration(scene, group.groupId) === generations.get(group.groupId));
     // Wait only for preceding document transactions, never for their old effects.
@@ -533,7 +539,7 @@ export class GroupRuntime {
     const bindings = getObjectBindings(scene).bindings;
     for (const entry of entries) {
       const binding = bindings[objectKey(entry.target)];
-      if (!binding || binding.playerCharacter || binding.groupId !== entry.groupId || !getSceneObject(scene, entry.target)
+      if (!binding || binding.groupId !== entry.groupId || !getSceneObject(scene, entry.target)
         || entry.progress.status !== "ready") continue;
       if (entry.purpose) this.invocations.resume(scene,entry);
       else this.queueInitialRestoration(scene, entry.target, { ...binding, initialScript: entry.script }, null, entry.progress);
@@ -544,7 +550,7 @@ export class GroupRuntime {
       if (!isCurrent()) return;
       const entries = scene.getFlag(MODULE_ID, "initialContinuations") ?? [];
       if (!entries.length) return;
-      if (!getDefinitions(scene).length) {
+      if (!getExecutionDefinitions(scene).length) {
         await scene.setFlag(MODULE_ID, "automationHalted", false);
         if (!isCurrent()) return;
         finishSceneHalt(scene, sceneExecutionGeneration(scene));
@@ -553,7 +559,7 @@ export class GroupRuntime {
       // executions, including event/reaction leases, in this transaction's wake.
       this.resumeInitialContinuations(scene, entries);
       await scene.setFlag(MODULE_ID, "initialContinuations", []);
-      if (isCurrent() && !getDefinitions(scene).length) {
+      if (isCurrent() && !getExecutionDefinitions(scene).length) {
         notifyExecutionChange(scene, "initial-resumed");
       }
     });
@@ -606,7 +612,7 @@ export class GroupRuntime {
   }
   restorationCurrent(scene, restoration) {
     if (!restoration || this.restorations.get(restoration.id) !== restoration || restoration.sceneId !== scene?.id) return false;
-    const groups = getDefinitions(scene);
+    const groups = getExecutionDefinitions(scene);
     return Boolean((!restoration.all || isSceneAutomationHalted(scene)) && sceneExecutionGeneration(scene) === restoration.generation
       && (!restoration.all || groups.length === restoration.groups.length) && restoration.groups.every(group => groups.find(current => current.groupId === group.groupId)?.revision === group.revision
         && this.restorationState(scene, group.groupId) === restoration.states.get(group.groupId)));
@@ -636,7 +642,7 @@ export class GroupRuntime {
   restoreGroupInitial(scene, groupId) { return this.restoreGroupsInitial(scene, { groupId }); }
   async restoreGroupsInitial(scene, { all = false, groupId } = {}) {
     this.requireAuthority(scene);
-    const groups = all ? getDefinitions(scene) : [getDefinition(scene, { groupId })];
+    const groups = all ? getExecutionDefinitions(scene) : [getDefinition(scene, { groupId })];
     const halt = this.halt(scene, { all, groupId }), generation = sceneExecutionGeneration(scene);
     const generations = new Map(groups.map(group => [group.groupId, executionGeneration(scene, group.groupId)]));
     await halt;
@@ -653,7 +659,7 @@ export class GroupRuntime {
         await clearBehaviorOverrides(scene,Object.values(getObjectBindings(scene).bindings).filter(binding=>all || groups.some(group=>group.groupId === binding.groupId)));
         if (!await this.selectInitialStates(scene, restoration)) return [];
         for (const binding of Object.values(getObjectBindings(scene).bindings)) {
-          if ((!all || binding.groupId) && !groups.some(group => group.groupId === binding.groupId) || binding.playerCharacter || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
+          if ((!all || binding.groupId) && !groups.some(group => group.groupId === binding.groupId) || !binding.initialScript?.enabled || !getSceneObject(scene, binding)) continue;
           this.queueInitialRestoration(scene, { type: binding.type, id: binding.id }, binding, restoration);
         }
         if (!restoration.runIds.size) this.restorations.delete(restoration.id);
@@ -707,10 +713,13 @@ export class GroupRuntime {
     return this.setObjectAutomation(scene, { type: "Token", id: tokenId }, enabled, { groupId });
   }
   async setObjectAutomation(scene, target, enabled, { groupId } = {}) {
-    this.requireAuthority(scene); this.cancelRestorations(scene, { groupIds: [groupId ?? getObjectBindings(scene).bindings[objectKey(target)]?.groupId] }); const key = objectKey(target);
+    this.requireAuthority(scene);
+    groupId ??= getObjectBindings(scene).bindings[objectKey(target)]?.groupId;
+    this.cancelRestorations(scene, { groupIds: [groupId] });
     return withSceneLock(scene, async () => {
-      const run = getRuntime(scene, { groupId }); run.disabledObjects = run.disabledObjects.filter((id) => id !== key);
-      if (!enabled) run.disabledObjects.push(key); await saveRuntime(scene, run); notifyExecutionChange(scene); this.refresh(scene); return run;
+      await setCommandBehavior(scene, target, enabled, groupId);
+      if (!enabled) this.commandExecutor?.cancelForObject?.(scene, target);
+      this.refresh(scene); return groupId ? getRuntime(scene, { groupId }) : null;
     });
   }
   async resetConditions(scene, { conditionKey, groupId = "main" } = {}) {
@@ -806,7 +815,7 @@ export class GroupRuntime {
         const clockKey = `${scene.id}:${run.manual ? run.runId : run.groupId}`, now = this.now();
         const elapsed = Math.min(1, Math.max(0, (now - (this.tickTimes.get(clockKey) ?? now)) / 1000)); this.tickTimes.set(clockKey, now);
         if ((!run.manual && (!run.state || !run.runId || run.halted)) || game.paused) continue;
-        if (run.manual && (!getSceneObject(scene, run.target) || getObjectBindings(scene).bindings[objectKey(run.target)]?.playerCharacter)) {
+        if (run.manual && !getSceneObject(scene, run.target)) {
           this.manualRuns.delete(run.runId); this.tickTimes.delete(clockKey); continue;
         }
         await withSceneLock(scene, async () => {

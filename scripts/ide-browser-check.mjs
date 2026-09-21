@@ -12,6 +12,7 @@ try {
   for (const version of ["13.351", "14.366"]) {
     const context = await browser.newContext({ permissions:["clipboard-read","clipboard-write"], viewport: { width: 1440, height: 1000 } });
     const page = await context.newPage(), errors = [];
+    page.setDefaultTimeout(10_000); page.setDefaultNavigationTimeout(10_000);
     page.on("response", (response) => { if (response.status() >= 400) console.error(`HTTP ${response.status()} ${response.url()}`); });
     page.on("pageerror", (error) => { errors.push(error.message); console.error(error.stack); });
     page.on("console", (message) => { if (message.type() === "error" && !message.text().includes("404")) console.error(message.text()); });
@@ -19,14 +20,19 @@ try {
     const app = page.locator("#dmicher-master-screen-editor");
     assert.deepEqual(await app.locator(".ms-ide-mode-buttons [data-screen-action]").evaluateAll(buttons => buttons.map(button => button.dataset.screenAction)), ["constructor", "director"]);
     assert.equal(await app.locator("[data-ide-parameters]").count(), 0, "a newly opened tab has no implicit selection");
-    assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-group-badge]').count(), 1);
-    assert.equal(await page.locator('#scene-navigation [data-scene-id="scene-empty"] [data-group-badge]').count(), 0);
+    assert.equal(await page.locator('#scene-navigation [data-action="viewScene"][data-scene-id="scene-a"] [data-group-badge]').count(), 2);
+    assert.equal(await page.locator('#scene-navigation [data-scene-id="scene-empty"] [data-group-badge]').count(), 1);
     assert.equal(await page.locator('#scene-navigation [data-action="viewLevel"] [data-group-badge]').count(), 0);
     assert.equal(await page.locator('[data-group-badge][title]').count(), 0);
     assert.equal(await page.locator('[data-group-badge]:not([data-tooltip])').count(), 0);
     assert.equal(await page.locator('.ms-constructor-indicator').count(), 1);
     await app.locator('[data-select-kind="group"] td:last-child').first().click();
     await app.locator('[data-ide-parameters] [name="groupName"]').waitFor();
+    await app.locator('[data-group-symbol-picker]').click();
+    const symbolPicker=page.locator('.dmicher-unicode-picker'); await symbolPicker.waitFor();
+    assert.equal(await symbolPicker.locator('[data-dmicher-unicode-value]').count(),140);
+    await symbolPicker.locator('[data-dmicher-unicode-value]').nth(1).click();
+    assert.ok((await app.locator('[name="groupSymbol"]').inputValue()).length>0);
     assert.ok(await app.locator('.dmicher-setting-help').count() > 0);
     assert.equal(await app.locator('.dmicher-setting-help:not([tabindex="-1"])').count(), 0);
     await app.locator('[name="groupName"]').focus();
@@ -82,30 +88,34 @@ try {
     await page.evaluate(() => document.getElementById("foreign-item-dialog").remove());
     const closeForms = () => page.evaluate(async () => { for (const item of [...foundry.applications.instances.values()]) if (item !== controller.editor) await item.close(); });
     await page.evaluate(() => controller.openObjectAutomation({ type: "Token", id: "guard" }));
-    const info = page.locator('.ms-object-info'); await info.locator('[name="object-tags"]').waitFor();
+    const info = page.locator('.ms-object-behavior'); await info.locator('[name="object-tags"]').waitFor();
     assert.equal(await info.locator('[data-screen-action="copy-value"]').count(), 5);
     assert.deepEqual(await info.locator('.ms-object-metadata dd span').allTextContents(), ["Guard", "Token", "guard", "Scene.scene-a.Token.guard", "Actor.guard-actor"]);
     await info.locator('[data-screen-action="copy-value"]').nth(2).click();
     await info.locator('[data-screen-action="native-settings"]').click(); assert.equal(await page.evaluate(() => nativeObjectSettings), true);
     await info.locator('[name="object-tags"]').fill('merchant'); await info.locator('[name="object-notes"]').fill('Important notes');
-    await info.locator('[name="object-notes"]').press('Enter'); await info.waitFor({state:'hidden'});
+    await info.locator('footer [data-screen-action="save"]').click();
+    await page.waitForFunction(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:guard"].notes === 'Important notes');
     assert.equal(await page.evaluate(() => scene.flags["dmicher-master-screen"].objectBindings.bindings["Token:guard"].notes), 'Important notes');
+    await closeForms();
     await page.evaluate(async () => { const {SceneAssets}=await import('/modules/dmicher-master-screen/scripts/scene-assets.js'); const c=new SceneAssets(scene); await c.saveShop({id:'shop-a',name:'Shop A',items:[]}); await c.saveShop({id:'shop-b',name:'Shop B',items:[]}); await c.saveDialogue({id:'talk',name:'Talk',startPageId:'p',pages:[{id:'p',name:'Start',text:'Hello',responses:[]}]}); });
     await page.evaluate(() => controller.openObjectAutomation({type:'Token',id:'guard'})); const behavior=page.locator('.ms-object-behavior'); await behavior.locator('.ms-object-tabs').waitFor();
-    assert.deepEqual(await behavior.locator('.ms-object-tabs [data-tab]').evaluateAll(es=>es.map(e=>e.dataset.tab)), ['properties','transitions','player-actions','routine']);
-    assert.equal(await behavior.locator('[data-tab="properties"]').getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(await behavior.locator('.ms-object-tabs [data-tab]').evaluateAll(es=>es.map(e=>e.dataset.tab)), ['information','states','properties','behavior','shops','dialogues']);
+    assert.equal(await behavior.locator('.ms-object-tabs [data-tab="information"]').getAttribute('aria-pressed'), 'true');
+    const objectTab = id => behavior.locator(`.ms-object-tabs [data-screen-action="tab"][data-tab="${id}"]`).click();
     const registerTool = async (kind, id) => {
       await behavior.locator(`[name="register-${kind}"]`).selectOption(id);
       await behavior.locator(`[data-screen-action="register-tool"][data-kind="${kind}"]`).click();
     };
-    await registerTool('shop', 'shop-a'); await registerTool('shop', 'shop-b'); await registerTool('dialogue', 'talk');
+    await objectTab('shops'); await registerTool('shop', 'shop-a'); await registerTool('shop', 'shop-b');
+    await objectTab('dialogues'); await registerTool('dialogue', 'talk');
     await behavior.locator('footer [data-screen-action="save"]').click();
     assert.equal(await page.evaluate(() => scene.flags['dmicher-master-screen'].objectBindings.bindings['Token:guard'].dialogues[0].playerAction), false);
     await page.screenshot({path:path.join(output,`${version}-object-properties.png`)});
     // Active scripts update runtime frequently. Keep real authoring buttons
     // usable while those notifications reach the controller.
     await page.evaluate(async () => {
-      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      const form = [...controller.objectWindows.values()].find(window => window.rendered);
       await form.persistTask; await form.refreshTask;
       const render = form.render, flags = scene.flags['dmicher-master-screen'], original = flags.groupRuntimes;
       globalThis.authoringTraffic = { renders: 0, ticks: 0, done: false };
@@ -118,14 +128,21 @@ try {
         }
       }, 25);
     });
-    await behavior.locator('[data-tab="transitions"]').click();
+    await objectTab('states');
     await page.waitForFunction(() => authoringTraffic.done);
-    assert.equal(await behavior.locator('[data-tab="transitions"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await behavior.locator('.ms-object-tabs [data-tab="states"]').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.evaluate(() => authoringTraffic.renders), 1, 'runtime traffic must not render the object form; only the clicked tab does');
     assert.equal(await behavior.locator('[data-kind="transition"][data-screen-action="edit-script"]').count(),4);
     await behavior.locator('[data-screen-action="edit-script"][data-kind="initial"]').click();
     await behavior.locator('[data-screen-action="add-script-step"]').click();
-    await behavior.locator('[name="script-0-step-0-kind"]').selectOption('move');
+    const selectScriptKind = async (stepId, kind) => {
+      const row = behavior.locator(`[data-step-id="${stepId}"]`);
+      await row.locator('[data-script-kind-button]').click();
+      const catalog = page.locator('.dmicher-catalog-dialog'); await catalog.waitFor();
+      await catalog.locator(`[data-dmicher-catalog-entry="${kind}"] button`).click();
+      await page.waitForFunction(({stepId,kind}) => document.querySelector(`.ms-object-behavior [data-step-id="${stepId}"] [data-script-kind]`)?.value === kind, {stepId,kind});
+    };
+    await selectScriptKind(1, 'move');
     const moveRow = behavior.locator('[data-step-id="1"]');
     const parameter = (row, path) => row.locator(`[data-script-param='${JSON.stringify(path)}']`);
     assert.equal(await moveRow.locator('[name="script-0-step-0-parameters"]').isVisible(), false);
@@ -153,7 +170,7 @@ try {
     // Hold Foundry between context preparation and DOM replacement. A second
     // refresh and input from the still-visible form must share a valid draft.
     await page.evaluate(() => {
-      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      const form = [...controller.objectWindows.values()].find(window => window.rendered);
       const prepare = form._prepareContext;
       let release;
       const gate = new Promise(resolve => { release = resolve; });
@@ -200,7 +217,7 @@ try {
     assert.equal(await page.evaluate(() => JSON.stringify(scene.flags)), beforeScriptImport, 'import changes a draft only');
     await behavior.locator('footer [data-screen-action="save"]').click();
     assert.equal(await page.evaluate(() => scene.flags['dmicher-master-screen'].objectBindings.bindings['Token:guard'].initialScript.name), 'Imported initial block');
-    await behavior.locator('[data-tab="player-actions"]').click();
+    await objectTab('shops');
     await behavior.locator('[data-screen-action="add-feature"][data-kind="shop"]').first().click();
     await behavior.locator('[name="feature-asset"]').selectOption('shop-a');
     await behavior.locator('footer [data-screen-action="save"]').click();
@@ -209,11 +226,12 @@ try {
     await behavior.locator('footer [data-screen-action="save"]').click();
     const shops=await page.evaluate(()=>scene.flags['dmicher-master-screen'].objectBindings.bindings['Token:guard'].shops.filter(entry => entry.playerAction !== false));
     assert.deepEqual(shops.map(s=>s.shopId),['shop-a','shop-b']); assert.notDeepEqual(shops[0].stateIds,shops[1].stateIds);
-    await behavior.locator('[data-tab="routine"]').click();
+    await objectTab('behavior');
+    await behavior.locator('[data-screen-action="behavior-tab"][data-tab="routine"]').click();
     await behavior.locator('[data-screen-action="edit-script"][data-state-id="calm"]').click();
     for(let i=0;i<5;i++) await behavior.locator('[data-screen-action="add-script-step"]').click();
     await behavior.locator('[name="script-0-name"]').fill('Patrol');
-    await behavior.locator('[name="script-0-step-1-kind"]').selectOption('emotion');
+    await selectScriptKind(2, 'emotion');
     const emotionRow = behavior.locator('[data-step-id="2"]');
     const emotionPickerButton = emotionRow.locator('[data-script-emoji-picker]');
     const emotionGeometry = await emotionPickerButton.evaluate(button => {
@@ -223,25 +241,25 @@ try {
     assert.ok(Math.abs(emotionGeometry.button.top - emotionGeometry.input.top) < 2);
     assert.ok(Math.abs(emotionGeometry.button.height - emotionGeometry.input.height) < 2);
     await emotionPickerButton.click();
-    const emojiPopup = page.locator('.ms-emoji-picker:popover-open');
-    assert.equal(await emojiPopup.locator('nav a').count(), 4);
-    assert.equal(await emojiPopup.locator('[data-emoji-value]').count(), 140);
+    const emojiPopup = page.locator('.dmicher-unicode-picker');
+    assert.equal(await emojiPopup.locator('nav button').count(), 4);
+    assert.equal(await emojiPopup.locator('[data-dmicher-unicode-value]').count(), 140);
     assert.equal(await emojiPopup.locator('table').first().locator('tr').count(), 7);
     assert.equal(await emojiPopup.locator('table tr').first().locator('td').count(), 5);
-    await emojiPopup.locator('nav a').nth(2).click();
-    assert.ok(await emojiPopup.locator('.ms-emoji-scroll').evaluate(element => element.scrollTop > 0));
+    await emojiPopup.locator('nav button').nth(2).click();
+    assert.ok(await emojiPopup.locator('.dmicher-unicode-scroll').evaluate(element => element.scrollTop > 0));
     await page.screenshot({ path: path.join(output, `${version}-emoji-picker.png`) });
-    await emojiPopup.locator('section').nth(2).locator('[data-emoji-value]').first().click();
-    assert.equal(await page.locator('.ms-emoji-picker').count(), 0);
+    await emojiPopup.locator('section').nth(2).locator('[data-dmicher-unicode-value]').first().click();
+    assert.equal(await page.locator('.dmicher-unicode-picker').count(), 0);
     assert.ok(JSON.parse(await emotionRow.locator('[data-script-json-value]').inputValue()).emoji.length > 0);
     await parameter(emotionRow, ['size']).fill('42.5');
     await parameter(emotionRow, ['size']).dispatchEvent('change');
     assert.equal(JSON.parse(await emotionRow.locator('[data-script-json-value]').inputValue()).size, 42.5);
     await emotionPickerButton.click();
     await page.mouse.click(10, 800);
-    await page.waitForFunction(() => !document.querySelector('.ms-emoji-picker'));
+    await page.waitForFunction(() => !document.querySelector('.dmicher-unicode-picker'));
     await emotionPickerButton.click(); await page.keyboard.press('Escape');
-    assert.equal(await page.locator('.ms-emoji-picker').count(), 0);
+    assert.equal(await page.locator('.dmicher-unicode-picker').count(), 0);
     await behavior.locator('[data-step-id="2"] [data-script-json]').click();
     await behavior.locator('[name="script-0-step-1-parameters"]').fill('{"emoji":"!","duration":0}');
     await behavior.locator('[name="script-0-step-1-parameters"]').dispatchEvent('change');
@@ -255,14 +273,15 @@ try {
       const definitions = scene.flags['dmicher-master-screen'].groupDefinitions;
       definitions.annex = { ...structuredClone(definitions.main), groupId: 'annex', groupName: 'Side room' };
     });
-    await behavior.locator('[name="script-0-step-2-kind"]').selectOption('state');
+    await selectScriptKind(3, 'state');
     const stateRow = behavior.locator('[data-step-id="3"]');
     await stateRow.locator('[data-script-state-add]').click();
     await stateRow.locator('[data-script-state-value]').selectOption('tension');
     await stateRow.locator('[data-script-state-add]').click();
     assert.equal(await stateRow.locator('[data-script-state-group]').count(), 2);
-    assert.equal(await stateRow.locator('[data-script-state-group]').first().locator('option').count(), 1, 'used groups cannot be duplicated');
-    assert.equal(await stateRow.locator('[data-script-state-add]').isDisabled(), true);
+    assert.equal(await stateRow.locator('[data-script-state-group]').first().locator('option[value="annex"]').count(), 0, 'used groups cannot be duplicated');
+    assert.equal(await stateRow.locator('[data-script-state-group]').last().locator('option[value="main"]').count(), 0, 'used groups cannot be duplicated');
+    assert.equal(await stateRow.locator('[data-script-state-add]').isDisabled(), false, 'the virtual Players group remains available');
     const pairs = [{ groupId: 'main', stateId: 'tension' }, { groupId: 'annex', stateId: 'calm' }];
     assert.deepEqual(JSON.parse(await stateRow.locator('[data-script-json-value]').inputValue()), { transitions: pairs });
     await stateRow.locator('[data-script-json]').click();
@@ -277,7 +296,7 @@ try {
     await behavior.locator('footer [data-screen-action="save"]').click();
     assert.deepEqual(await page.evaluate(() => scene.flags['dmicher-master-screen'].objectBindings.bindings['Token:guard'].scripts[0].steps.find(step => step.id === 3).parameters), { transitions: [{ groupId: 'annex', stateId: 'alarm' }] });
     await page.screenshot({ path: path.join(output, `${version}-state-action.png`) });
-    await behavior.locator('[name="script-0-step-3-kind"]').selectOption('approach');
+    await selectScriptKind(4, 'approach');
     const approachRow = behavior.locator('[data-step-id="4"]');
     await parameter(approachRow, ['targetUuid']).fill('Scene.scene-a.Token.waiter');
     assert.equal(await parameter(approachRow, ['duration']).inputValue(), '0');
@@ -286,7 +305,7 @@ try {
     await parameter(approachRow, ['timeMode']).selectOption('duration');
     assert.equal(await parameter(approachRow, ['speed']).count(), 0);
     assert.equal(JSON.parse(await approachRow.locator('[data-script-json-value]').inputValue()).speed, 6.5);
-    await behavior.locator('[name="script-0-step-4-kind"]').selectOption('follow');
+    await selectScriptKind(5, 'follow');
     const followRow = behavior.locator('[data-step-id="5"]');
     await parameter(followRow, ['targetUuid']).fill('Scene.scene-a.Token.waiter');
     assert.equal(await parameter(followRow, ['mode']).inputValue(), 'trajectory');
@@ -294,7 +313,7 @@ try {
     await parameter(followRow, ['finishOn']).selectOption('state-change');
     await parameter(followRow, ['mode']).selectOption('direct');
     await behavior.locator('[data-screen-action="add-script-step"]').click();
-    await behavior.locator('[name="script-0-step-5-kind"]').selectOption('dialogue');
+    await selectScriptKind(6, 'dialogue');
     const dialogueRow = behavior.locator('[data-step-id="6"]');
     assert.equal(await parameter(dialogueRow, ['waitMode']).inputValue(), 'all');
     assert.deepEqual(await parameter(dialogueRow, ['waitMode']).locator('option').evaluateAll(elements => elements.map(e => e.value)), ['all','first','none']);
@@ -322,23 +341,25 @@ try {
     if (!await dialogueRow.locator('[data-script-json-value]').isVisible()) await dialogueRow.locator('[data-script-json]').click();
     const unfinishedDialogueJSON = '{"dialogueId":';
     await dialogueRow.locator('[data-script-json-value]').fill(unfinishedDialogueJSON);
-    const dialogueDraftRevision = await page.evaluate(() => [...controller.objectBehaviorWindows.values()].find(window => window.rendered).revision);
+    const dialogueDraftRevision = await page.evaluate(() => [...controller.objectWindows.values()].find(window => window.rendered).revision);
     await page.evaluate(async () => {
       const { SceneAssets } = await import('/modules/dmicher-master-screen/scripts/scene-assets.js');
       const assets = new SceneAssets(scene), talk = assets.list().dialogues.find(entry => entry.id === 'talk');
       await assets.saveDialogue({ ...talk, name: 'Talk renamed while editing' });
-      const form = [...controller.objectBehaviorWindows.values()].find(window => window.rendered);
+      const form = [...controller.objectWindows.values()].find(window => window.rendered);
       await Promise.all([form.refresh(), form.refresh()]);
     });
     assert.equal(await dialogueRow.locator('[data-script-json-value]').inputValue(), unfinishedDialogueJSON);
     assert.equal(await dialogueRow.locator('[data-script-json-value]').isVisible(), true);
     assert.deepEqual(await dialogueRow.locator('[data-script-json-value]').evaluate(input => ({ focused: input === input.ownerDocument.activeElement, caret: input.selectionStart })), { focused: true, caret: unfinishedDialogueJSON.length });
     assert.equal(await parameter(dialogueRow, ['dialogueId']).locator('option[value="talk"]').textContent(), 'Talk renamed while editing');
-    assert.equal(await page.evaluate(() => [...controller.objectBehaviorWindows.values()].find(window => window.rendered).revision), dialogueDraftRevision);
+    assert.equal(await page.evaluate(() => [...controller.objectWindows.values()].find(window => window.rendered).revision), dialogueDraftRevision);
     await dialogueRow.locator('[data-script-json-value]').fill(JSON.stringify(savedActions.find(step => step.id === 6).parameters));
     await dialogueRow.locator('[data-script-json-value]').dispatchEvent('change');
     await behavior.locator('footer [data-screen-action="save"]').click();
-    await behavior.locator('[data-tab="properties"]').click(); await behavior.locator('[data-screen-action="new-object-signal"]').click();
+    await objectTab('properties');
+    await behavior.locator('[data-screen-action="property-tab"][data-tab="signals"]').click();
+    await behavior.locator('[data-screen-action="new-object-signal"]').click();
     await behavior.locator('[name="signal-name"]').fill('guard.alert');
     await behavior.locator('[data-screen-action="addSignalField"][data-direction="parameters"]').click();
     await behavior.locator('[name="field-name"]').fill('loudness');
@@ -353,7 +374,7 @@ try {
       assert.equal(await page.evaluate(() => activeNativeLayer), layer);
       assert.equal(await page.evaluate(() => focusedMapObject), `${type}:${id}`);
       assert.deepEqual(await page.evaluate(() => ({x:focusedMapPosition.x,y:focusedMapPosition.y})), center);
-      assert.ok(await page.evaluate(() => canvas.stage.children.some(child => child.bounds && !child.destroyed)), 'map focus has a frame');
+      assert.equal(await page.evaluate(({layer,type,id}) => canvas[layer].controlled.some(entry => entry.document.documentName === type && entry.document.id === id), {layer,type,id}), true, 'map focus uses native selection');
     }
     const signalId=await page.evaluate(()=>scene.flags['dmicher-master-screen'].signalCatalog.signals.find(s=>s.name==='guard.alert').id);
     await app.locator(`[data-select-kind="signal"][data-select-id="${signalId}"]`).click();
@@ -395,8 +416,10 @@ try {
     await page.screenshot({path:path.join(output,`${version}-signal-field-table.png`)});
     await reviewedField.locator('[name="field-type"]').selectOption('integer');
     await saveParameters();
-    await clickTab('dialogues'); await app.locator('[data-select-id="talk"] button').first().click();
-    await clickAction('assetFilePicker'); assert.equal(await page.evaluate(()=>lastFilePicker.type),'image');
+    await clickTab('dialogues');
+    await app.locator('[data-select-kind="dialogue"][data-select-id="talk"][data-page-id="p"]').click();
+    await app.locator('[data-screen-action="assetFilePicker"][data-field="dialoguePageArt"]').click();
+    assert.equal(await page.evaluate(()=>lastFilePicker.type),'image');
     await clickTab('scene');
     await page.evaluate(()=>controller.openStateChooser()); const chooser=page.locator('.ms-state-chooser'); await chooser.locator('input[type="radio"]').first().waitFor();
     const before=await page.evaluate(()=>JSON.stringify(scene.flags['dmicher-master-screen'].groupRuntimes));
@@ -439,7 +462,7 @@ try {
     assert.equal(await page.evaluate(() => Object.values(scene.flags['dmicher-master-screen'].groupRuntimes).every(run => run.halted && run.stateId === scene.flags['dmicher-master-screen'].groupDefinitions[run.groupId].entryStateId)), true);
     errors.push(...await page.evaluate(()=>globalThis.errors));
     assert.deepEqual(errors,[]);
-    reports.push({version,language,checks:'layout, category overlays, native item forms, object info clipboard and native settings, native object layer/focus/frame, one-line initial actions, overlapping refresh with late input, dirty reference refresh with unfinished JSON, script table and JSON synchronization, emoji palette layout/anchors/selection/dismissal, emotion size, state transition pairs, approach timing modes, follow completion modes, dialogue wait modes and token UUIDs, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, FilePicker, cancelled state chooser',errors});
+    reports.push({version,language,checks:'layout, category overlays, native item forms, unified Automation tabs, object info clipboard and native settings, native object layer/focus/selection, one-line initial actions, overlapping refresh with late input, dirty reference refresh with unfinished JSON, script catalog and JSON synchronization, Unicode palette layout/anchors/selection/dismissal, emotion size, state transition pairs, approach timing modes, follow completion modes, dialogue wait modes and token UUIDs, conditional fields, stable row IDs, multiple shops, signal field trees and typed defaults, pending JSON synchronization, dynamic help, dialogue page FilePicker, cancelled state chooser',errors});
     await context.close();
   }
   fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(reports,null,2));

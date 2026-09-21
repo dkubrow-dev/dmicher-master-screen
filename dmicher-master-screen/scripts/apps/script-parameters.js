@@ -7,6 +7,8 @@ import { openEmojiPicker } from "./emoji-picker.js";
 import { getWorkspacePresets } from "../workspace-presets-store.js";
 import { OBJECT_COMMAND_DEFINITIONS, objectCommandName } from "../object-command-model.js";
 import { isPremiumScriptKind, canExecuteScriptKind, subscribeInteractivePresentationAccess } from "../premium-provider.js";
+import { getScriptFunction } from "../script-functions/index.js";
+import { getScriptMacroEntries, SCRIPT_MACRO_NONE } from "./script-catalog-input.js";
 
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const clone = (value) => structuredClone(value);
@@ -74,11 +76,18 @@ function fields(parameters, context) {
   const effectTiming = () => select(["executionMode"], t("Режим выполнения", "Execution mode"), [["parallel", t("Вместе со следующим", "Alongside next step")], ["wait", t("До следующего", "Before next step")]])
     + num(["duration"], t("Длительность", "Duration"), duration);
   const delays = () => num(["before"], t("Перед вызовом", "Before call"), sec) + num(["after"], t("После вызова", "After call"), sec);
-  const typedParameters = (values, declarations, path = ["parameters"]) => Object.entries(values ?? {}).map(([key, entry]) => {
-    const field = declarations.find((item) => item.name === key), itemPath = [...path, key], label = key;
+  const typedParameters = (values, declarations, path = ["parameters"], metadata = {}) => Object.entries(values ?? {}).map(([key, entry]) => {
+    const field = declarations.find((item) => item.name === key), itemPath = [...path, key], fieldMeta = metadata?.[key];
+    const label = record(fieldMeta?.label) ? t(fieldMeta.label.ru ?? key, fieldMeta.label.en ?? key) : key;
     let html;
     if (record(entry)) return group(JSON.stringify(itemPath), label, typedParameters(entry, [], itemPath));
     if (Array.isArray(entry)) html = row(label, `<input ${attrs(itemPath, "json")} aria-label="${e(label)}" value="${e(JSON.stringify(entry))}">`);
+    else if (Array.isArray(fieldMeta?.options)) {
+      const choices = fieldMeta.options.filter(option => option && typeof option.value === "string" && record(option.label))
+        .map(option => [option.value, t(option.label.ru ?? option.value, option.label.en ?? option.value)]);
+      const stale = !choices.some(([id]) => id === entry);
+      html = row(label, `<select ${attrs(itemPath)} aria-label="${e(label)}">${stale ? `<option value="${e(entry)}" selected disabled>${e(t(`Недоступно: ${entry}`, `Unavailable: ${entry}`))}</option>` : ""}${choices.map(([id, text]) => `<option value="${e(id)}"${entry === id ? " selected" : ""}>${e(text)}</option>`).join("")}</select>`);
+    }
     else if (field?.type === "boolean" || typeof entry === "boolean") html = check(itemPath, label);
     else if (["integer", "number"].includes(field?.type) || typeof entry === "number") html = num(itemPath, label, { step: field?.type === "integer" ? "1" : "any", nullable: field?.nullable });
     else html = input(itemPath, label, { nullable: field?.nullable });
@@ -89,6 +98,8 @@ function fields(parameters, context) {
   switch (context.kind) {
     case "wait": rows = num(["seconds"], t("Ожидание", "Wait"), duration); break;
     case "visibility": rows = check(["visible"], t("Показывать объект", "Show object")); break;
+    case "automation": rows = input(["objectUuid"], t("Объект (UUID, пусто — исполнитель)", "Object (UUID, empty uses executor)"))
+      + check(["enabled"], t("Включить автоматизацию", "Enable automation")); break;
     case "focus": rows = select(["audience"], t("Привлечь внимание", "Draw attention"), [["all", t("Всех", "Everyone")], ["players", t("Только игроков", "Players only")], ["gm", t("Только мастера", "GM only")]]); break;
     case "move": {
       const capabilities = context.document ? scriptObjectCapabilities(context.document) : { position: true, rotation: true, size: true, sizeZ: false };
@@ -117,7 +128,8 @@ function fields(parameters, context) {
       rows += delays(); break;
     }
     case "macro": {
-      rows = select(["macroUuid"], t("Макрос", "Macro"), [["", "—"], ...(context.catalog?.macros ?? []).filter((item) => item.ownerKey === context.ownerKey).map((item) => [item.uuid, game.macros?.get?.(item.uuid.split(".").at(-1))?.name ?? item.uuid])]);
+      const macroEntries = getScriptMacroEntries(context), current = macroEntries.find(entry => entry.id === (parameters.macroUuid || SCRIPT_MACRO_NONE));
+      rows = row(t("Макрос", "Macro"), `<span class="ms-script-value ms-script-macro-value"><input type="hidden" ${attrs(["macroUuid"])} data-script-macro-uuid value="${e(parameters.macroUuid)}"><input type="text" data-script-macro-input aria-label="${t("Макрос", "Macro")}" value="${e(current?.label ?? parameters.macroUuid)}" autocomplete="off"><button type="button" data-script-macro-button aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Открыть список макросов", "Open macro list")}">⌄</button></span>`);
       rows += select(["signalId"], t("Интерфейс сигнала", "Signal interface"), [["", t("Без проверки интерфейса", "No interface validation")], ...(context.signalOptions ?? []).map(signal => [signal.id, signal.name])]);
       rows += row(t("Редактирование", "Editing"), action("script-macro-open", t("Править макрос", "Edit macro")) + action("script-macro-template", t("Шаблон", "Template"))) + delays(); break;
     }
@@ -172,6 +184,11 @@ function fields(parameters, context) {
       if (parameters.configurationId && !choices.some(([id]) => id === parameters.configurationId)) choices.push([parameters.configurationId, t(`Недоступна: ${parameters.configurationId}`, `Unavailable: ${parameters.configurationId}`)]);
       rows = select(["configurationId"], t("Конфигурация", "Configuration"), [["", "—"], ...choices]);
       break;
+    }
+    default: {
+      const descriptor = getScriptFunction(context.kind);
+      const metadata = typeof descriptor?.fields === "function" ? descriptor.fields(context) : descriptor?.fields;
+      rows = descriptor ? typedParameters(parameters, [], [], metadata) : ""; break;
     }
   }
   return table(rows);
