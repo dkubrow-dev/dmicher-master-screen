@@ -7,6 +7,7 @@ import { getRuntime, saveRuntime } from "../dmicher-master-screen/scripts/store.
 import { scriptProgressKey } from "../dmicher-master-screen/scripts/script-runtime.js";
 import { beginInteractionPause, isInteractionPaused } from "../dmicher-master-screen/scripts/interaction-pause.js";
 import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
+import { generics } from "../dmicher-master-screen/scripts/generics.js";
 const clone = structuredClone;
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
 const script = (steps, extra = {}) => ({ name: "Script", enabled: true, repeat: false, steps, ...extra });
@@ -51,6 +52,47 @@ async function settlesWithoutRelease(operation) {
   try { return await Promise.race([operation, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Cancellation waited for the old operation")), 1000); })]); }
   finally { clearTimeout(timer); }
 }
+test("oversized scripts are wholly blocked, including their first action, without consuming retry budget", async () => {
+  const f = await fixture({ routine: script(Array.from({length:17}, (_,index) => step(index+1,"visibility",{visible:false},[])),
+    {interruptions:{error:{mode:"restart-script",retries:3,delaySeconds:1}}}) });
+  f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+  await f.runtime.enter(f.scene,"calm"); await f.tick();
+  assert.equal(f.npc.hidden,false); assert.equal(f.progress().status,"stopped");
+  assert.ok(f.progress().limitIssue); assert.equal(f.progress().errorRetries,0);
+  for(let i=0;i<5;i++) await f.tick();
+  assert.equal(f.npc.hidden,false); assert.equal(f.progress().status,"stopped");
+  assert.equal(f.flags.objectBindings.bindings["Token:npc"].scripts[0].steps.length,17);
+});
+test("licence loss cancels pending oversized execution before its late result can advance", async () => {
+  const f=await fixture({routine:script(Array.from({length:17},(_,index)=>step(index+1,index?"visibility":"move",
+    index?{visible:false}:{duration:7,position:{x:100,y:0}},index?[ ]:[2])))});
+  let limits={scriptSteps:null}; f.runtime.automationLimits=()=>limits;
+  f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+  let begin,release; const began=new Promise(resolve=>{begin=resolve;});
+  f.npc.update=async()=>{begin();await new Promise(resolve=>{release=resolve;});};
+  await f.runtime.enter(f.scene,"calm"); const ticking=f.tick(); await began;
+  limits={scriptSteps:16}; notifyExecutionChange(f.scene,"premium-limits-changed");
+  await settlesWithoutRelease(ticking);
+  assert.equal(f.progress().status,"stopped"); assert.ok(f.progress().limitIssue);
+  release(); await new Promise(resolve=>setImmediate(resolve)); await f.tick();
+  assert.equal(f.npc.hidden,false); assert.equal(f.progress().status,"stopped");
+});
+test("Premium provider notification releases an oversized script waiting on an external effect", async () => {
+  let active=true,begin,release;
+  const began=new Promise(resolve=>{begin=resolve;});
+  const provider=generics.premium.registerProvider({apiVersion:1,hasAccess:()=>active,extensions:[{
+    moduleId:MODULE_ID,apiVersion:1,methods:{resolveAutomationLimits:()=>({scriptSteps:null,subscriptions:null,actions:null,chainHandlers:null})}
+  }]});
+  try {
+    const f=await fixture({routine:script(Array.from({length:17},(_,index)=>step(index+1,index?"visibility":"focus",index?{visible:false}:{audience:"gm"},index?[]:[2]))),
+      effects:{focus:async()=>{begin();await new Promise(resolve=>{release=resolve;});}}});
+    f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];
+    await f.runtime.enter(f.scene,"calm"); const ticking=f.tick(); await began;
+    active=false; provider.notifyChanged();
+    await settlesWithoutRelease(ticking); assert.equal(f.progress().status,"stopped");
+    release(); await new Promise(resolve=>setImmediate(resolve)); await f.tick(); assert.equal(f.npc.hidden,false);
+  } finally {release?.(); provider.dispose();}
+});
 test("stop releases the scene queue while a native movement update is still unresolved", async () => {
   const f = await fixture({ routine: script([step(1, "move", { duration: 7, position: { x: 100, y: 0 } }, [2]), step(2, "visibility", { visible: false })]) });
   f.scene.tiles.clear(); delete f.flags.objectBindings.bindings["Tile:tile"];

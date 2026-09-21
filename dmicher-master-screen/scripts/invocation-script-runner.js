@@ -1,9 +1,10 @@
 import { ObjectScriptRuntime, scriptProgressKey } from "./script-runtime.js";
 import { normalizeScript } from "./script-model.js";
 import { getScriptFunction } from "./script-functions/index.js";
-import { createExecutionScope, notifyExecutionChange } from "./execution.js";
+import { createExecutionScope, notifyExecutionChange, onExecutionChange } from "./execution.js";
 import { withSceneLock } from "./store.js";
 import { text } from "./localization.js";
+import { getAutomationLimits, getScriptLimitIssue, subscribeAutomationLimits } from "./automation-limits.js";
 
 const terminal = progress => ["done", "stopped", "failed", "uncertain"].includes(progress?.status);
 
@@ -23,6 +24,14 @@ export class InvocationScriptRunner {
   currentObject(host, runId) { const run = this.runs.get(runId); return !this.disposed && run?.host === host && run.current(); }
   owns(host, runId) { return this.currentObject(host, runId); }
   scriptScope(_host, runId) { return this.runs.get(runId)?.scope; }
+  automationLimits(_host, runId) { return this.runs.get(runId)?.adapters.automationLimits?.() ?? getAutomationLimits(); }
+  reconcile(run) {
+    const issue = getScriptLimitIssue(run.script, run.adapters.automationLimits?.() ?? getAutomationLimits());
+    if (issue) { run.resolve({ error: new Error(issue) }); return; }
+    const progress = run.state.scriptStates[scriptProgressKey({ type: run.object.documentName, id: run.object.id }, run.script, "subscription")];
+    if (terminal(progress)) run.resolve({ values: progress.returns ?? {}, error: progress.limitIssue || ["failed", "uncertain"].includes(progress.status)
+      ? new Error(run.state.error || text("Обработчик завершился с ошибкой.", "The handler failed.")) : null });
+  }
   refreshObject() {}
   onChange() {}
   variableContext(_host, object, current, extra) {
@@ -49,6 +58,8 @@ export class InvocationScriptRunner {
     if (this.runs.size >= 100) throw new Error(text("Слишком много одновременных обработчиков.", "Too many simultaneous handlers."));
     const script = normalizeScript(prepared);
     if (!script.enabled || !script.steps.length) return {};
+    const issue = getScriptLimitIssue(script, adapters.automationLimits?.() ?? getAutomationLimits());
+    if (issue) throw new Error(issue);
     for (const step of script.steps) {
       const fn = getScriptFunction(step.kind);
       if (!fn?.scopes.includes(scope) || fn.acceptsOwner && !fn.acceptsOwner(owner)) throw new Error(text("Функция недоступна этому источнику.", "This function is unavailable to this source."));
@@ -65,6 +76,8 @@ export class InvocationScriptRunner {
     invocation.state.executionContext = { parameters: structuredClone(context.parameters ?? {}), signal: context.signal && structuredClone(context.signal) };
     this.runs.set(runId, invocation);
     const lease = createExecutionScope(host, { isCurrent: invocation.current });
+    const releaseChanges = onExecutionChange(host, () => this.reconcile(invocation));
+    const releaseLimits = subscribeAutomationLimits(() => this.reconcile(invocation));
     try {
       this.startClock();
       const result = await lease.run(() => completion);
@@ -72,7 +85,7 @@ export class InvocationScriptRunner {
       if (result.value.error) throw result.value.error;
       return result.value.values ?? {};
     } finally {
-      lease.dispose(); this.runs.delete(runId); notifyExecutionChange(host, "invocation-finished");
+      releaseChanges(); releaseLimits(); lease.dispose(); this.runs.delete(runId); notifyExecutionChange(host, "invocation-finished");
       if (!this.runs.size) this.stopClock();
     }
   }
@@ -86,14 +99,14 @@ export class InvocationScriptRunner {
     try {
       for (const [runId, run] of this.runs) {
         if (!run.current()) { run.resolve({}); notifyExecutionChange(run.host, "invocation-cancelled"); continue; }
+        this.reconcile(run);
         const now = this.now(), elapsed = Math.min(1, Math.max(0, (now - run.at) / 1000)); run.at = now;
         if (globalThis.game?.paused) continue;
         await withSceneLock(run.host, async () => {
           if (!run.current()) return;
           const job = await this.engine.tick(run.host, this.scriptState(run.host, runId), run.object, run.script, elapsed, { slot: "subscription" });
           if (job) jobs.push(job);
-          const progress = this.runs.get(runId)?.state.scriptStates[scriptProgressKey({ type: run.object.documentName, id: run.object.id }, run.script, "subscription")];
-          if (terminal(progress)) run.resolve({ values: progress.returns ?? {}, error: ["failed", "uncertain"].includes(progress.status) ? new Error(run.state.error || text("Обработчик завершился с ошибкой.", "The handler failed.")) : null });
+          this.reconcile(run);
         });
       }
     } finally { this.busy = false; }

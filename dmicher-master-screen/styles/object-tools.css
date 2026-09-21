@@ -125,7 +125,16 @@
 .dmicher-master-screen .ms-macro-validation textarea { width: 100%; min-height: 180px; font-family: monospace; }
 .dmicher-master-screen [data-subscription-fields] { display: grid; gap: 8px; margin: 8px 0; }
 .dmicher-master-screen [data-subscription-fields] label { display: grid; gap: 4px; }
+.dmicher-master-screen .ms-subscription-signal-control { display: flex; gap: 4px; min-width: 0; }
+.dmicher-master-screen .ms-subscription-signal-control input { flex: 1; min-width: 0; }
+.dmicher-master-screen .ms-subscription-signal-control button { flex: 0 0 28px; width: 28px; margin: 0; padding: 0; }
 .dmicher-master-screen [data-signal-fields] > label { display: flex; flex-direction: column; gap: 4px; margin-block: 6px; }
 .dmicher-master-screen [data-signal-fields] > label > :is(input, textarea) { width: 100%; }
 .ms-object-info .ms-object-native-actions { display: flex; gap: 6px; margin-block: 6px; }
 .ms-object-info .ms-object-native-actions > button { flex: 1; width: auto; }
+.dmicher-master-screen .ms-script-table [data-script-limit-fields] { border: 0; margin: 0; padding: 0; min-width: 0; }
+:is(.dmicher-master-screen, .ms-spotlight-automation) .ms-automation-count { display: inline-flex; align-items: center; gap: .35rem; margin-block: .35rem; font-size: .85em; }
+:is(.dmicher-master-screen, .ms-spotlight-automation) :is(.ms-automation-count, .ms-automation-unavailable) .dmicher-premium-badge { font-size: .8em; }
+:is(.dmicher-master-screen, .ms-spotlight-automation) .ms-automation-limit-issue { border-inline-start: 3px solid #c99d41; padding: .45rem .6rem; margin-block: .4rem; background: #c99d4118; }
+:is(.dmicher-master-screen, .ms-spotlight-automation) .ms-automation-unavailable { display: block; margin-block: .25rem; font-size: .8em; }
+:is(.dmicher-master-screen, .ms-spotlight-automation) [data-automation-limit-locked] > td { background: #c99d410a; }

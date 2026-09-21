@@ -147,6 +147,11 @@ export class ObjectCommandRuntime {
     const object = commandDocument(scene, packet.targetUuid), target = object && { type: object.documentName, id: object.id };
     const check = active => { const access = validateCommandAccess(scene, packet, user, { active, trusted });
       if (trusted && packet.configurationParameters) access.config = normalizeObjectCommand({ ...access.config, parameters: { ...access.config.parameters, ...packet.configurationParameters } });
+      for (const script of [access.config.beforeScript, access.config.afterScript]) {
+        if (!script?.enabled) continue;
+        const issue = this.runtime.scripts.limitIssue(scene, access.runtime.runId, script);
+        if (issue) rejectCommand("script-limit", issue);
+      }
       return access; };
     const access = check(this.activeForObject(scene, target));
     const parameters = this.inputs(scene, packet, access);

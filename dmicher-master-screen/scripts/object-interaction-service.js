@@ -13,6 +13,7 @@ import { TechnicalMessageCleanup } from "./technical-message-cleanup.js";
 import { isSceneObjectHidden } from "./scene-object-geometry.js";
 import { SCENE_OBJECT_TYPES } from "./scene-object-types.js";
 import { isExecutionHalted } from "./execution.js";
+import { collectionEntryAllowed } from "./automation-limits.js";
 
 const CHANNEL="object-interaction", REQUEST="objectInteractionRequest", RESULT="objectInteractionResult";
 const reject = () => { throw new Error(text("Это действие сейчас недоступно вашему персонажу.","This action is currently unavailable to your character.")); };
@@ -71,6 +72,11 @@ export class ObjectInteractionService {
     await withSceneLock(scene,async()=>{
       if(this.disposed || !isAuthority() || canvas.scene?.id !== scene.id || getObjectBindings(scene).revision !== preparation) reject();
       const binding=getObjectBindings(scene).bindings[objectKey(target)], action=binding?.actions.find(entry=>entry.id===packet.actionId);
+      const actionCurrent=()=>{
+        const actions=getObjectBindings(scene).bindings[objectKey(target)]?.actions ?? [];
+        return !this.disposed && isAuthority() && actions.some(entry=>entry.id === action?.id && entry.enabled)
+          && collectionEntryAllowed("actions",actions,action);
+      };
       const run=getRuntime(scene,{groupId:binding?.groupId});
       if(!action || !action.enabled || run.runId !== choice.runId) reject();
       validateObjectActionAccess({scene,runtime:run,descriptor:{...action,actionId:action.id,target},target:getSceneObject(scene,target),conditionType:"action"},packet.actorTokenId,user,choice.runId);
@@ -79,7 +85,7 @@ export class ObjectInteractionService {
       // Storage is not physically cancellable. Recheck the execution after its
       // acknowledgement, before giving the accepted action any side effects.
       const live=getRuntime(scene,{groupId:binding.groupId});
-      if(this.disposed || !isAuthority() || canvas.scene?.id !== scene.id || getObjectBindings(scene).revision !== preparation
+      if(!actionCurrent() || canvas.scene?.id !== scene.id || getObjectBindings(scene).revision !== preparation
         || live.runId !== run.runId || isExecutionHalted(scene,live) || !getSceneObject(scene,target)
         || live.disabledObjects.includes(objectKey(target)) || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(target)] === false) reject();
       const signal=objectActionContract(target,action),script=binding.reactionScripts.find(entry=>entry.actionId===action.id)?.script;
@@ -88,7 +94,7 @@ export class ObjectInteractionService {
       // script: its ordinary interpreter needs that same queue on later ticks.
       void this.runtime.invocations.run(scene,{target,script,purpose:"reaction",action,signal,parentRunId:run.runId,
         parameters:{objectUuid:getSceneObject(scene,target).uuid,actorTokenUuid:actor?.uuid ?? null,actionId:action.id,parametersJson:JSON.stringify(action.parameters)},
-        current:()=> !this.disposed && isAuthority()}).catch(error=>this.runtime.report(error,{category:"interaction",event:"reaction.failed",context:{sceneId:scene.id,target}}));
+        current:actionCurrent}).catch(error=>this.runtime.report(error,{category:"interaction",event:"reaction.failed",context:{sceneId:scene.id,target}}));
     });
     return {ok:true};
   }

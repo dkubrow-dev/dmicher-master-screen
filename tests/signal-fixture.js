@@ -3,8 +3,16 @@ import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitio
 import { SignalCatalog } from "../dmicher-master-screen/scripts/signal-catalog.js";
 import { SceneSignals } from "../dmicher-master-screen/scripts/signals.js";
 import { signalMacroSnippet } from "../dmicher-master-screen/scripts/signal-macros.js";
+import { generics } from "../dmicher-master-screen/scripts/generics.js";
 
-export function fixture() {
+let macroProvider;
+export function fixture({ premiumMacros = true } = {}) {
+  macroProvider?.dispose();
+  // Existing signal-contract tests exercise the Premium macro handler itself;
+  // collection limits retain their free defaults unless a test grants them.
+  macroProvider = premiumMacros ? generics.premium.registerProvider({ apiVersion: 1, hasAccess: () => true,
+    extensions: [{ moduleId: MODULE_ID, apiVersion: 1, methods: { canExecuteScriptKind: () => true,
+      resolveInteractivePresentation: () => true, resolveShopRestoration: () => true, resolvePlayerActionLock: () => true } }] }) : null;
   let sequence = 0;
   globalThis.foundry = { utils: { randomID: () => `id-${++sequence}` } };
   const user = { id: "gm", isGM: true, role: 4, active: true };

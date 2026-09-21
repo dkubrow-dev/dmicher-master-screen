@@ -5,11 +5,13 @@ import { escapeHTML as e } from "./form-fields.js";
 import { themedClasses, notifyError } from "../ui.js";
 import { text as t } from "../localization.js";
 import { validateWorldScript } from "../spotlight-automation.js";
+import { automationLimits, assertAutomationAddition, limitReached, renderAutomationCount, renderAutomationUnavailable, renderScriptLimitIssue, automationAddAttributes } from "./automation-limit-fields.js";
 
 const ownerKey = owner => `${owner.type}:${owner.id}`;
 const asArray = collection => Array.from(collection?.values?.() ?? collection ?? []);
 const sourceValue = (owner, event) => JSON.stringify([owner.type, owner.id, event]);
 const title = () => t("Автоматизация Спотлайта", "Spotlight automation");
+const modelLimits = model => automationLimits(model.host.getAutomationLimits?.());
 
 export function createSpotlightEditorModel({ owner, host, bridge }) {
   if (!host?.readBindings || !owner) throw new Error(t("Источник автоматизации недоступен.", "Automation source is unavailable."));
@@ -56,12 +58,13 @@ async function createMacro(model) {
 function editSubscription(model, id, refresh) {
   const choices = sourceChoices(model);
   const existing = model.draft.subscriptions.find(row => row.id === id);
+  if (!existing) assertAutomationAddition("subscriptions", model.draft.subscriptions.length, modelLimits(model));
   const choice = choices.find(row => ownerKey(row.source) === ownerKey(model.owner)) ?? choices[0];
   if (!existing && !choice) throw new Error(t("Нет доступных событий.", "No events are available."));
   const row = structuredClone(existing ?? { id: crypto.randomUUID(), enabled: true, source: choice.source, event: choice.event,
     script: { id: crypto.randomUUID(), name: "", enabled: true, repeat: false, steps: [] } });
   let editor;
-  const context = () => ({ scriptScope: "world", owner: model.owner, ownerKey: ownerKey(model.owner), definitions: [],
+  const context = () => ({ scriptScope: "world", owner: model.owner, ownerKey: ownerKey(model.owner), definitions: [], automationLimits: () => modelLimits(model),
     catalog: { macros: (model.draft.registeredMacroUuids ?? []).map(uuid => ({ ownerKey: ownerKey(model.owner), uuid })), signals: [] },
     signalOptions: [signalDefinition(row, model)] });
   editor = new ScriptBlockEditor({ title: title(), script: row.script, context,
@@ -77,7 +80,7 @@ function editSubscription(model, id, refresh) {
       if (model.disposed) return;
       row.script = script;
       const index = model.draft.subscriptions.findIndex(candidate => candidate.id === row.id);
-      if (index < 0) model.draft.subscriptions.push(row); else model.draft.subscriptions[index] = row;
+      if (index < 0) { assertAutomationAddition("subscriptions", model.draft.subscriptions.length, modelLimits(model)); model.draft.subscriptions.push(row); } else model.draft.subscriptions[index] = row;
       model.dirty = true; refresh();
     }
   });
@@ -97,6 +100,7 @@ export function mountSpotlightAutomationEditor(element, { model = null, ...optio
   };
   const refresh = () => {
     const rows = model.draft.subscriptions ?? [];
+    const limits = modelLimits(model);
     const availableMacros = asArray(globalThis.game?.macros).filter(macro => macro.type === "script");
     const attached = model.draft.registeredMacroUuids ?? [];
     const sources = new Map(model.host.sources().map(source => [ownerKey(source.owner ?? source), source]));
@@ -105,9 +109,9 @@ export function mountSpotlightAutomationEditor(element, { model = null, ...optio
       return `<td title="${e(`${ownerKey(row.source)} / ${row.event}`)}">${e(labels.source)}<br>${e(labels.event)}</td>`;
     };
     element.innerHTML = `<section class="ms-spotlight-automation"><p>${t("Подписки действуют во всём мире, в том числе без открытой сцены.", "Subscriptions operate throughout the world, including without an open scene.")}</p>
-      <p data-world-status></p><table><thead><tr><th>${t("Вкл.", "On")}</th><th>${t("Источник и событие", "Source and event")}</th><th>${t("Скрипт", "Script")}</th><th>${t("Действия", "Actions")}</th></tr></thead><tbody>
-      ${rows.map(row => `<tr><td><input type="checkbox" data-world-enabled-row="${e(row.id)}"${row.enabled ? " checked" : ""}></td>${sourceCell(row)}<td>${e(row.script?.name || t("Без названия", "Untitled"))}</td><td><button type="button" data-world-action="edit" data-id="${e(row.id)}">${t("Изменить", "Edit")}</button><button type="button" data-world-action="remove" data-id="${e(row.id)}">${t("Удалить", "Delete")}</button></td></tr>`).join("")}
-      </tbody></table><div class="dmicher-actions"><button type="button" data-world-action="add">${t("Добавить подписку", "Add subscription")}</button><button type="button" data-world-action="save">${t("Сохранить", "Save")}</button></div>
+      <p data-world-status></p>${renderAutomationCount("subscriptions", rows.length, limits)}<table><thead><tr><th>${t("Вкл.", "On")}</th><th>${t("Источник и событие", "Source and event")}</th><th>${t("Скрипт", "Script")}</th><th>${t("Действия", "Actions")}</th></tr></thead><tbody>
+      ${rows.map((row, index) => `<tr${limitReached("subscriptions", index, limits) ? ' data-automation-limit-locked="subscriptions"' : ""}><td><input type="checkbox" data-world-enabled-row="${e(row.id)}"${row.enabled ? " checked" : ""}></td>${sourceCell(row)}<td>${e(row.script?.name || t("Без названия", "Untitled"))}${renderAutomationUnavailable("subscriptions", index, limits)}${renderScriptLimitIssue(row.script, limits)}</td><td><button type="button" data-world-action="edit" data-id="${e(row.id)}">${t("Изменить", "Edit")}</button><button type="button" data-world-action="remove" data-id="${e(row.id)}">${t("Удалить", "Delete")}</button></td></tr>`).join("")}
+      </tbody></table><div class="dmicher-actions"><button type="button" data-world-action="add"${automationAddAttributes("subscriptions", rows.length, limits)}>${t("Добавить подписку", "Add subscription")}</button><button type="button" data-world-action="save">${t("Сохранить", "Save")}</button></div>
       <details><summary>${t("Зарегистрированные макросы", "Registered macros")}</summary><p>${t("Исполнение разрешено только явно зарегистрированным макросам этого инструмента.", "Only explicitly registered macros may execute for this tool.")}</p><select data-world-macro><option value="">—</option>${availableMacros.filter(macro => !attached.includes(macro.uuid)).map(macro => `<option value="${e(macro.uuid)}">${e(macro.name)}</option>`).join("")}</select><button type="button" data-world-action="attach-macro">${t("Зарегистрировать", "Register")}</button><ul>${attached.map(uuid => `<li>${e(availableMacros.find(macro => macro.uuid === uuid)?.name || uuid)} <button type="button" data-world-action="detach-macro" data-id="${e(uuid)}">${t("Убрать", "Remove")}</button></li>`).join("")}</ul></details>
       <div class="dmicher-actions"><button type="button" data-world-action="stop">${t("Остановить мировую автоматизацию", "Stop world automation")}</button><button type="button" data-world-action="resume">${t("Продолжить", "Resume")}</button></div>
       <p data-world-save-status>${model.dirty ? t("Есть несохранённые изменения", "Unsaved changes") : t("Изменений нет", "No changes")}</p>

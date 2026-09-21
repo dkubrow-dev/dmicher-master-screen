@@ -28,7 +28,7 @@ export function normalizeScriptCombat(raw = {}) {
 }
 /** The array is presentation order; ID 1 remains the entry and graph edges stay stable. */
 export function normalizeScript(raw) {
-  if (!record(raw) || !Array.isArray(raw.steps) || raw.steps.length > 200) fail(localizedMessage("Скрипт должен содержать до 200 шагов."));
+  if (!record(raw) || !Array.isArray(raw.steps)) fail(text("Скрипт должен содержать список шагов.", "A script must contain a list of steps."));
   const steps = raw.steps.map(normalizeScriptStep), ids = new Set(steps.map((step) => step.id));
   if (ids.size !== steps.length) fail(localizedMessage("ID шагов не должны повторяться."));
   if (steps.length && !ids.has(1)) fail(localizedMessage("Непустой скрипт должен содержать начальный шаг ID 1."));

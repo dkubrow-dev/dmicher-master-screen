@@ -24,10 +24,11 @@ import { bindScriptCatalogs, promptAndCreateAttachedScriptMacro } from "./script
 import { exportScriptBlock, importScriptBlock } from "../script-transfer.js";
 import { generics } from "../generics.js";
 import { readObjectGeometry } from "../script-movement.js";
-import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
+import { renderSignalFields, readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroName, macroValidationSummary, bindSignalFields, bindSubscriptionSignalCatalog } from "./signal-fields.js";
 import { defaultObjectCommand, objectCommandName } from "../object-command-model.js";
 import { renderObjectCommandList, renderObjectCommandFields, readObjectCommandFields, bindObjectCommandFields } from "./object-command-fields.js";
 import { renderShopRestorationFields, readShopRestorationFields, bindShopRestorationFields } from "./shop-restoration-fields.js";
+import { assertAutomationAddition, renderAutomationUnavailable } from "./automation-limit-fields.js";
 
 const clone = (value) => structuredClone(value);
 const options = (items, current, empty = t("Не выбрано", "Not selected")) => selectOptions(items, current, empty);
@@ -196,7 +197,8 @@ export class ObjectAutomationApplication extends ObjectForm {
     return `<table class="ms-state-script-table"><tbody>${rows.map(entry => {
       const script = this.draft[collection]?.find(row => row[key] === entry.id)?.script;
       const attrs = `data-kind="${kind}" data-reference-id="${e(entry.id)}" data-name="${e(entry.name)}"`;
-      return `<tr><td>${e(entry.name)}</td><td>${e(script?.name ?? "—")}${button("edit-script",script ? t("Править","Edit") : t("Создать","Create"),attrs)}${script ? button("delete-script","×",attrs) : ""}</td></tr>`;
+      const index = kind === "event" ? catalog.subscriptions.filter(row => row.ownerKey === this.ownerKey).findIndex(row => row.id === entry.id) : rows.indexOf(entry);
+      return `<tr><td>${e(entry.name)}${renderAutomationUnavailable(kind === "event" ? "subscriptions" : "actions", index)}</td><td>${e(script?.name ?? "—")}${button("edit-script",script ? t("Править","Edit") : t("Создать","Create"),attrs)}${script ? button("delete-script","×",attrs) : ""}</td></tr>`;
     }).join("")}</tbody></table>${rows.length ? "" : `<p class="ms-note">${t("Сначала зарегистрируйте подписку на скрипт или действие в свойствах объекта.","First register a script subscription or action in the object's properties.")}</p>`}`;
   }
   async informationAction(action, target) {
@@ -222,6 +224,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     } else if (action === "remove-variable") this.draft.variables.splice(Number(target.dataset.index),1);
     else if (action === "add-action") {
       const entries = this.draft.actions ??= [];
+      assertAutomationAddition("actions", entries.length);
       const id = foundry.utils.randomID(); entries.push({id,name:t("Новое действие","New action"),enabled:false,audience:"players",range:5,order:0,conditions:normalizeConditions({repeat:"always"}),parameters:{}}); this.selectedAction=id;
     } else if (action === "edit-action") { this.selectedAction=target.dataset.id; return true; }
     else if (action === "remove-action") { this.draft.actions=this.draft.actions.filter(entry => entry.id !== target.dataset.id); this.draft.reactionScripts=(this.draft.reactionScripts ?? []).filter(entry => entry.actionId !== target.dataset.id); this.selectedAction=null; }
@@ -358,7 +361,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     if (this.propertyTab === "actions") { const action = this.draft.actions?.find(entry => entry.id === this.selectedAction); return html + renderObjectActionList(this.draft.actions,this.selectedAction) + (action ? renderObjectAction(action,this.context().definition) : ""); }
     if (this.propertyTab === "macros")
     html += section(t("Макросы объекта", "Object macros"), `<div data-object-macro-drop><table><tbody>${macros.map((macro) => `<tr><td>${e(macroName(macro.uuid))}<small>${e(scripts.filter((script) => script.steps.some((step) => step.kind === "macro" && step.parameters.macroUuid === macro.uuid)).map((script) => script.name).join(", "))}</small></td><td>${e(this.macroValidation?.get(macro.uuid)?.text ?? "")}</td><td>${button("edit-object-macro", t("Править", "Edit"), `data-uuid="${e(macro.uuid)}"`)}${button("remove-object-macro", "×", `data-uuid="${e(macro.uuid)}"`)}</td></tr>`).join("")}</tbody></table><p class="ms-note">${t("Перетащите макрос Foundry сюда. Подписки проверяются при сохранении.", "Drop a Foundry macro here. Subscriptions are validated when saved.")}</p>${button("create-object-macro", `+ ${t("Макрос", "Macro")}`)}</div>`);
-    if (this.propertyTab === "subscriptions") html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog));
+    if (this.propertyTab === "subscriptions") html += section(t("Подписки", "Subscriptions"), renderSubscriptions(catalog.subscriptions.filter((row) => row.ownerKey === this.ownerKey), catalog, { ownerKey: this.ownerKey }));
     if (this.propertyTab === "subscriptions" && this.subscriptionDraft) html += renderSubscriptionFields(this.subscriptionDraft, catalog, { fixedOwner: this.ownerKey });
     if (this.propertyTab === "signals") html += section(t("Сигналы", "Signals"), `<table><tbody>${signals.map((signal) => `<tr><td><input type="checkbox" data-object-signal="${e(signal.id)}" aria-label="${e(t("Включить сигнал","Enable signal"))}"${this.draft.signals?.enabledIds?.includes(signal.id) ? " checked" : ""}></td><td>${e(signal.name)}${signal.builtin ? ` · ${t("системный", "system")}` : ""}</td><td>${button("edit-object-signal", t("Править", "Edit"), `data-id="${e(signal.id)}"`)}${signal.builtin ? "" : button("remove-object-signal", "×", `data-id="${e(signal.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("new-object-signal", `+ ${t("Сигнал", "Signal")}`)}`);
     if (this.propertyTab === "signals" && this.signalDraft) html += section(t("Сигнал", "Signal"), renderSignalFields(this.signalDraft, catalog) + button("save-object-signal", t("Сохранить сигнал", "Save signal")));
@@ -443,6 +446,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     }
     const disposeSignalFields = bindSignalFields(this.element, { getSignal: () => this.signalDraft, onChange: () => { this.capture(); this.dirty = true; }, onError: notifyError });
     this.events.signal.addEventListener("abort", disposeSignalFields, { once: true });
+    bindSubscriptionSignalCatalog(this.element, () => getSignalCatalog(this.context().scene), listeners);
     this.element.addEventListener("change", (event) => { const target = event.target; try {
       if (target.matches("[data-script-kind]")) { this.capture(); const step = this.activeScript()?.steps[Number(target.dataset.step)]; if (!step) { void this.render({ force: true }); return; } step.parameters = completeScriptParameters(step.kind, undefined, this.context().document); this.dirty = true; void this.render({ force: true }); }
       else if (target.matches('[name="subscription-signal"],[name="subscription-handler"]')) { this.capture(); void this.render({ force: true }); }
@@ -511,7 +515,7 @@ export class ObjectAutomationApplication extends ObjectForm {
     else if (["add-script-step", "remove-script-step", "script-point", "script-sound", "script-current-position", "script-current-size"].includes(action)) {
       const script = this.activeScript(), step = script?.steps[Number(target.dataset.step)];
       if (!script || action !== "add-script-step" && !step) return this.render({ force: true });
-      if (action === "add-script-step") appendScriptStep(script);
+      if (action === "add-script-step") { assertAutomationAddition("scriptSteps", script.steps.length); appendScriptStep(script); }
       else if (action === "remove-script-step") removeScriptStep(script, Number(target.dataset.step));
       else if (action === "script-point") { const point = await this.controller.pickPoint(); if (point) step.parameters.position = { ...(step.parameters.position ?? { speed: 5 }), x: point.x, y: point.y }; }
       else if (action === "script-current-position" || action === "script-current-size") {
@@ -562,10 +566,10 @@ export class ObjectAutomationApplication extends ObjectForm {
     else if (action === "create-object-macro") { const Macro = foundry.documents.Macro?.implementation ?? globalThis.Macro; const macro = await Macro.create({ name: t("Макрос объекта", "Object macro"), type: "script", scope: "global", command: "" }, { renderSheet: true }); if (macro) await catalog.attachMacro(this.ownerKey, macro.uuid); }
     else if (action === "edit-object-macro") return (await fromUuid(target.dataset.uuid))?.sheet?.render(true);
     else if (action === "remove-object-macro") await catalog.removeMacro(this.ownerKey, target.dataset.uuid);
-    else if (action === "newSignalSubscription") { this.subscriptionDraft = { ownerKey: this.ownerKey, signalId: "", macroUuid: "", enabled: true }; this.validation = null; }
+    else if (action === "newSignalSubscription") { assertAutomationAddition("subscriptions", catalog.list().subscriptions.filter(row => row.ownerKey === this.ownerKey).length); this.subscriptionDraft = { ownerKey: this.ownerKey, signalId: "", macroUuid: "", enabled: true }; this.validation = null; }
     else if (action === "editSignalSubscription") { this.subscriptionDraft = clone(catalog.list().subscriptions.find((row) => row.id === target.dataset.id)); this.validation = null; }
     else if (action === "deleteSignalSubscription") { await catalog.removeSubscription(target.dataset.id); this.subscriptionDraft = null; }
-    else if (action === "saveSignalSubscription") { try { this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft); this.validation = { valid: true }; } catch (error) { this.validation = { valid: false, error: error.message, snippet: error.snippet }; notifyError(error); } }
+    else if (action === "saveSignalSubscription") { try { const rows = catalog.list().subscriptions.filter(row => row.ownerKey === this.subscriptionDraft.ownerKey); if (!rows.some(row => row.id === this.subscriptionDraft.id)) assertAutomationAddition("subscriptions", rows.length); this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft); this.validation = { valid: true }; } catch (error) { this.validation = { valid: false, error: error.message, snippet: error.snippet }; notifyError(error); } }
     else return super.handleAction(action, target);
     return this.render({ force: true });
   }

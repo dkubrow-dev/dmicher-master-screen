@@ -1,6 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { InvocationScriptRunner } from "../dmicher-master-screen/scripts/invocation-script-runner.js";
+import { notifyExecutionChange } from "../dmicher-master-screen/scripts/execution.js";
+
+test("world and group handlers reject a long script before creating an invocation, while owner grants can unlock it", async () => {
+  const runner=new InvocationScriptRunner(); runner.startClock=()=>{};
+  const options={host:{id:"world"},owner:{type:"Spotlight",id:"requests"},scope:"world",
+    script:{steps:Array.from({length:17},(_,index)=>({id:index+1,kind:"wait",parameters:{seconds:1}}))}};
+  const denied=runner.run(options); denied.catch(()=>{});
+  if (runner.runs.size) runner.cancel();
+  await assert.rejects(denied,/16/); assert.equal(runner.runs.size,0);
+  const pending=runner.run({...options,adapters:{automationLimits:()=>({scriptSteps:null})}});
+  assert.equal(runner.runs.size,1); runner.cancel(); await pending; runner.dispose();
+});
+
+test("downgrade settles a long waiting invocation while the world is paused", async () => {
+  globalThis.game={paused:false}; let limits={scriptSteps:null};
+  const runner=new InvocationScriptRunner(); runner.startClock=()=>{};
+  const host={id:"world"};
+  const pending=runner.run({host,owner:{type:"Spotlight",id:"requests"},scope:"world",
+    adapters:{automationLimits:()=>limits},script:{steps:Array.from({length:17},(_,index)=>({id:index+1,kind:"wait",parameters:{seconds:60}}))}});
+  const rejected=assert.rejects(pending,/16/);
+  await runner.tick(); globalThis.game.paused=true; limits={scriptSteps:16};
+  notifyExecutionChange(host,"premium-limits-changed"); await runner.tick();
+  let timer;
+  try {await Promise.race([rejected,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("A paused invocation was not released")),500);})]);}
+  finally {clearTimeout(timer);runner.dispose();globalThis.game.paused=false;}
+  assert.equal(runner.runs.size,0);
+});
 
 test("disabled subscriptions finish without a clock, and accepted input is isolated from its caller", async () => {
   const runner=new InvocationScriptRunner(); runner.startClock=()=>{};

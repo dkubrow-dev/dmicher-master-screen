@@ -1,5 +1,10 @@
 # dmicher 🎬 Master screen — 0.0.1
 
+- Бесплатная автоматизация: 16 шагов на блок, 8 подписок на владельца, 4 действия на объект; общий каскад — 8 обработчиков. Premium снимает квоты. Сохранённые превышения не удаляются; длинный скрипт без доступа блокируется целиком, также при потере доступа во время исполнения. Ожидающие обработчики освобождаются и на паузе. Прямые макросы подписок требуют Premium, условия и переходы остаются бесплатны.
+- Free automation: 16 steps per block, 8 subscriptions per owner, 4 actions per object and 8 handlers per causal cascade. Premium removes quotas. Excess preparation is retained; oversized scripts are blocked in full, including on access loss during execution. Pending handlers release even while paused. Direct subscription macros require Premium; conditions and transitions remain free.
+- Справочники имеют общую непрозрачную подложку Generics; «Сигнал эмитента» в подписках выбирается через справочник.
+- References share an opaque Generics surface; emitter signals in subscriptions use the reference picker.
+
 - Группы получили подписки со скриптами; инструменты Спотлайта — мировую автоматизацию, работающую без карты. Единый справочник функций содержит поиск, описания и отметки недоступности. Добавлены «Пауза» и общее управление поведением объектов.
 - Groups now support script subscriptions; Spotlight tools support world automation without a scene. The shared function catalog provides search, descriptions and availability. Added Pause and unified object behavior controls.
 - Шаги скрипта отображаются тремя колонками: номер и перетаскивание; функция, JSON и параметры ниже; переход. Подсказки функции и JSON закреплены рядом со своими элементами.

@@ -2,6 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeScript, normalizeScripts, normalizeScriptStep, scriptStepTemplate, SCRIPT_STEP_KINDS, DEFAULT_EMOTION_SIZE } from "../dmicher-master-screen/scripts/script-model.js";
 const step = (id, kind, parameters, next = []) => ({ id, kind, parameters, next });
+
+test("normalization preserves large imported scripts independently of licensing", () => {
+  const raw={steps:Array.from({length:201},(_,index)=>step(index+1,"wait",{seconds:1}))};
+  const saved=structuredClone(raw), result=normalizeScript(raw);
+  assert.equal(result.steps.length,201); assert.deepEqual(raw,saved);
+});
 test("script options have explicit defaults and initial restoration has no state requirement", () => {
   const value = normalizeScript({ steps: [] });
   assert.equal(value.enabled, true); assert.equal(value.repeat, false); assert.equal(value.stateId, undefined);

@@ -2,6 +2,7 @@ import { text as t } from "../localization.js";
 import { escapeHTML as e, actionButton as button, textInput as input, selectOptions, formValue } from "./form-fields.js";
 import { buildConditionFields, readConditionFields } from "./condition-fields.js";
 import { normalizeObjectVariables } from "../object-variables.js";
+import { limitReached, renderAutomationCount, renderAutomationUnavailable, automationAddAttributes } from "./automation-limit-fields.js";
 const check = (name, label, value) => `<label class="ms-check"><input type="checkbox" name="${e(name)}"${value ? " checked" : ""}>${e(label)}</label>`;
 
 export function renderObjectVariables(variables = []) {
@@ -16,7 +17,7 @@ export function readObjectVariables(element, original) {
   }));
 }
 export function renderObjectActionList(actions = [], selected) {
-  return `<table><tbody>${actions.map(action => `<tr><td>${e(action.name)}</td><td>${e(action.enabled ? t("Включено","Enabled") : t("Выключено","Disabled"))}</td><td>${button("edit-action",t("Править","Edit"),`data-id="${e(action.id)}" aria-pressed="${action.id === selected}"`)}${button("remove-action","×",`data-id="${e(action.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("add-action",`+ ${t("Действие","Action")}`)}`;
+  return `${renderAutomationCount("actions", actions.length)}<table><tbody>${actions.map((action, index) => `<tr${limitReached("actions", index) ? ' data-automation-limit-locked="actions"' : ""}><td>${e(action.name)}${renderAutomationUnavailable("actions", index)}</td><td>${e(action.enabled ? t("Включено","Enabled") : t("Выключено","Disabled"))}</td><td>${button("edit-action",t("Править","Edit"),`data-id="${e(action.id)}" aria-pressed="${action.id === selected}"`)}${button("remove-action","×",`data-id="${e(action.id)}"`)}</td></tr>`).join("")}</tbody></table>${button("add-action",`+ ${t("Действие","Action")}`, automationAddAttributes("actions", actions.length))}`;
 }
 export function renderObjectAction(action, definition) {
   return `<div data-object-action>${input("action-name",t("Название","Name"),action.name)}${check("action-enabled",t("Включено","Enabled"),action.enabled)}

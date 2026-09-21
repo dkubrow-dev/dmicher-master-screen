@@ -268,7 +268,6 @@ export const MESSAGE_TRANSLATIONS = Object.freeze({
   "Уведомление в чате": "Chat notification",
   "Завершать ход": "End turn",
   "Длительность хода": "Turn duration",
-  "Скрипт должен содержать до 200 шагов.": "A script must contain no more than 200 steps.",
   "ID шагов не должны повторяться.": "Step IDs must be unique.",
   "Непустой скрипт должен содержать начальный шаг ID 1.": "A nonempty script must contain its starting step with ID 1.",
   "Включить скрипт": "Enable script",

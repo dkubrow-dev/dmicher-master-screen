@@ -8,6 +8,8 @@ import { isExecutionHalted, executionGeneration, createExecutionScope, isSceneAu
 import { signalTrace } from "./debug.js";
 import { ObjectVariableService } from "./object-variables.js";
 import { isNativeObjectEmitter, isObjectSignalEnabled } from "./object-signal-settings.js";
+import { collectionEntryAllowed, getAutomationLimits } from "./automation-limits.js";
+import { canExecuteScriptKind } from "./premium-provider.js";
 
 // Diagnostics keep document identity and returned values, never live Foundry documents.
 // Delivery IDs connect nested subscriber records without changing receipt semantics.
@@ -123,6 +125,12 @@ export class SceneSignals {
       const live = catalog.subscriptions.find((entry) => entry.id === subscription.id && entry.enabled && entry.handler === subscription.handler && entry.macroUuid === subscription.macroUuid);
       const trace = (event, details = {}, error) => signalTrace(event, () => ({ ...diagnosticContext(scene, delivery, subscription, owner), ...details }), error);
       if (!owner || !live) { trace("subscriber.skipped", { reason: "removed" }); continue; }
+      if (!collectionEntryAllowed("subscriptions", catalog.subscriptions.filter(entry => entry.ownerKey === owner.key), live)) {
+        trace("subscriber.skipped", { reason: "subscription-limit" }); continue;
+      }
+      if (subscription.handler !== "script" && !canExecuteScriptKind("macro")) {
+        trace("subscriber.skipped", { reason: "premium-macro" }); continue;
+      }
       if (context._subscriptions?.includes(subscription.id)) {
         trace("subscriber.skipped", { reason: "cycle" }); continue;
       }
@@ -136,11 +144,17 @@ export class SceneSignals {
       const validatesOwnGroup = ["validateStart", "validateTransition"].includes(signal.name) && emitter.type === "Group" && emitter.id === owner.groupId;
       if (!allowStopped && !validatesOwnGroup && state && (!state.runId || isExecutionHalted(scene, state))) { trace("subscriber.skipped", { reason: "halted" }); continue; }
       if (this.canHandle && !this.canHandle(scene, owner, signal)) { trace("subscriber.skipped", { reason: "blocked" }); continue; }
+      const handlerIndex = context._chain.handlerCount ?? 0, handlerLimit = getAutomationLimits().chainHandlers;
+      if (handlerLimit !== null && handlerIndex >= handlerLimit) { trace("subscriber.skipped", { reason: "chain-limit" }); continue; }
       const generation = owner.groupId ? executionGeneration(scene, owner.groupId) : null;
       const current = () => {
         if (!sourceCurrent() || owner.groupId && generation !== executionGeneration(scene, owner.groupId)) return false;
         const catalog = getSignalCatalog(scene), liveOwner = catalog.emitters.find((entry) => entry.key === owner.key);
         if (!liveOwner || liveOwner.groupId !== owner.groupId) return false;
+        const handlerLimit = getAutomationLimits().chainHandlers;
+        if (handlerLimit !== null && handlerIndex >= handlerLimit
+          || !collectionEntryAllowed("subscriptions", catalog.subscriptions.filter(entry => entry.ownerKey === owner.key), subscription)
+          || subscription.handler !== "script" && !canExecuteScriptKind("macro")) return false;
         const liveState = owner.groupId ? getRuntime(scene, { groupId: owner.groupId }) : null;
         return (!owner.groupId || liveState?.runId === state?.runId && !liveState?.disabledObjects?.includes(owner.key))
           && (subscription.handler === "script" || catalog.macros.some((entry) => entry.ownerKey === owner.key && entry.uuid === subscription.macroUuid))
@@ -148,6 +162,7 @@ export class SceneSignals {
             && entry.ownerKey === owner.key && entry.emitterKey === emitter.key && entry.signalId === signal.id && JSON.stringify(entry.script) === JSON.stringify(subscription.script));
       };
       const entry = { subscriptionId: subscription.id, ownerKey: owner.key, ownerName: owner.name, status: "done", returns: {} };
+      context._chain.handlerCount = handlerIndex + 1;
       result.results.push(entry);
       trace("subscriber.accepted");
       try {

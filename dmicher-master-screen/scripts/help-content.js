@@ -574,7 +574,7 @@ export const SCREEN_HELP_SETTINGS = [
     ["field-description", "field-description", "Описание поля", "Field description", "Поясните смысл передаваемого значения и единицы измерения.", "Explain the value's meaning and units."],
     ["subscription-owner", "owner", "Подписчик", "Subscriber", "Объект, чей скрипт события или прикреплённый макрос обработает сигнал.", "The object whose event script or attached macro handles the signal."],
     ["subscription-macro", "macro", "Макрос объекта", "Object macro", "Выберите прикреплённый макрос с подходящими параметрами и возвратами.", "Choose an attached macro with compatible inputs and returns."],
-    ["subscription-signal", "signal", "Сигнал эмитента", "Emitter signal", "Сигнал своего или другого объекта, на который должна реагировать подписка.", "A signal from this or another object to react to."],
+    ['[data-subscription-signal-input]', "signal", "Сигнал эмитента", "Emitter signal", "Найдите сигнал по имени или эмитенту и подтвердите выбор Enter, Tab или нажатием в справочнике. Поиск без подтверждения не меняет подписку.", "Find a signal by its name or emitter and confirm with Enter, Tab or a catalog selection. Unconfirmed search text does not change the subscription."],
     ["subscription-enabled", "enabled", "Включена", "Enabled", "Выключение сохраняет подготовленную подписку, но прекращает её выполнение.", "Disabling preserves the subscription but prevents its execution."]
   ] }
 ];

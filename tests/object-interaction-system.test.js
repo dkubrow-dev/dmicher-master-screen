@@ -80,6 +80,19 @@ test("a stopped reaction cannot finish a late effect or retain ownership",async(
   assert.equal(runtime.manualRuns.size,1);requestSceneHalt(f.scene);notifyExecutionChange(f.scene,"halt-all");
   assert.deepEqual(await result,{});assert.equal(runtime.manualRuns.size,0);
 });
+
+test("a paused object's long reaction releases its delivery immediately when Premium expires",async()=>{
+  const f=fixture(),runtime=new GroupRuntime({effects:{stop(){}}});
+  let limits={scriptSteps:null}; runtime.automationLimits=()=>limits;
+  const script=normalizeScript({steps:Array.from({length:17},(_,index)=>({id:index+1,kind:"wait",parameters:{seconds:60},next:[]}))});
+  const result=runtime.invocations.run(f.scene,{target:descriptor,script,purpose:"reaction"});
+  const rejected=assert.rejects(result,/16/); game.paused=true; limits={scriptSteps:16};
+  notifyExecutionChange(f.scene,"premium-limits-changed"); await runtime.tick();
+  let timer;
+  try {await Promise.race([rejected,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Reaction stayed pending on pause")),500);})]);}
+  finally {clearTimeout(timer);runtime.dispose();game.paused=false;}
+  assert.equal(runtime.manualRuns.size,0); assert.equal(runtime.invocations.pending.size,0);
+});
 test("native types without shop/dialogue capabilities do not resolve old assignments",()=>{
   const binding=normalizeObjectBinding({type:"Wall",id:"wall",groupId:"main",dialogues:[{dialogueId:"talk",stateIds:[]}]});
   assert.deepEqual(resolveBindingTools(binding,{dialogues:[{id:"talk"}]},{groupId:"main",stateId:"calm"},"dialogue"),[]);

@@ -3,6 +3,7 @@ import { SCENE_OBJECT_COLLECTIONS } from "./scene-object-types.js";
 import { objectCapabilities } from "./object-capabilities.js";
 import { objectSupportsCommand, commandPermitsDisabledBehavior } from "./object-command-model.js";
 import { isExecutionHalted, isSceneAutomationHalted } from "./execution.js";
+import { collectionEntryAllowed } from "./automation-limits.js";
 
 const list = value => Array.isArray(value) ? value : [];
 const includes = (values, value) => !list(values).length || values.includes(value);
@@ -31,6 +32,7 @@ export function potentialInteractiveDocuments(scene, user = globalThis.game?.use
       && (user.isGM ? entry.permissions?.gm !== false : entry.permissions?.player !== false || entry.permissions?.delegated !== false)
       && (!list(entry.conditions?.groups).length || entry.conditions.groups.some(group=>group.groupId === binding.groupId && includes(group.stateIds,run?.stateId))));
     const action = running && enabled && list(binding.actions).some(entry=>entry.enabled
+      && collectionEntryAllowed("actions",binding.actions,entry)
       && (user.isGM || entry.audience !== "gm") && stateAllowed(entry.conditions,run));
     const tool = running && enabled && objectCapabilities(binding.type).tools && ["shops","dialogues"].some(kind=>list(binding[kind]).some(entry=>
       entry.playerAction !== false && assets[kind].has(entry[kind === "shops" ? "shopId" : "dialogueId"])

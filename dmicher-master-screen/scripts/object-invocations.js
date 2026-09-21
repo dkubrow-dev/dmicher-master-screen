@@ -1,11 +1,12 @@
 import { MODULE_ID, emptyRuntime } from "./model.js";
 import { getRuntime, getDefinitions, isAuthority } from "./store.js";
 import { getObjectBindings, getSceneObject, objectKey } from "./scene-objects.js";
-import { createExecutionScope, isExecutionHalted, isSceneAutomationHalted, notifyExecutionChange } from "./execution.js";
+import { createExecutionScope, isExecutionHalted, isSceneAutomationHalted, notifyExecutionChange, onExecutionChange } from "./execution.js";
 import { text } from "./localization.js";
 import { scriptProgressKey } from "./script-model.js";
 import { InvocationScriptRunner } from "./invocation-script-runner.js";
 import { getSignalCatalog } from "./signal-catalog.js";
+import { subscribeAutomationLimits } from "./automation-limits.js";
 
 /** Events and reactions use the same interpreter as routine and initial scripts.
  * Object invocations use the scene runtime; groups supply an in-memory host. */
@@ -31,12 +32,16 @@ export class ObjectInvocations {
    * games. An invalid invocation must release its awaiting signal even if its
    * object no longer has an eligible interpreter tick. */
   reconcile(scene) {
-    for (const invocation of this.pending.values()) if (invocation.scene === scene) invocation.scope?.current();
+    for (const invocation of this.pending.values()) if (invocation.scene === scene) {
+      invocation.scope?.current(); invocation.checkLimit?.();
+    }
   }
   async run(scene, {target, script, purpose, parameters = {}, signal, action, current = () => true, progress, parentRunId}) {
     this.runtime.requireAuthority(scene);
     const binding = getObjectBindings(scene).bindings[objectKey(target)];
     if (!binding || !script?.enabled || !script.steps.length) return {};
+    const issue = this.runtime.scripts.limitIssue(scene, parentRunId, script);
+    if (issue) throw new Error(issue);
     if ([...this.runtime.manualRuns.values()].some(run => run.sceneId === scene.id && objectKey(run.target) === objectKey(target)) || this.runtime.commandExecutor?.activeForObject(scene,target)) {
       throw new Error(text("Объект занят выполнением другого действия.","The object is busy performing another action."));
     }
@@ -54,6 +59,12 @@ export class ObjectInvocations {
     this.runtime.manualRuns.set(run.runId,run);
     const scope = createExecutionScope(scene,{isCurrent:() => this.current(scene,run)});
     invocation.scope = scope;
+    invocation.checkLimit = () => {
+      const issue = this.runtime.scripts.limitIssue(scene, run.runId, run.script);
+      if (issue) invocation.resolve({ error: issue });
+    };
+    const releaseChanges = onExecutionChange(scene, invocation.checkLimit);
+    const releaseLimits = subscribeAutomationLimits(invocation.checkLimit);
     try {
       if (!scope.current()) return {};
       this.runtime.tickTimes.set(`${scene.id}:${run.runId}`,this.runtime.now());
@@ -63,7 +74,7 @@ export class ObjectInvocations {
       if (result.value?.error) throw new Error(result.value.error);
       return result.value?.values ?? {};
     } finally {
-      scope.dispose(); this.pending.delete(run.runId);
+      releaseChanges(); releaseLimits(); scope.dispose(); this.pending.delete(run.runId);
       const active = this.runtime.manualRuns.get(run.runId);
       if (active) { this.runtime.stopPresentation(scene,[active]); this.runtime.manualRuns.delete(run.runId); }
       this.runtime.tickTimes.delete(`${scene.id}:${run.runId}`);
@@ -71,7 +82,7 @@ export class ObjectInvocations {
     }
   }
   finish(run, progress) {
-    const error = ["failed","uncertain"].includes(progress?.status) ? progress.error ?? text("Скрипт завершился с ошибкой.","The script failed.") : null;
+    const error = progress?.limitIssue ?? (["failed","uncertain"].includes(progress?.status) ? progress.error ?? text("Скрипт завершился с ошибкой.","The script failed.") : null);
     const invocation = this.pending.get(run.runId);
     if (invocation) { invocation.finished = true; invocation.resolve({error,values:progress?.returns ?? {}}); }
   }

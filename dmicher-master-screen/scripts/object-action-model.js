@@ -9,7 +9,7 @@ export function normalizeActionConditionMacro(value = "") {
   return value;
 }
 export function normalizeObjectActions(raw = []) {
-  if (!Array.isArray(raw) || raw.length > 100) fail();
+  if (!Array.isArray(raw)) fail();
   const seen = new Set();
   return raw.map(entry => {
     if (!entry || !validId(entry.id) || seen.has(entry.id) || typeof entry.name !== "string" || !entry.name.trim() || entry.name.length > 200) fail();
@@ -27,7 +27,7 @@ export function normalizeObjectActions(raw = []) {
   });
 }
 export function normalizeInvokedScripts(raw = [], key) {
-  if (!Array.isArray(raw) || raw.length > 100) fail();
+  if (!Array.isArray(raw)) fail();
   const seen = new Set();
   return raw.map(entry => {
     if (!validId(entry?.[key]) || seen.has(entry[key])) fail();

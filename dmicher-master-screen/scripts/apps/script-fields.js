@@ -7,6 +7,7 @@ import { generics } from "../generics.js";
 import { scriptTransitionMacroTemplate } from "../script-transitions.js";
 import { canExecuteScriptKind, isPlayerActionLockAvailable } from "../premium-provider.js";
 import { getScriptCatalogEntries } from "./script-catalog-input.js";
+import { limitReached, renderAutomationCount, renderAutomationUnavailable, renderScriptLimitIssue, automationAddAttributes } from "./automation-limit-fields.js";
 
 export function buildScriptInterruptionFields(interruptions, prefix, { legend = t("При прерывании скрипта", "When the script is interrupted"), modeNames = {}, excludedSources = [], playerCharacter = false } = {}) {
   const settings = normalizeScriptInterruptions(interruptions);
@@ -70,7 +71,7 @@ function transitionFields(step, prefix) {
 }
 
 /** Next-row transitions follow display order; explicit edges retain step IDs. */
-export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, functionsOwner, owner = functionsOwner ?? document, scriptScope = "object", language, playerCharacter = false, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false, ...parameterContext } = {}) {
+export function buildScriptFields(scripts, definition, type, catalog, { ownerKey, document, functionsOwner, owner = functionsOwner ?? document, scriptScope = "object", language, playerCharacter = false, definitions = definition?.groupId ? [definition] : [], dialogueOptions = [], open = false, combatSupported = false, automationLimits, ...parameterContext } = {}) {
   const functions = getScriptCatalogEntries({ scriptScope, owner, language });
   const blocks = scripts.map((script, index) => {
     const prefix = `script-${index}`;
@@ -78,14 +79,15 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
     const combat = script.combat ?? {};
     return `<details class="ms-object-feature ms-script-block" data-script-index="${index}"${open ? " open" : ""}><summary>${e(script.name || t("Скрипт", "Script"))}</summary><div class="ms-object-row">
       <label>${t("Название скрипта", "Script name")}<input name="${prefix}-name" value="${e(script.name)}"></label>${check("enabled", t("Включить", "Enable"), script.enabled !== false)}</div>
+      ${renderAutomationCount("scriptSteps", script.steps.length, automationLimits)}${renderScriptLimitIssue(script, automationLimits)}
       <div class="ms-script-table-scroll"><table class="ms-script-table"><thead><tr><th>№</th><th>${t("Функция и параметры", "Function and parameters")}</th><th>${t("Переход", "Next")}</th></tr></thead><tbody>
-      ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td class="ms-script-main-cell"><span class="ms-script-kind-storage" hidden><input type="hidden" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}" value="${e(step.kind)}"></span><div class="ms-script-kind-row"><span class="ms-script-value ms-script-kind-field"><input type="text" data-script-kind-input aria-label="${t("Функция", "Function")}" value="${e(functions.find(entry => entry.id === step.kind)?.path ?? step.kind)}" autocomplete="off"><button type="button" data-script-kind-button aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Открыть справочник функций", "Open function catalog")}">⌄</button></span>
+      ${script.steps.map((step, stepIndex) => `<tr data-script-step="${stepIndex}" data-step-id="${step.id}"${limitReached("scriptSteps", stepIndex, automationLimits) ? ' data-automation-limit-locked="scriptSteps"' : ""}><td><span role="button" tabindex="0" class="ms-script-drag" data-script-drag draggable="true" aria-label="${t(`Переместить шаг ${step.id}; Alt и стрелки вверх/вниз`, `Move step ${step.id}; Alt and Up/Down arrows`)}">⠿</span>${step.id}</td><td class="ms-script-main-cell"><span data-script-limit-label>${renderAutomationUnavailable("scriptSteps", stepIndex, automationLimits)}</span><fieldset data-script-limit-fields${limitReached("scriptSteps", stepIndex, automationLimits) ? " disabled" : ""}><span class="ms-script-kind-storage" hidden><input type="hidden" name="${prefix}-step-${stepIndex}-kind" data-script-kind data-index="${index}" data-step="${stepIndex}" value="${e(step.kind)}"></span><div class="ms-script-kind-row"><span class="ms-script-value ms-script-kind-field"><input type="text" data-script-kind-input aria-label="${t("Функция", "Function")}" value="${e(functions.find(entry => entry.id === step.kind)?.path ?? step.kind)}" autocomplete="off"><button type="button" data-script-kind-button aria-haspopup="dialog" aria-expanded="false" aria-label="${t("Открыть справочник функций", "Open function catalog")}">⌄</button></span>
         <span class="ms-script-json-action"><button type="button" data-script-json aria-expanded="false" aria-label="${t("Редактор JSON параметров", "Parameter JSON editor")}"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>JSON</button></span></div>
-        <div data-script-parameter-fields>${renderScriptParameters(step, { ...parameterContext, index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></td>
-        <td data-script-transition><div class="ms-script-transition-shell"><div class="ms-script-transition-fields">${transitionFields(step, `${prefix}-step-${stepIndex}`)}</div><button type="button" class="ms-script-remove" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></div></td></tr>`).join("")}
+        <div data-script-parameter-fields>${renderScriptParameters(step, { ...parameterContext, index, stepIndex, document, ownerKey, catalog, definitions, dialogueOptions })}</div><textarea name="${prefix}-step-${stepIndex}-parameters" data-script-json-value hidden aria-label="${t("Параметры шага", "Step parameters")}" spellcheck="false"${canExecuteScriptKind(step.kind) ? "" : " disabled"}>${e(JSON.stringify(completeScriptParameters(step.kind, step.parameters, document), null, 2))}</textarea></fieldset></td>
+        <td data-script-transition><div class="ms-script-transition-shell"><fieldset class="ms-script-transition-fields" data-script-limit-fields${limitReached("scriptSteps", stepIndex, automationLimits) ? " disabled" : ""}>${transitionFields(step, `${prefix}-step-${stepIndex}`)}</fieldset><button type="button" class="ms-script-remove" data-screen-action="remove-script-step" data-index="${index}" data-step="${stepIndex}" aria-label="${t("Удалить шаг", "Remove step")}"${step.id === 1 && script.steps.length > 1 ? ` disabled data-tooltip="${t("Начальный шаг 1 нужен, пока в блоке есть другие шаги.", "Entry step 1 is required while other steps remain.")}"` : ""}>×</button></div></td></tr>`).join("")}
       </tbody></table></div>
       <p class="ms-note">${t("Запуск начинается с шага 1. «Следующий» выполняет строку ниже; «Любой из» и макрос выбирают по номерам шагов.", "Execution starts at step 1. Next row follows display order; Any of and Macro select step IDs.")}</p>
-      <button type="button" data-screen-action="add-script-step" data-index="${index}">+ ${t("Шаг", "Step")}</button>
+      <button type="button" data-screen-action="add-script-step" data-index="${index}"${automationAddAttributes("scriptSteps", script.steps.length, automationLimits)}>+ ${t("Шаг", "Step")}</button>
       ${check("repeat", t("Повторять", "Repeat"), script.repeat)}
       ${buildScriptInterruptionFields(script.interruptions, prefix, { playerCharacter })}
       ${combatSupported ? `<fieldset class="ms-script-combat"><legend>${t("Использование в бою", "Combat use")}</legend>${check("combat-enabled", t("Использовать", "Use in combat"), combat.enabled)}${check("combat-confirm", t("Подтверждать действие", "Confirm action"), combat.confirm !== false)}<div>${check("combat-warning", t("Предупреждение", "Warning"), combat.notifyWarning !== false)}${check("combat-chat", t("В чате мастеру", "In GM chat"), combat.notifyChat)}${check("combat-end-turn", t("Завершать ход", "End turn"), combat.endTurn)}</div><label>${t("Длительность хода, с", "Turn duration, seconds")}<input type="number" min="0.01" step="any" name="${prefix}-combat-seconds" value="${e(combat.turnSeconds ?? 6)}"></label></fieldset>` : ""}
@@ -94,7 +96,7 @@ export function buildScriptFields(scripts, definition, type, catalog, { ownerKey
   return blocks;
 }
 
-export function readScriptFields(root, scripts) {
+export function readScriptFields(root, scripts, { automationLimits } = {}) {
   for (const control of root.querySelectorAll?.("[data-script-param]") ?? []) {
     if (!control.disabled && !control.matches?.(":disabled") && control.checkValidity?.() === false) throw new Error(`${control.getAttribute("aria-label") ?? ""}: ${control.validationMessage}`);
   }
@@ -106,6 +108,12 @@ export function readScriptFields(root, scripts) {
     const interruptions = readScriptInterruptionFields(root, prefix, script.interruptions);
     return { ...script, name: value(`${prefix}-name`), enabled: on("enabled"), repeat: on("repeat"), ...(combat ? { combat } : {}), interruptions,
       steps: script.steps.map((step, stepIndex) => {
+        // Values already edited before dragging a row past the limit stay in
+        // the form until its next capture. Initially locked rows stay intact.
+        if (limitReached("scriptSteps", stepIndex, automationLimits)) {
+          const row = root.querySelector(`[data-script-index="${index}"] [data-script-step="${stepIndex}"]`);
+          if (!row?.hasAttribute?.("data-script-limit-capture")) return structuredClone(step);
+        }
         const key = `${prefix}-step-${stepIndex}`;
         const kind = value(`${key}-kind`);
         let parameters;
@@ -121,7 +129,7 @@ export function readScriptFields(root, scripts) {
 }
 
 /** Move existing DOM rows so unfinished JSON and focus survive; never reinterpret edges. */
-export function bindScriptSorting(root, scripts, onChange, options) {
+export function bindScriptSorting(root, scripts, onChange, options, { automationLimits } = {}) {
   let dragging;
   const move = (row, to) => {
     const block = row.closest("[data-script-index]"), index = Number(block.dataset.scriptIndex), from = Number(row.dataset.scriptStep);
@@ -133,6 +141,14 @@ export function bindScriptSorting(root, scripts, onChange, options) {
       for (const control of entry.querySelectorAll("[name]")) if (control.name.startsWith(oldPrefix)) control.name = newPrefix + control.name.slice(oldPrefix.length);
       for (const control of entry.querySelectorAll("[data-step]")) control.dataset.step = String(stepIndex);
       entry.dataset.scriptStep = String(stepIndex);
+      const locked = limitReached("scriptSteps", stepIndex, automationLimits);
+      entry.toggleAttribute("data-automation-limit-locked", locked);
+      for (const fields of entry.querySelectorAll("[data-script-limit-fields]")) {
+        if (locked && !fields.disabled) entry.setAttribute("data-script-limit-capture", "");
+        fields.disabled = locked;
+      }
+      const label = entry.querySelector("[data-script-limit-label]");
+      if (label) label.innerHTML = renderAutomationUnavailable("scriptSteps", stepIndex, automationLimits);
     });
     onChange();
   };

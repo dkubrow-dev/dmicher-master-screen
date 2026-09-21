@@ -1,5 +1,9 @@
 # dmicher 🎬 Master screen | Ширма мастера
 
+Ограничения бесплатной автоматизации и поведение при истечении Premium описаны в [обновлении 21 сентября](docs/2026-09-21-premium-limits.md). Квоты: 16 шагов, 8 подписок владельца, 4 действия объекта; сохранённый длинный скрипт без Premium блокируется целиком. Общие справочники получили непрозрачную подложку; сигнал подписки выбирается через справочник.
+
+Free automation quotas and Premium expiry behavior are described in the [September 21 update](docs/2026-09-21-premium-limits.md): 16 steps, 8 subscriptions per owner, 4 actions per object; saved oversized scripts are blocked in full without Premium. Shared references use an opaque surface; subscription signals use the reference picker.
+
 Дополнение 21.09.2026: группы принимают сигналы и выполняют подписанные скрипты; инструменты Спотлайта подключают мировой редактор подписок без зависимости от карты. Функции выбираются из общего справочника, новый макрос создаётся и прикрепляется явно. Группа «Игроки» существует без записи пустой подготовки: её объекты поддерживают переходы, события и команды, но не рутину. Команды чужим персонажам требуют согласия владельца или мастера. Premium позволяет временно запрещать действие владельца вместо прерывания скрипта.
 
 21 Sep 2026: groups execute signal subscriptions; Spotlight tools expose world subscriptions independent of the current map. Functions use one searchable catalog, and new macros are explicitly created and attached. Players exists without writing empty preparation: its objects support transitions, events and commands, but no routine. Commands to other players' characters require owner or GM consent. Premium can temporarily forbid owner actions instead of interrupting the script.

@@ -18,7 +18,7 @@ import { SceneObjects, listNativeSceneObjects } from "../scene-objects.js";
 import { renderAssetForm, readAssetForm, renderOwnedObjects, bindAssetPremiumControls } from "./asset-forms.js";
 import { renderDialogueTree } from "./dialogue-asset-view.js";
 import { bindIDEMenus } from "./ide-menu.js";
-import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields } from "./signal-fields.js";
+import { readSignalFields, renderSubscriptions, renderSubscriptionFields, readSubscriptionFields, renderMacroValidation, macroKey, macroValidationSummary, bindSignalFields, bindSubscriptionSignalCatalog } from "./signal-fields.js";
 import { escapeHTML as esc, formValue as fieldValue, actionButton } from "./form-fields.js";
 import { debugEnabled, setDebugEnabled } from "../debug.js";
 import { getDialogueAudioPickerOptions } from "../premium-provider.js";
@@ -30,6 +30,7 @@ import { normalizeWorkspacePreset, normalizeNoteEntry } from "../workspace-prese
 import { presetSelectionKind, renderWorkspacePresetList, renderWorkspacePresetForm, readWorkspacePresetForm } from "./workspace-presets-view.js";
 import { openEmojiPicker } from "./emoji-picker.js";
 import { openGroupSubscription } from "./group-subscription-editor.js";
+import { assertAutomationAddition } from "./automation-limit-fields.js";
 
 const clone = (value) => structuredClone(value);
 const nextName = (entries, base, key = "name") => { const names = new Set(entries.map((entry) => String(entry[key]).toLocaleLowerCase())); let name = base, index = 2; while (names.has(name.toLocaleLowerCase())) name = `${base} ${index++}`; return name; };
@@ -336,13 +337,13 @@ export class MasterScreenApplication extends EditorApplication {
       detailHTML = renderParameters({ selection: this.selection, draft: this.parameterDraft, catalog, definitions, runtimes, mode: this.mode });
       if (["signal", "macro"].includes(this.selection.kind) && selected) {
         const rows = catalog.subscriptions.filter((row) => this.selection.kind === "signal" ? row.signalId === selected.id : row.ownerKey === selected.ownerKey && row.macroUuid === selected.uuid);
-        detailHTML += renderSubscriptions(rows, catalog);
+        detailHTML += renderSubscriptions(rows, catalog, { ownerKey: this.selection.kind === "macro" ? selected.ownerKey : null });
         if (this.subscriptionDraft) detailHTML += renderSubscriptionFields(this.subscriptionDraft, catalog, this.subscriptionConstraints());
         detailHTML += renderMacroValidation(this.subscriptionValidation);
       }
       if (this.selection.kind === "group" && selected) {
         detailHTML += renderOwnedObjects(selected.groupId, bindings, objects, this.mode !== "constructor");
-        if (this.mode === "constructor") detailHTML += `<h4>${t("Подписки группы", "Group subscriptions")}</h4>` + renderSubscriptions(catalog.subscriptions.filter(row => row.ownerKey === `Group:${selected.groupId}`), catalog);
+        if (this.mode === "constructor") detailHTML += `<h4>${t("Подписки группы", "Group subscriptions")}</h4>` + renderSubscriptions(catalog.subscriptions.filter(row => row.ownerKey === `Group:${selected.groupId}`), catalog, { ownerKey: `Group:${selected.groupId}` });
       }
       if (this.mode === "director" && selected && ["group", "state"].includes(this.selection.kind)) detailHTML += actionButton("showActivity", t("Показать активность", "Show activity"));
     }
@@ -390,6 +391,7 @@ export class MasterScreenApplication extends EditorApplication {
     this.componentsDisposers.forEach((dispose) => dispose()); this.componentsDisposers = [];
     this.componentsDisposers.push(generics.components.bindColorFields(this.element));
     this.componentsDisposers.push(bindAssetPremiumControls(this.element));
+    this.componentsDisposers.push(bindSubscriptionSignalCatalog(this.element, () => new SignalCatalog(this.assertScene()).list()));
     if (this.selection.kind === "signal") this.componentsDisposers.push(bindSignalFields(this.element, {
       getSignal: () => this.parameterDraft,
       onChange: () => { this.captureParameterDraft(); this.dirty = true; },
@@ -462,7 +464,7 @@ export class MasterScreenApplication extends EditorApplication {
         void this.setTabVisible(event.target.dataset.tabVisibility, event.target.value, event.target.checked).catch(notify);
       } else if (event.target.matches('[name="macroOwner"]')) {
         this.selectedMacroOwner = event.target.value;
-      } else if (event.target.matches('[name="subscription-owner"]')) {
+      } else if (event.target.matches('[name="subscription-owner"],[name="subscription-signal"],[name="subscription-handler"]')) {
         this.captureSubscription(); void this.render({ force: true });
       } else if (event.target.matches('[name="shopDisplay"], [name="dialogueDisplayMode"], [name="dialogueWindowChat"], [name="dialogueVisibility"]')) {
         try { this.captureParameterDraft(); this.dirty = true; void this.render({ force: true }); } catch (error) { notify(error); }
@@ -865,12 +867,14 @@ export class MasterScreenApplication extends EditorApplication {
     if (action === "addSignalField") { this.parameterDraft[button.dataset.direction].push({ name: `field${this.parameterDraft[button.dataset.direction].length + 1}`, type: "string", nullable: false }); this.dirty = true; }
     if (action === "removeSignalField") { const fields = this.parameterDraft[button.dataset.direction], index = Number(button.dataset.index); if (!fields[index]?.builtin) fields.splice(index, 1); this.dirty = true; }
     if (action === "removeTreeSignal") { await catalog.removeSignal(button.dataset.id); if (this.selection.id === button.dataset.id) { this.parameterDraft = null; this.selection = { kind: null, id: null, groupId: this.selection.groupId }; this.dirty = false; } }
-    if (action === "newSignalSubscription") { this.subscriptionDraft = { ownerKey: this.parameterDraft?.ownerKey ?? catalog.list().emitters[0]?.key, emitterKey: this.parameterDraft?.emitterKey, signalId: this.selection.kind === "signal" ? this.selection.id : "", macroUuid: this.parameterDraft?.uuid ?? "", enabled: true }; this.subscriptionValidation = null; }
+    if (action === "newSignalSubscription") { const ownerKey = this.parameterDraft?.ownerKey ?? catalog.list().emitters[0]?.key; if (this.parameterDraft?.ownerKey) assertAutomationAddition("subscriptions", catalog.list().subscriptions.filter(row => row.ownerKey === ownerKey).length); this.subscriptionDraft = { ownerKey, emitterKey: this.parameterDraft?.emitterKey, signalId: this.selection.kind === "signal" ? this.selection.id : "", macroUuid: this.parameterDraft?.uuid ?? "", enabled: true }; this.subscriptionValidation = null; }
     if (action === "editSignalSubscription") { this.subscriptionDraft = clone(catalog.list().subscriptions.find((row) => row.id === button.dataset.id)); this.subscriptionValidation = null; }
     if (action === "deleteSignalSubscription") { await catalog.removeSubscription(button.dataset.id); this.subscriptionDraft = null; }
     if (action === "saveSignalSubscription") {
       const revision = catalog.list().revision, selectionKey = JSON.stringify(this.selection);
       try {
+        const ownerRows = catalog.list().subscriptions.filter(row => row.ownerKey === this.subscriptionDraft.ownerKey);
+        if (!ownerRows.some(row => row.id === this.subscriptionDraft.id)) assertAutomationAddition("subscriptions", ownerRows.length);
         this.subscriptionDraft = await catalog.saveSubscription(this.subscriptionDraft, { expectedRevision: revision });
         this.subscriptionValidation = { valid: true };
         const nextRevision = catalog.list().revision;

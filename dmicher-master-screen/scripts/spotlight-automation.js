@@ -5,6 +5,7 @@ import { registerScriptFunctions, getScriptFunction } from "./script-functions/i
 import { normalizeScript } from "./script-model.js";
 import { canExecuteScriptKind } from "./premium-provider.js";
 import { text as t } from "./localization.js";
+import { FREE_AUTOMATION_LIMITS, collectionEntryAllowed, getScriptLimitIssue } from "./automation-limits.js";
 
 export const SPOTLIGHT_MODULE = "dmicher-spotlight-tools";
 const SETTING = "spotlightAutomationPaused";
@@ -123,31 +124,55 @@ export class SpotlightAutomationBridge {
       ? { rootId: inherited.rootId, depth: Number(inherited.depth), visited: inherited.visited.filter(id => typeof id === "string").slice(0, 64) }
       : { rootId: event.id, depth: 0, visited: [] };
     if (!Number.isSafeInteger(cause.depth) || cause.depth < 0 || cause.depth >= 16) return;
-    const count = this.chains.get(cause.rootId) ?? 0;
-    if (count >= 64) return;
-    this.chains.set(cause.rootId, count + 1);
+    // Counts stay on the executing GM. Event payloads carry causal identity,
+    // never an authoritative quota balance that another delivery can reset.
+    const chain = this.chains.get(cause.rootId) ?? { count: 0, handlerCount: 0 };
+    if (chain.count >= 64) return;
+    chain.count++;
+    this.chains.set(cause.rootId, chain);
     if (this.chains.size > 256) this.chains.delete(this.chains.keys().next().value);
     const generation = this.generation, host = this.host;
+    const automationLimits = () => host.getAutomationLimits?.() ?? FREE_AUTOMATION_LIMITS;
     const eventCurrent = () => !this.disposed && !this.paused && this.authority() && this.host === host && this.generation === generation && this.sources.has(sourceKey);
-    if (eventCurrent()) void Promise.resolve(this.onSceneEvent?.(event, eventCurrent, cause)).catch(this.onError);
+    if (eventCurrent()) void Promise.resolve(this.onSceneEvent?.(event, eventCurrent, cause, chain)).catch(this.onError);
     const pending = [];
-    for (const [ownerKey, preparation] of this.preparation) for (const subscription of preparation.subscriptions ?? []) {
-      if (!subscription.enabled || subscription.event !== event.name || keyOf(subscription.source ?? {}) !== sourceKey) continue;
-      const signature = `${ownerKey}:${subscription.id}`;
-      if (cause.visited.includes(signature) || this.active.size >= 100) continue;
-      const sourceOwner = this.sources.get(ownerKey), owner = sourceOwner?.owner;
-      if (!owner) continue;
-      const ownerHost = this.owners.get(ownerKey), id = crypto.randomUUID();
-      const current = () => eventCurrent() && this.active.has(id) && this.preparation.get(ownerKey)?.revision === preparation.revision;
-      const causality = { rootId: cause.rootId, depth: cause.depth + 1, visited: [...cause.visited, signature] };
-      const context = { owner: clone(owner), event: clone(event), causality, invocationId: id,
-        parameters: { event: JSON.stringify(event.parameters) },
-        signal: { id: `${sourceKey}:${event.name}`, name: event.name, parameters: [{ name: "event", type: "string" }], returns: [] } };
-      this.active.set(id, { id, ownerHost, current }); this.changed();
-      const operation = this.runner.run({ host: ownerHost, owner: { ...owner, name: sourceOwner.label || ownerKey }, scope: "world",
-        script: subscription.script, context, current,
-        adapters: { isMacroAttached: uuid => current() && (this.preparation.get(ownerKey)?.registeredMacroUuids ?? []).includes(uuid) } });
-      pending.push(Promise.resolve(operation).catch(this.onError).finally(() => { this.active.delete(id); this.changed(); }));
+    for (const [ownerKey, sourceOwner] of this.sources) {
+      const owner = sourceOwner.owner;
+      let preparation;
+      try { preparation = host.readBindings(owner); }
+      catch (error) { this.onError(error); continue; }
+      for (const [subscriptionIndex, subscription] of (preparation.subscriptions ?? []).entries()) {
+        if (!subscription.enabled || subscription.event !== event.name || keyOf(subscription.source ?? {}) !== sourceKey) continue;
+        const signature = `${ownerKey}:${subscription.id}`;
+        if (cause.visited.includes(signature) || this.active.size >= 100) continue;
+        const limits = automationLimits(), handlerIndex = chain.handlerCount;
+        if (!collectionEntryAllowed("subscriptions", preparation.subscriptions, subscription, limits)
+          || getScriptLimitIssue(subscription.script, limits)
+          || limits.chainHandlers !== null && handlerIndex >= limits.chainHandlers) continue;
+        const ownerHost = this.owners.get(ownerKey), id = crypto.randomUUID();
+        const current = () => {
+          if (!eventCurrent() || !this.active.has(id) || !this.sources.has(ownerKey)) return false;
+          try {
+            const revision = host.getBindingsRevision ? host.getBindingsRevision(owner) : host.readBindings(owner)?.revision;
+            const limits = automationLimits();
+            // Preparation is immutable within a revision. Tick-level checks
+            // need only its live revision and current access, not another copy
+            // or serialization of every script belonging to the tool.
+            return revision === preparation.revision && (limits.subscriptions === null || subscriptionIndex < limits.subscriptions)
+              && !getScriptLimitIssue(subscription.script, limits) && (limits.chainHandlers === null || handlerIndex < limits.chainHandlers);
+          } catch { return false; }
+        };
+        const causality = { rootId: cause.rootId, depth: cause.depth + 1, visited: [...cause.visited, signature] };
+        const context = { owner: clone(owner), event: clone(event), causality, invocationId: id,
+          parameters: { event: JSON.stringify(event.parameters) },
+          signal: { id: `${sourceKey}:${event.name}`, name: event.name, parameters: [{ name: "event", type: "string" }], returns: [] } };
+        chain.handlerCount++;
+        this.active.set(id, { id, ownerHost, current }); this.changed();
+        const operation = this.runner.run({ host: ownerHost, owner: { ...owner, name: sourceOwner.label || ownerKey }, scope: "world",
+          script: subscription.script, context, current,
+          adapters: { automationLimits, isMacroAttached: uuid => current() && (preparation.registeredMacroUuids ?? []).includes(uuid) } });
+        pending.push(Promise.resolve(operation).catch(this.onError).finally(() => { this.active.delete(id); this.changed(); }));
+      }
     }
     await Promise.all(pending);
   }

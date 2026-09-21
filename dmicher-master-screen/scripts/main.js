@@ -64,13 +64,13 @@ Hooks.once("init", () => {
   controller.commandService = new ObjectCommandService({ executor: controller.runtime.commandExecutor, signals: controller.signals });
   spotlightAutomation = new SpotlightAutomationBridge({ effects: controller.runtime.effects, onError: notifyError,
     onStop: () => controller.commandService.consent.cancelAll(),
-    onSceneEvent: async (event, current, causality) => {
+    onSceneEvent: async (event, current, causality, chain) => {
       const scene = globalThis.canvas?.scene;
       if (!scene || !current()) return;
       await controller.signals.emit(scene, { id: event.id, emitterKey: `Spotlight:${event.owner.type}:${event.owner.id}`,
         name: event.name, parameters: { event: JSON.stringify(event.parameters) },
         context: { current: () => current() && globalThis.canvas?.scene === scene, depth: causality.depth,
-          _chain: { count: causality.visited.length }, _worldCause: causality } });
+          _chain: chain, _worldCause: causality } });
     } });
   spotlightAutomation.registerSettings();
   removeSettingHelp = installScreenSettingHelp((pageId, anchor) => controller.openHelp().navigate(pageId, anchor));

@@ -14,6 +14,7 @@ import { ObjectVariableService } from "./object-variables.js";
 import { canExecuteScriptKind } from "./premium-provider.js";
 import { executeSignalMacro } from "./signal-macros.js";
 import { executeScriptFunction } from "./script-functions/index.js";
+import { getAutomationLimits, getScriptLimitIssue, subscribeAutomationLimits } from "./automation-limits.js";
 
 const clone = structuredClone;
 const LIMIT = 16;
@@ -81,6 +82,24 @@ export class ObjectScriptRuntime {
     } else this.advance(progress, this.next(script, step));
   }
   canExecute(kind) { return !isPremiumScriptStep(kind) || (this.runtime.canUsePremiumStep?.(kind) ?? canExecuteScriptKind(kind)); }
+  limitIssue(scene, runId, script) {
+    return getScriptLimitIssue(script, this.runtime.automationLimits?.(scene, runId) ?? getAutomationLimits());
+  }
+  async blockForLimit(scene, state, object, script, key, issue) {
+    const progress = state.scriptStates[key] ??= initialScriptProgress(script);
+    if (progress.status === "stopped" && progress.limitIssue) return;
+    clearScriptPresentation(progress, this.now());
+    progress.status = "stopped"; progress.action = null; progress.interruption = null;
+    progress.limitIssue = issue; progress.generation = Number(progress.generation ?? 0) + 1;
+    state.error = issue;
+    stopObjectAnimation(object);
+    this.runtime.effects.stop?.(scene, { runIds: [state.runId], target: targetOf(object), scriptKey: key });
+    await this.save(scene, state);
+    notifyExecutionChange(scene, "script-limit");
+    globalThis.ui?.notifications?.warn?.(issue);
+    debugError("script", "limit.blocked", new Error(issue), () => traceContext(scene, state, object, script));
+    this.runtime.refreshObject(object); this.runtime.onChange(scene);
+  }
   variableContext(scene, object, current, extra = {}) {
     if (this.runtime.variableContext) return this.runtime.variableContext(scene, object, current, extra);
     this.runtime.variables ??= new ObjectVariableService();
@@ -162,13 +181,14 @@ export class ObjectScriptRuntime {
     return this.interrupt(scene, state, object, script, key, "error", error);
   }
   async recordCancelledJob(job) {
-    if (!job.interruptedBy) return;
+    if (!job.interruptedBy && !job.limitIssue) return;
     await withSceneLock(job.scene, async () => {
       if (!this.current(job.scene, job.runId, job.target, { ignoreInteractionPause: true, scriptKey: job.progressKey })) return;
       const state = this.state(job.scene, job.runId), progress = state?.scriptStates?.[job.progressKey];
       if (!progress || Number(progress.generation ?? 0) !== job.generation
         || (job.background ? progress.speechEffect?.id !== job.sequence : progress.sequence !== job.sequence)) return;
-      await this.interrupt(job.scene, state, job.object, job.script, job.progressKey, job.interruptedBy);
+      if (job.limitIssue) await this.blockForLimit(job.scene, state, job.object, job.script, job.progressKey, job.limitIssue);
+      else await this.interrupt(job.scene, state, job.object, job.script, job.progressKey, job.interruptedBy);
     });
   }
   replaceEffect(state, object, field) {
@@ -232,6 +252,8 @@ export class ObjectScriptRuntime {
       if (!key.startsWith(prefix) || !scriptHasActivity(progress)
         || !this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: key })) continue;
       const script = this.scriptForKey(state, object, key);
+      const issue = script && this.limitIssue(scene, runId, script);
+      if (issue) { await this.blockForLimit(scene, state, object, script, key, issue); continue; }
       const source = script && this.interruptionSource(scene, object, script, runId);
       if (!source) continue;
       await this.interrupt(scene, state, object, script, key, source);
@@ -305,6 +327,8 @@ export class ObjectScriptRuntime {
     let state = this.state(scene, initial.runId);
     if (!state || !this.current(scene, initial.runId, target, { ignoreInteractionPause: true, scriptKey: key }) || script.enabled === false) return;
     state.scriptStates ??= {};
+    const issue = this.limitIssue(scene, initial.runId, script);
+    if (issue) { await this.blockForLimit(scene, state, object, script, key, issue); return; }
     const source = this.interruptionSource(scene, object, script, initial.runId);
     // A script which has not started is merely unavailable in this context.
     // Do not manufacture an interrupted run while opening a scene in combat.
@@ -344,6 +368,8 @@ export class ObjectScriptRuntime {
     const instantSteps = new Set();
     for (let index = 0; index < LIMIT; index++) {
       if (!this.current(scene, state.runId, target, { scriptKey: key }) || !sameTurn(combat, this.combat.context(scene, object))) return;
+      const issue = this.limitIssue(scene, state.runId, script);
+      if (issue) { await this.blockForLimit(scene, state, object, script, key, issue); return; }
       if (combat && progress.combat.remaining <= 0) return;
       const step = script.steps.find((entry) => entry.id === progress.stepId);
       if (!step) { progress.status = "done"; await this.save(scene, state); return; }
@@ -384,20 +410,24 @@ export class ObjectScriptRuntime {
         // Foundry owns the submitted document update. The scene queue must not
         // wait for its animation/network promise after this execution is revoked.
         const generation = Number(progress.generation ?? 0);
-        let interruptedBy = null;
+        let interruptedBy = null, limitIssue = null;
         const scope = createExecutionScope(scene, { isCurrent: () => {
+          limitIssue ??= this.limitIssue(scene, state.runId, script);
           interruptedBy ??= this.interruptionSource(scene, object, script, state.runId);
-          return !interruptedBy && !globalThis.game?.paused && this.generationCurrent(scene, state.runId, key, generation)
+          return !limitIssue && !interruptedBy && !globalThis.game?.paused && this.generationCurrent(scene, state.runId, key, generation)
             && this.current(scene, state.runId, target, { scriptKey: key }) && sameTurn(combat, this.combat.context(scene, object));
         } });
+        const releaseLimits = subscribeAutomationLimits(() => { if (!scope.current()) stopObjectAnimation(object); });
         const options = { isCurrent: scope.current, signal: scope.signal, ignoreObstacles: step.kind === "approach" };
         let outcome;
         try { outcome = await scope.run(() => step.kind === "follow" ? advanceScriptFollow(scene, object, action.follow, params, available, options)
           : advanceScriptMovement(scene, object, action.movement, available, options)); }
-        finally { scope.dispose(); }
+        finally { releaseLimits(); scope.dispose(); }
         if (outcome.stale) {
-          if (interruptedBy && this.current(scene, state.runId, target, { ignoreInteractionPause: true })
-            && this.generationCurrent(scene, state.runId, key, generation)) await this.interrupt(scene, state, object, script, key, interruptedBy);
+          if (this.current(scene, state.runId, target, { ignoreInteractionPause: true }) && this.generationCurrent(scene, state.runId, key, generation)) {
+            if (limitIssue) await this.blockForLimit(scene, state, object, script, key, limitIssue);
+            else if (interruptedBy) await this.interrupt(scene, state, object, script, key, interruptedBy);
+          }
           return;
         }
         const movement = outcome.value;
@@ -476,12 +506,16 @@ export class ObjectScriptRuntime {
     const sameEffect = () => !job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.speechEffect?.id === sequence;
     const current = () => sameEffect() && this.current(scene, runId, target, { scriptKey: job.progressKey });
     const owned = () => {
+      job.limitIssue ??= this.limitIssue(scene, runId, script);
       job.interruptedBy ??= this.interruptionSource(scene, job.object, script, runId);
-      return !job.interruptedBy && sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey })
+      return !job.limitIssue && !job.interruptedBy && sameEffect() && this.current(scene, runId, target, { ignoreInteractionPause: true, scriptKey: job.progressKey })
         && this.generationCurrent(scene, runId, job.progressKey, job.generation)
         && (job.background || this.state(scene, runId)?.scriptStates?.[job.progressKey]?.sequence === sequence);
     };
     const scope = createExecutionScope(scene, { isCurrent: owned });
+    const releaseLimits = subscribeAutomationLimits(() => {
+      if (!scope.current()) stopObjectAnimation(job.object);
+    });
     this.cancels.add(scope.cancel);
     const admitted = () => {
       if (scope.current() && !globalThis.game?.paused && current() && sameTurn(job.combat, this.combat.context(scene, job.object))) return true;
@@ -568,7 +602,7 @@ export class ObjectScriptRuntime {
           { stage: job.stage, status: progress.status, nextStepId: progress.stepId, background: Boolean(progress.speechEffect) }));
         await this.save(scene, state); this.runtime.onChange(scene); this.runtime.refreshObject(job.object);
       });
-    } finally { scope.dispose(); this.cancels.delete(scope.cancel); if (this.jobs.get(job.key) === job) this.jobs.delete(job.key); }
+    } finally { releaseLimits(); scope.dispose(); this.cancels.delete(scope.cancel); if (this.jobs.get(job.key) === job) this.jobs.delete(job.key); }
   }
   dispose() { for (const cancel of this.cancels) cancel(); this.cancels.clear(); this.jobs.clear(); this.persistenceFailures = new WeakMap(); }
 }

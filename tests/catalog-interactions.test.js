@@ -17,6 +17,7 @@ import { SCENE_OBJECT_COLLECTIONS } from "../dmicher-master-screen/scripts/scene
 import { freezeInteractionClock } from "../dmicher-master-screen/scripts/interaction-pause.js";
 import { objectCapabilities } from "../dmicher-master-screen/scripts/object-capabilities.js";
 import { getShopInventory, resetShopInventory } from "../dmicher-master-screen/scripts/shop-inventory.js";
+import { generics } from "../dmicher-master-screen/scripts/generics.js";
 
 const copy = (value) => structuredClone(value);
 
@@ -312,7 +313,11 @@ test("two dialogues on one object keep separate pages and cannot exchange sessio
   assert.equal((await f.dialogueCommand({ ...answer, dialogueId: "talk" })).text, "Goodbye");
   assert.equal((await f.dialogueCommand({ ...f.intent(), kind: "start", dialogueId: "alternate" })).text, "Another topic");
 });
-test("haltAll blocks ungrouped scene subscribers, explicit restart validates and reopens execution", async () => {
+test("haltAll blocks ungrouped scene subscribers, explicit restart validates and reopens execution", async t => {
+  const premium=generics.premium.registerProvider({apiVersion:1,hasAccess:()=>true,extensions:[{moduleId:MODULE_ID,apiVersion:1,methods:{
+    canExecuteScriptKind:()=>true,resolveInteractivePresentation:()=>true,resolveShopRestoration:()=>true,resolvePlayerActionLock:()=>true
+  }}]});
+  t.after(()=>premium.dispose());
   const f = await fixture(), macros = new Map(); let calls = 0;
   const resolveMacro = async (uuid) => macros.get(uuid), catalog = new SignalCatalog(f.scene, { resolveMacro });
   const bus = new SceneSignals({ runtime: f.runtime, resolveMacro }); f.runtime.emitSignal = (scene, packet) => bus.emit(scene, packet);

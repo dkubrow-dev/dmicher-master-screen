@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyRuntime, MODULE_ID } from "../dmicher-master-screen/scripts/model.js";
 import { sampleGroupDefinition as defaultDefinition } from "./fixtures/definitions.js";
+import { generics } from "../dmicher-master-screen/scripts/generics.js";
 
 // These are lifecycle/contract tests, not a browser renderer or a multiplayer Foundry server.
 const instances = new Map();
@@ -266,7 +267,11 @@ test("an empty scene exposes the virtual Players group without writing it throug
   } finally { await f.dispose(); }
 });
 
-test("controller wires a Tile's declared signal through an owned macro to a state transition", { timeout: 3000 }, async () => {
+test("controller wires a Tile's declared signal through an owned macro to a state transition", { timeout: 3000 }, async t => {
+  const premium=generics.premium.registerProvider({apiVersion:1,hasAccess:()=>true,extensions:[{moduleId:MODULE_ID,apiVersion:1,methods:{
+    canExecuteScriptKind:()=>true,resolveInteractivePresentation:()=>true,resolveShopRestoration:()=>true,resolvePlayerActionLock:()=>true
+  }}]});
+  t.after(()=>premium.dispose());
   const f = fixture(14);
   let controller;
   try {

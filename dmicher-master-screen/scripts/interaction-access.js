@@ -8,6 +8,7 @@ import { shopSessionIsLive } from "./interaction-session-model.js";
 import { getConditionGate, getConditionKey, evaluateConditionPolicy } from "./interaction-conditions.js";
 import { isExecutionHalted } from "./execution.js";
 import { isStateEntryPreparing } from "./state-entry-preparation.js";
+import { collectionEntryAllowed, getCollectionLimitIssue } from "./automation-limits.js";
 
 export const objectDescriptor = objectReference;
 export { objectKey };
@@ -53,9 +54,11 @@ export function validateObjectAccess({ scene, runtime, descriptor, target, condi
 /** Direct GM actions do not need an impersonated player character. */
 export function validateObjectActionAccess(context,actorTokenId,user,runId) {
   const {scene,runtime,descriptor,target}=context;
+  const binding=getObjectBindings(scene).bindings[objectKey(descriptor.target)];
+  if(!collectionEntryAllowed("actions",binding?.actions ?? [],descriptor)) throw new Error(
+    getCollectionLimitIssue("actions",binding?.actions.length ?? 0) ?? localizedMessage("Взаимодействие сейчас недоступно."));
   if(descriptor.audience === "gm" && !user?.isGM) throw new Error(localizedMessage("Взаимодействие сейчас недоступно."));
   if(!user?.isGM || actorTokenId) return validateObjectAccess(context,actorTokenId,user,runId,{ignoreQuota:false});
-  const binding=getObjectBindings(scene).bindings[objectKey(descriptor.target)];
   if(!scene || canvas.scene?.id !== scene.id || !target || !binding || !descriptor.enabled
     || scene.getFlag(MODULE_ID,"objectBehaviorState")?.[objectKey(descriptor.target)] === false
     || !runtime?.runId || isStateEntryPreparing(scene,runtime) || runtime.runId !== runId || runtime.disabledObjects.includes(objectKey(descriptor.target))) throw new Error(localizedMessage("Взаимодействие сейчас недоступно."));

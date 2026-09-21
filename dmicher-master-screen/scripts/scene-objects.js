@@ -11,6 +11,7 @@ export { normalizeObjectBinding, normalizeObjectBindings, objectKey } from "./ob
 import { SCENE_OBJECT_COLLECTIONS as collections } from "./scene-object-types.js";
 import { sceneObjectCenter } from "./scene-object-geometry.js";
 import { assertBindingScriptContracts, validateBindingScriptMacroInterfaces } from "./signal-macros.js";
+import { assertCollectionGrowth } from "./automation-limits.js";
 
 const clone = (value) => structuredClone(value);
 const fail = (message) => { throw new Error(message); };
@@ -64,6 +65,7 @@ export class SceneObjects {
       validateObjectBinding(this.scene, next);
       const catalog=getSignalCatalog(this.scene);
       await validateBindingScriptMacroInterfaces(next, catalog);
+      assertCollectionGrowth("actions", previous?.actions ?? [], next.actions);
       await this.scene.setFlag(MODULE_ID, "objectBindings", objectBindingsWriteData(raw, { ...raw, revision: raw.revision + 1, bindings: { ...raw.bindings, [key]: next } }));
       return clone(next);
     });

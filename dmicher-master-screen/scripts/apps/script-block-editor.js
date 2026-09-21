@@ -10,6 +10,7 @@ import { generics } from "../generics.js";
 import { themedClasses, notifyError } from "../ui.js";
 import { text as t } from "../localization.js";
 import { escapeHTML as e } from "./form-fields.js";
+import { assertAutomationAddition } from "./automation-limit-fields.js";
 
 /** A single script form can belong to an object-independent event source.
  * Its owner supplies preparation, references and the explicit save transaction. */
@@ -23,7 +24,7 @@ export class ScriptBlockEditor extends ScreenFormApplication {
   get title() { return this.heading; }
   capture() {
     if (!this.element?.querySelector("[data-script-index]")) return;
-    this.captureHeader(this.element); this.script = readScriptFields(this.element, [this.script])[0];
+    this.captureHeader(this.element); this.script = readScriptFields(this.element, [this.script], this.context())[0];
   }
   async _prepareContext() {
     const context = this.context();
@@ -35,7 +36,7 @@ export class ScriptBlockEditor extends ScreenFormApplication {
     bindScriptInterruptions(this.element, listeners);
     bindScriptParameters(this.element, this.context, () => { this.dirty = true; }, listeners);
     bindScriptCatalogs(this.element, this.context, { ...listeners, onCreateMacro: this.onCreateMacro, onError: notifyError });
-    bindScriptSorting(this.element, [this.script], () => { this.dirty = true; }, listeners);
+    bindScriptSorting(this.element, [this.script], () => { this.dirty = true; }, listeners, this.context());
     this.element.addEventListener("change", event => {
       if (event.target.matches("[data-script-context-refresh]")) {
         this.capture(); this.dirty = true; void this.render({force:true}); return;
@@ -56,7 +57,7 @@ export class ScriptBlockEditor extends ScreenFormApplication {
     if (await handleScriptMacroAction(action, this.script.steps[Number(button?.dataset.step)], {
       signals: this.context().signalOptions ?? this.context().catalog?.signals ?? []
     })) return;
-    if (action === "add-script-step") appendScriptStep(this.script);
+    if (action === "add-script-step") { assertAutomationAddition("scriptSteps", this.script.steps.length, this.context().automationLimits); appendScriptStep(this.script); }
     else if (action === "remove-script-step") removeScriptStep(this.script, Number(button.dataset.step));
     else if (action === "save") {
       const script = this.validate(this.script), warnings = analyzeScriptWarnings(script);

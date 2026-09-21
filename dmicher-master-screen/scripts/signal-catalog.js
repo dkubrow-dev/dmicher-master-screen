@@ -8,6 +8,7 @@ import { validateSignalMacro, validateStandaloneMacro, validateBindingScriptMacr
 import { notifyExecutionChange } from "./execution.js";
 import { isObjectSignalEnabled, isNativeObjectEmitter } from "./object-signal-settings.js";
 import { isGroupOwner, normalizeGroupScript } from "./group-subscriptions.js";
+import { assertCollectionGrowth } from "./automation-limits.js";
 
 export { builtinCatalog, listSignalEmitters } from "./builtin-signals.js";
 const clone = (value) => structuredClone(value);
@@ -17,7 +18,7 @@ const unique = (entries, key, label) => {
 };
 function list(raw, field, maximum = 1000) {
   const value = raw[field] ?? [];
-  if (!Array.isArray(value) || value.length > maximum) throw new Error(localizedMessage("Каталог {0}: требуется список не более {1} элементов.", [field, maximum]));
+  if (!Array.isArray(value) || maximum !== null && value.length > maximum) throw new Error(localizedMessage("Каталог {0}: требуется список не более {1} элементов.", [field, maximum]));
   return value;
 }
 function normalizeSignal(raw) {
@@ -50,7 +51,7 @@ export function normalizeCatalog(raw = {}, { scene } = {}) {
     return signal;
   });
   const macros = list(raw, "macros").map((entry) => ({ ownerKey: signalName(entry.ownerKey, localizedMessage("Владелец макроса")), uuid: signalName(entry.uuid, localizedMessage("UUID макроса")) }));
-  const subscriptions = list(raw, "subscriptions", 2000).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, localizedMessage("Подписчик")),
+  const subscriptions = list(raw, "subscriptions", null).map((entry) => ({ id: entry.id || randomId(), ownerKey: signalName(entry.ownerKey, localizedMessage("Подписчик")),
     emitterKey: signalName(entry.emitterKey, localizedMessage("Эмитент")), signalId: signalName(entry.signalId, localizedMessage("ID сигнала")), handler: entry.handler === "script" ? "script" : "macro",
     macroUuid: entry.handler === "script" ? "" : signalName(entry.macroUuid, localizedMessage("Макрос")), enabled: entry.enabled !== false,
     ...(entry.handler === "script" && isGroupOwner(entry.ownerKey) ? { script: normalizeGroupScript(entry.script) } : {}) }));
@@ -179,8 +180,11 @@ export class SignalCatalog {
       }
       const entry = { ...source, id: source.id || randomId() };
       const previousOwner = catalog.subscriptions.find(item => item.id === entry.id)?.ownerKey;
-      catalog.subscriptions = [...catalog.subscriptions.filter((item) => item.id !== entry.id), entry];
+      const previous = catalog.subscriptions.filter(item => item.ownerKey === entry.ownerKey);
+      const index = catalog.subscriptions.findIndex(item => item.id === entry.id);
+      if (index < 0) catalog.subscriptions.push(entry); else catalog.subscriptions[index] = entry;
       await this.requireEventInterfaces(catalog, [previousOwner, entry.ownerKey]);
+      assertCollectionGrowth("subscriptions", previous, catalog.subscriptions.filter(item => item.ownerKey === entry.ownerKey));
       return clone(entry);
     }, options);
   }
